@@ -1541,11 +1541,13 @@ function App(): JSX.Element {
                 display: 'flex', flexDirection: 'column',
                 borderLeft: '1px solid #2d2d2d',
               }}>
-                {/* Titlebar */}
+                {/* Titlebar — position:relative + z-index keeps it above the webview
+                    compositor layer when a browser tile is expanded */}
                 <div style={{
                   height: 36, background: '#252525', borderBottom: '1px solid #2d2d2d',
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '0 12px 0 12px', userSelect: 'none', flexShrink: 0
+                  padding: '0 12px 0 12px', userSelect: 'none', flexShrink: 0,
+                  position: 'relative', zIndex: 1
                 }}>
                   <span style={{ fontSize: 13, fontWeight: 500, color: '#cccccc' }}>
                     {tile.filePath?.replace(/\\/g, '/').split('/').pop() ?? tile.type.charAt(0).toUpperCase() + tile.type.slice(1)}
@@ -1560,8 +1562,10 @@ function App(): JSX.Element {
                     onMouseLeave={e => (e.currentTarget.style.background = '#444')}
                   />
                 </div>
-                {/* Content */}
-                <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+                {/* Content — position:relative is required so that BrowserTile's
+                    position:absolute inset:0 is contained here, not the overlay.
+                    Without it the webview escapes up and covers the titlebar. */}
+                <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, position: 'relative' }}>
                   {renderTileBody(tile)}
                 </div>
               </div>

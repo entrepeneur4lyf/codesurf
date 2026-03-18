@@ -140,21 +140,11 @@ export function registerBrowserTileIPC(): void {
     const state = getOrCreateTile(win.id, payload.tileId, payload.url, payload.mode)
     if (!state) return
 
-    // Update bounds
+    // Update bounds only — navigation must go via browserTile:command.
+    // Do NOT navigate here: did-start-loading sends the stale pre-commit URL
+    // back to the renderer which would otherwise cause an infinite reload loop.
     state.bounds = payload.bounds
     applyBounds(state, win)
-
-    // Only navigate if the URL has actually changed
-    const incoming = payload.url || HOMEPAGE
-    if (incoming && incoming !== state.currentUrl && incoming !== 'about:blank') {
-      state.currentUrl = incoming
-      void state.view.webContents.loadURL(incoming)
-    }
-
-    // Set z-order: remove + re-add all views in z-index order
-    // (BrowserView ordering reflects add order — newest = on top)
-    // For simplicity, just ensure this view is on top if zIndex is high
-    // TODO: proper z-ordering across tiles
   })
 
   // command: back/forward/reload/stop/home/navigate/mode

@@ -28,9 +28,11 @@ const SECTIONS: { id: Section; label: string; icon: React.ReactNode; description
 
 // ─── MCP types ────────────────────────────────────────────────────────────────
 interface MCPServerEntry {
+  type?: 'stdio' | 'sse' | 'http'
   url?: string
   cmd?: string
   args?: string[]
+  command?: string
   description?: string
   enabled?: boolean
 }
@@ -207,6 +209,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
     if (!newServer.name.trim() || !mcpConfig) return
     const { collaborator: _, ...rest } = mcpConfig.mcpServers
     const entry: MCPServerEntry = {
+      type: newServer.url ? 'http' : 'stdio',
       ...(newServer.url ? { url: newServer.url } : {}),
       ...(newServer.cmd ? { cmd: newServer.cmd } : {}),
       ...(newServer.description ? { description: newServer.description } : {}),
@@ -398,13 +401,19 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
                   <div style={{ borderTop: '1px solid #1f1f1f', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div>
                       <div style={{ fontSize: 10, color: '#444', fontFamily: 'monospace', marginBottom: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>URL</div>
-                      <input value={s.url ?? ''} onChange={e => updateServer(name, { url: e.target.value || undefined, cmd: undefined })}
+                      <input value={s.url ?? ''} onChange={e => {
+                            const url = e.target.value || undefined
+                            updateServer(name, { url, cmd: undefined, type: url ? 'http' : 'stdio' })
+                          }}
                         placeholder="http://localhost:3000"
                         style={{ width: '100%', padding: '6px 10px', fontSize: 12, background: '#111', color: '#ccc', border: '1px solid #2a2a2a', borderRadius: 6, outline: 'none', fontFamily: 'monospace', boxSizing: 'border-box' }} />
                     </div>
                     <div>
                       <div style={{ fontSize: 10, color: '#444', fontFamily: 'monospace', marginBottom: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Stdio Command</div>
-                      <input value={s.cmd ?? ''} onChange={e => updateServer(name, { cmd: e.target.value || undefined, url: undefined })}
+                      <input value={s.cmd ?? ''} onChange={e => {
+                            const cmd = e.target.value || undefined
+                            updateServer(name, { cmd, url: undefined, type: cmd ? 'stdio' : 'http' })
+                          }}
                         placeholder="npx @modelcontextprotocol/server-name"
                         style={{ width: '100%', padding: '6px 10px', fontSize: 12, background: '#111', color: '#ccc', border: '1px solid #2a2a2a', borderRadius: 6, outline: 'none', fontFamily: 'monospace', boxSizing: 'border-box' }} />
                     </div>
@@ -533,7 +542,10 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
                           const cmd = prompt('Stdio command (or leave empty for URL):')
                           const url = cmd ? undefined : (prompt('URL:') ?? undefined)
                           const desc = prompt('Description (optional):') ?? ''
-                          if (name) saveWorkspaceServers(activeWorkspaceId, { ...wsServers, [name]: { cmd: cmd || undefined, url, description: desc, enabled: true } })
+                          if (name) {
+                            const type = cmd ? 'stdio' : 'http'
+                            saveWorkspaceServers(activeWorkspaceId, { ...wsServers, [name]: { type, cmd: cmd || undefined, url, description: desc, enabled: true } })
+                          }
                         }}
                         style={{
                           width: '100%', padding: '10px 0', borderRadius: 10,

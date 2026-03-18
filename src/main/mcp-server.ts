@@ -6,19 +6,20 @@
  *   ~/.clawd-collab/mcp-server.json
  *
  * MCP config for agents:
- *   { "mcpServers": { "kanban": { "url": "http://localhost:<port>/mcp" } } }
+ *   { "mcpServers": { "kanban": { "type": "http", "url": "http://localhost:<port>/mcp" } } }
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { promises as fs } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
-import { BrowserWindow } from 'electron'
+import { app, BrowserWindow } from 'electron'
+
+const getHome = (): string => app.getPath('home') || process.env.HOME || process.env.USERPROFILE || ''
 
 // SSE client registry: cardId → response streams
 const sseClients = new Map<string, Set<ServerResponse>>()
 
-const COLLAB_DIR = join(homedir(), 'clawd-collab')
+const getColabDir = (): string => join(getHome(), 'clawd-collab')
 
 interface MCPRequest {
   jsonrpc: string
@@ -28,6 +29,51 @@ interface MCPRequest {
     name?: string
     arguments?: Record<string, unknown>
   }
+}
+
+function normalizeMcpServer(entry: unknown, fallbackUrl?: string): Record<string, unknown> {
+  if (!entry || typeof entry !== 'object') return fallbackUrl ? { type: 'http', url: fallbackUrl } : {}
+
+  const server = { ...(entry as Record<string, unknown>) }
+
+  if (server.url && typeof server.url === 'string') {
+    server.url = server.url.replace(/\/$/, '')
+  }
+
+  if (!server.command && server.cmd && typeof server.cmd === 'string') {
+    const parts = String(server.cmd).trim().split(/\s+/)
+    if (parts.length > 0 && parts[0]) {
+      server.command = parts[0]
+      if (parts.length > 1) server.args = parts.slice(1)
+    }
+  }
+
+  if (!server.type) {
+    if (server.command) {
+      server.type = 'stdio'
+    } else if (server.url || fallbackUrl) {
+      server.type = 'http'
+    }
+  }
+
+  if (!server.url && fallbackUrl) {
+    server.url = fallbackUrl
+  }
+
+  if (server.enabled === undefined) {
+    server.enabled = true
+  }
+
+  return server
+}
+
+function normalizeMcpServers(servers: Record<string, unknown>, collaboratorUrl?: string): Record<string, Record<string, unknown>> {
+  const normalized: Record<string, Record<string, unknown>> = {}
+  for (const [name, server] of Object.entries(servers ?? {})) {
+    const fallbackUrl = name === 'collaborator' ? collaboratorUrl : undefined
+    normalized[name] = normalizeMcpServer(server, fallbackUrl)
+  }
+  return normalized
 }
 
 const TOOLS = [
@@ -374,29 +420,45 @@ export async function startMCPServer(): Promise<number> {
       const addr = server.address() as { port: number }
       serverPort = addr.port
 
-      // Write config file for agents
+      const baseUrl = `http://127.0.0.1:${serverPort}`
+      const collaboratorUrl = `${baseUrl}/mcp`
+      const configPath = join(getColabDir(), 'mcp-server.json')
+
+      const COLLAB_DIR = getColabDir()
       await fs.mkdir(COLLAB_DIR, { recursive: true })
+
+      let existingConfig: Record<string, unknown> = {}
+      try {
+        const existingRaw = await fs.readFile(configPath, 'utf8')
+        const parsed = JSON.parse(existingRaw)
+        if (parsed && typeof parsed === 'object') existingConfig = parsed as Record<string, unknown>
+      } catch { /**/ }
+
+      const existingServers = typeof existingConfig.mcpServers === 'object' && existingConfig.mcpServers !== null
+        ? existingConfig.mcpServers as Record<string, unknown>
+        : {}
+      const normalizedServers = normalizeMcpServers(existingServers, collaboratorUrl)
+      normalizedServers['collaborator'] = {
+        ...(normalizeMcpServer(existingConfig.mcpServers && typeof existingConfig.mcpServers === 'object' ? (existingConfig.mcpServers as Record<string, unknown>)['collaborator'] : undefined, collaboratorUrl) as Record<string, unknown>),
+        type: 'http',
+        url: collaboratorUrl
+      }
+
       const mcpConfig = {
+        ...(existingConfig ?? {}),
         port: serverPort,
-        url: `http://127.0.0.1:${serverPort}`,
+        url: baseUrl,
         updatedAt: new Date().toISOString(),
-        mcpServers: {
-          collaborator: {
-            url: `http://127.0.0.1:${serverPort}/mcp`
-          }
-        },
+        mcpServers: normalizedServers,
         tools: TOOLS.map(t => ({ name: t.name, description: t.description })),
         endpoints: {
-          mcp:    `http://127.0.0.1:${serverPort}`,
-          events: `http://127.0.0.1:${serverPort}/events`,
-          push:   `http://127.0.0.1:${serverPort}/push`,
-          inject: `http://127.0.0.1:${serverPort}/inject`
+          mcp: baseUrl,
+          events: `${baseUrl}/events`,
+          push: `${baseUrl}/push`,
+          inject: `${baseUrl}/inject`
         }
       }
-      await fs.writeFile(
-        join(COLLAB_DIR, 'mcp-server.json'),
-        JSON.stringify(mcpConfig, null, 2)
-      )
+      await fs.writeFile(configPath, JSON.stringify(mcpConfig, null, 2))
 
       console.log(`[MCP] Kanban server running on port ${serverPort}`)
       resolve(serverPort)

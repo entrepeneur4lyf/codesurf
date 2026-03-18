@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { loadMCPServers } from '../hooks/useMCPServers'
 
 interface MCPServer {
   name: string
+  type?: 'stdio' | 'sse' | 'http'
   url?: string
   cmd?: string
+  command?: string
   args?: string[]
   description?: string
   enabled: boolean
@@ -27,6 +28,25 @@ interface MCPConfig {
 }
 
 const CONFIG_PATH = '~/clawd-collab/mcp-server.json'
+
+function serverCommandFromConfig(s: Partial<MCPServer>): string | undefined {
+  if (typeof s.cmd === 'string' && s.cmd.trim()) return s.cmd.trim()
+  const command = typeof s.command === 'string' ? s.command.trim() : ''
+  if (!command) return undefined
+  const args = Array.isArray(s.args) ? s.args.filter(a => typeof a === 'string' && a.trim()) : []
+  return [command, ...args].join(' ')
+}
+
+function toServerRows(raw: MCPConfig['mcpServers']): MCPServer[] {
+  return Object.entries(raw ?? {}).map(([name, s]: [string, any]) => ({
+    name,
+    type: s.type,
+    url: s.url,
+    cmd: serverCommandFromConfig(s),
+    description: s.description,
+    enabled: s.enabled !== false
+  }))
+}
 
 // Well-known MCP servers — curated catalogue
 const KNOWN_SERVERS: Array<Omit<MCPServer, 'enabled'> & { category: string; installCmd?: string }> = [
@@ -72,58 +92,73 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
   const [adding, setAdding] = useState(false)
   const [saved, setSaved] = useState(false)
 
-  // Load current config
-  useEffect(() => {
-    const home = (window as any).__dirname ?? ''
-    window.electron?.mcp?.getPort?.().then((p: number) => setPort(p))
-
-    // Read the config file
-    const path = `${(window as any).process?.env?.HOME ?? '~'}/clawd-collab/mcp-server.json`
-    window.electron.fs.readFile(path.replace('~', (window as any).__HOME__ ?? '/Users/' + ((window as any).process?.env?.USER ?? '')))
-      .catch(() => null)
-      .then((raw: string | null) => {
-        if (raw) {
-          try {
-            const cfg: MCPConfig = JSON.parse(raw)
-            setConfig(cfg)
-            const list: MCPServer[] = Object.entries(cfg.mcpServers ?? {}).map(([name, s]) => ({
-              name,
-              url: s.url,
-              cmd: s.cmd,
-              args: s.args,
-              description: s.description,
-              enabled: s.enabled !== false
-            }))
-            setServers(list)
-          } catch { /**/ }
-        }
-        setLoading(false)
-      })
+  const applyConfig = useCallback((cfg: MCPConfig) => {
+    setConfig(cfg)
+    setServers(toServerRows(cfg.mcpServers))
+    setLoading(false)
   }, [])
 
+  // Load current config
+  useEffect(() => {
+    window.electron?.mcp?.getPort?.().then((p: number) => setPort(p))
+
+    const load = async () => {
+      try {
+        const cfg = window.electron?.mcp?.getConfig ? await window.electron.mcp.getConfig() : null
+        if (cfg) {
+          applyConfig(cfg as MCPConfig)
+          return
+        }
+      } catch { /**/ }
+
+      const path = `${(window as any).process?.env?.HOME ?? '~'}/clawd-collab/mcp-server.json`
+      try {
+        const raw = await window.electron.fs.readFile(path.replace('~', (window as any).__HOME__ ?? '/Users/' + ((window as any).process?.env?.USER ?? '')))
+        applyConfig(JSON.parse(raw) as MCPConfig)
+      } catch {
+        setLoading(false)
+      }
+    }
+
+    load()
+  }, [applyConfig])
+
   const save = useCallback(async (updatedServers: MCPServer[]) => {
-    if (!config) return
-    const mcpServers: MCPConfig['mcpServers'] = {}
-    // Always keep the collaborator built-in
-    mcpServers['collaborator'] = config.mcpServers['collaborator'] ?? { url: config.url }
+    const userServers: Record<string, Omit<MCPServer, 'name' | 'enabled'> > = {}
     for (const s of updatedServers) {
       if (s.name === 'collaborator') continue
-      mcpServers[s.name] = {
+      const entry: Omit<MCPServer, 'name' | 'enabled'> = {
+        ...(s.type || s.url ? { type: s.type || (s.url ? 'http' : 'stdio') } : {}),
         ...(s.url ? { url: s.url } : {}),
         ...(s.cmd ? { cmd: s.cmd } : {}),
         ...(s.args?.length ? { args: s.args } : {}),
         ...(s.description ? { description: s.description } : {}),
         enabled: s.enabled
       }
+      userServers[s.name] = entry
     }
-    const updated = { ...config, mcpServers, updatedAt: new Date().toISOString() }
-    const home = (window as any).process?.env?.HOME ?? ''
-    const filePath = `${home}/clawd-collab/mcp-server.json`
-    await window.electron.fs.writeFile(filePath, JSON.stringify(updated, null, 2))
-    await loadMCPServers() // refresh global cache
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-  }, [config])
+
+    let updatedCfg: MCPConfig | null = null
+    if (window.electron?.mcp?.saveServers) {
+      updatedCfg = await window.electron.mcp.saveServers(userServers) as MCPConfig
+    } else if (config) {
+      // Fallback legacy path if IPC changed in future
+      const mcpServers: MCPConfig['mcpServers'] = {}
+      mcpServers['collaborator'] = config.mcpServers['collaborator'] ?? { type: 'http', url: `${config.url.replace(/\/$/, '')}/mcp` }
+      for (const [name, entry] of Object.entries(userServers)) {
+        mcpServers[name] = entry as MCPConfig['mcpServers'][string]
+      }
+      updatedCfg = { ...config, mcpServers, updatedAt: new Date().toISOString() }
+      const home = (window as any).process?.env?.HOME ?? ''
+      await window.electron.fs.writeFile(`${home}/clawd-collab/mcp-server.json`, JSON.stringify(updatedCfg, null, 2))
+    }
+
+    if (updatedCfg) {
+      applyConfig(updatedCfg)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    }
+  }, [config, applyConfig])
 
   const updateServer = (i: number, patch: Partial<MCPServer>) => {
     const updated = servers.map((s, j) => j === i ? { ...s, ...patch } : s)
@@ -141,6 +176,7 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
     if (!newServer.name?.trim()) return
     const s: MCPServer = {
       name: newServer.name.trim(),
+      type: newServer.url ? 'http' : 'stdio',
       url: newServer.url,
       cmd: newServer.cmd,
       description: newServer.description,
@@ -256,7 +292,8 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
               installed={servers.map(s => s.name)}
               onAdd={s => {
                 if (servers.find(x => x.name === s.name)) return
-                const updated = [...servers, { ...s, enabled: true }]
+                const type = s.url ? 'http' : 'stdio'
+                const updated = [...servers, { ...s, type, enabled: true }]
                 setServers(updated)
                 save(updated)
               }}
@@ -346,12 +383,20 @@ function EditableServerRow({ server, onUpdate, onRemove }: {
         <div style={{ padding: '0 12px 10px', display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid #21262d' }}>
           <div style={{ paddingTop: 8 }}>
             <label style={{ fontSize: 9, color: '#444', fontFamily: 'monospace', display: 'block', marginBottom: 3 }}>URL</label>
-            <input value={server.url ?? ''} onChange={e => onUpdate({ url: e.target.value || undefined, cmd: undefined })}
+            <input value={server.url ?? ''} onChange={e => onUpdate({
+                url: e.target.value || undefined,
+                cmd: undefined,
+                type: e.target.value ? 'http' : 'stdio'
+              })}
               placeholder="http://localhost:3000" style={{ ...inputStyle, fontFamily: 'monospace', fontSize: 10, color: '#3fb950' }} />
           </div>
           <div>
             <label style={{ fontSize: 9, color: '#444', fontFamily: 'monospace', display: 'block', marginBottom: 3 }}>STDIO COMMAND</label>
-            <input value={server.cmd ?? ''} onChange={e => onUpdate({ cmd: e.target.value || undefined, url: undefined })}
+            <input value={server.cmd ?? ''} onChange={e => onUpdate({
+                cmd: e.target.value || undefined,
+                url: undefined,
+                type: e.target.value ? 'stdio' : 'http'
+              })}
               placeholder="npx @modelcontextprotocol/server-name" style={{ ...inputStyle, fontFamily: 'monospace', fontSize: 10 }} />
           </div>
           <div>

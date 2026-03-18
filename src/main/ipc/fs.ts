@@ -1,19 +1,22 @@
-import { ipcMain, shell } from 'electron'
+import { app, ipcMain, shell } from 'electron'
 import { promises as fs } from 'fs'
 import { basename, extname, join } from 'path'
 import { homedir } from 'os'
 
+const resolveHome = (): string => app.getPath('home') || process.env.HOME || process.env.USERPROFILE || homedir()
+
 function resolveFsPath(rawPath: string): string {
-  if (rawPath === '~') return homedir()
+  const home = resolveHome()
+  if (rawPath === '~') return home
   if (rawPath.startsWith('~/.clawd-collab/')) {
-    return join(homedir(), 'clawd-collab', rawPath.slice('~/.clawd-collab/'.length))
+    return join(home, 'clawd-collab', rawPath.slice('~/.clawd-collab/'.length))
   }
   if (rawPath.startsWith('~\\.clawd-collab\\')) {
-    return join(homedir(), 'clawd-collab', rawPath.slice('~\\.clawd-collab\\'.length))
+    return join(home, 'clawd-collab', rawPath.slice('~\\.clawd-collab\\'.length))
   }
-  if (rawPath.startsWith('~/') || rawPath.startsWith('~\\')) return join(homedir(), rawPath.slice(2))
-  if (rawPath.startsWith('/clawd-collab/')) return join(homedir(), rawPath.slice(1))
-  if (rawPath === '/clawd-collab') return join(homedir(), 'clawd-collab')
+  if (rawPath.startsWith('~/') || rawPath.startsWith('~\\')) return join(home, rawPath.slice(2))
+  if (rawPath.startsWith('/clawd-collab/')) return join(home, rawPath.slice(1))
+  if (rawPath === '/clawd-collab') return join(home, 'clawd-collab')
   return rawPath
 }
 
@@ -89,8 +92,7 @@ export function registerFsIPC(): void {
 
   ipcMain.handle('fs:writeBrief', async (_, cardId: string, content: string) => {
     const { join } = await import('path')
-    const { homedir } = await import('os')
-    const briefDir = join(homedir(), 'clawd-collab', 'briefs')
+    const briefDir = join(resolveHome(), 'clawd-collab', 'briefs')
     await fs.mkdir(briefDir, { recursive: true })
     const briefPath = join(briefDir, `${cardId}.md`)
     await fs.writeFile(briefPath, content, 'utf8')

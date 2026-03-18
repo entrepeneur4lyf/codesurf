@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import type { TileState } from '../../../shared/types'
 
 interface Props {
@@ -52,6 +52,28 @@ export function TileChrome({
     onExpandChange?.(next)
   }
 
+  // ─── Native mousedown listener on the titlebar ───────────────────────────
+  // WHY: React portal events (browser toolbar) bubble through React's component
+  // tree — BrowserTile → App — never reaching TileChrome's titlebar. Every other
+  // tile works because their title text is a direct React child of the titlebar.
+  // A native DOM listener receives events via real DOM bubbling, which DOES
+  // include portal content (it lives in the titlebar's DOM subtree).
+  // Elements marked data-no-drag (expand/close) are excluded.
+  const titlebarRef = useRef<HTMLDivElement>(null)
+  const mouseDownRef = useRef(onTitlebarMouseDown)
+  useEffect(() => { mouseDownRef.current = onTitlebarMouseDown })
+
+  useEffect(() => {
+    const el = titlebarRef.current
+    if (!el) return
+    const handler = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest('[data-no-drag]')) return
+      mouseDownRef.current(e as unknown as React.MouseEvent)
+    }
+    el.addEventListener('mousedown', handler)
+    return () => el.removeEventListener('mousedown', handler)
+  }, [])
+
   return (
     <div
       data-tile-chrome="true"
@@ -66,24 +88,26 @@ export function TileChrome({
           ? '0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(74,158,255,0.3)'
           : '0 4px 20px rgba(0,0,0,0.4)',
         background: '#1e1e1e',
-        // Hide in place when expanded (canvas panel renders it fullscreen)
         visibility: forceExpanded ? 'hidden' : 'visible',
         pointerEvents: forceExpanded ? 'none' : 'all',
       }}
       onDoubleClick={e => e.stopPropagation()}
     >
-      {/* Titlebar */}
+      {/* Titlebar — ref + native listener instead of React onMouseDown so portal
+          content (browser toolbar) can also initiate tile-move drag */}
       <div
+        ref={titlebarRef}
         style={{
           height: 32, background: '#252525', borderBottom: '1px solid #333',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '0 8px 0 0', userSelect: 'none', flexShrink: 0, cursor: 'move'
         }}
-        onMouseDown={onTitlebarMouseDown}
         onDoubleClick={e => { e.stopPropagation(); toggle() }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(e) }}
       >
-        {/* Drag handle */}
+        {/* Drag handle — mouseDown no longer blocked so the native listener above
+            can start tile-move; onDragStart uses a transparent ghost so the OS
+            drag image doesn't appear on top of the moving tile */}
         <div
           draggable
           onDragStart={e => {
@@ -91,9 +115,14 @@ export function TileChrome({
             e.dataTransfer.setData('application/tile-type', tile.type)
             e.dataTransfer.setData('application/tile-label', fileLabel(tile))
             e.dataTransfer.effectAllowed = 'link'
+            // Invisible drag ghost — tile-move handles the visual
+            const ghost = document.createElement('div')
+            ghost.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px'
+            document.body.appendChild(ghost)
+            e.dataTransfer.setDragImage(ghost, 0, 0)
+            requestAnimationFrame(() => document.body.removeChild(ghost))
             e.stopPropagation()
           }}
-          onMouseDown={e => e.stopPropagation()}
           style={{
             width: 28, height: '100%',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -117,8 +146,9 @@ export function TileChrome({
           </span>
         )}
 
-        {/* Expand toggle */}
+        {/* data-no-drag excludes these from the native drag handler */}
         <button
+          data-no-drag=""
           style={{
             width: 20, height: 20, borderRadius: 4, background: 'transparent',
             border: 'none', cursor: 'pointer', flexShrink: 0,
@@ -133,8 +163,8 @@ export function TileChrome({
           {expanded ? '⊡' : '⊞'}
         </button>
 
-        {/* Close */}
         <button
+          data-no-drag=""
           style={{
             width: 14, height: 14, borderRadius: '50%', background: '#444',
             border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background 0.1s',
@@ -147,16 +177,16 @@ export function TileChrome({
         />
       </div>
 
-      {/* Content */}
+      {/* Content — position:relative so BrowserTile's position:absolute inset:0
+          is contained here, not the TileChrome outer div */}
       <div
-        style={{ flex: 1, overflow: 'hidden', minHeight: 0, userSelect: 'text', WebkitUserSelect: 'text' } as React.CSSProperties}
+        style={{ flex: 1, overflow: 'hidden', minHeight: 0, position: 'relative', userSelect: 'text', WebkitUserSelect: 'text' } as React.CSSProperties}
         onDragOver={e => { if (tile.type !== 'kanban') e.stopPropagation() }}
         onDrop={e => { if (tile.type !== 'kanban') e.stopPropagation() }}
       >
         {forceExpanded ? null : children}
       </div>
 
-      {/* Resize handles */}
       {(['n','s','e','w','ne','nw','se','sw'] as const).map(dir => (
         <ResizeHandle key={dir} dir={dir} onMouseDown={e => onResizeMouseDown(e, dir)} />
       ))}

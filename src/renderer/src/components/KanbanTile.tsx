@@ -41,7 +41,7 @@ export function KanbanTile({ tileId, workspaceDir, width, height, onFocusTile }:
   const cleanupRefs = useRef<Record<string, () => void>>({})
 
   const HEADER = 38
-  const COL_W = Math.max(200, Math.floor(width / columns.length))
+  const MIN_COL_W = 180
 
   // Watch terminals for activity (dot only — moves come from MCP card_complete)
   useEffect(() => {
@@ -290,7 +290,15 @@ export function KanbanTile({ tileId, workspaceDir, width, height, onFocusTile }:
           const isOver = dragOver === col.id
           return (
             <div key={col.id}
-              style={{ width: COL_W, minWidth: COL_W, flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: ci < columns.length - 1 ? '1px solid #21262d' : 'none', background: isOver ? '#161b22' : 'transparent', transition: 'background 0.1s' }}
+              style={{
+                flex: 1,
+                minWidth: MIN_COL_W,
+                width: 0,
+                display: 'flex', flexDirection: 'column',
+                borderRight: ci < columns.length - 1 ? '1px solid #21262d' : 'none',
+                background: isOver ? '#161b22' : 'transparent',
+                transition: 'background 0.1s'
+              }}
               onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDragOver(col.id) }}
               onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(null) }}
               onDrop={e => { e.stopPropagation(); dropOnCol(col.id, e) }}
@@ -353,9 +361,9 @@ export function KanbanTile({ tileId, workspaceDir, width, height, onFocusTile }:
                   </div>
                 ) : (
                   <button onClick={() => { setAddingTo(col.id); setAddTitle('') }}
-                    style={{ width: '100%', padding: '5px 0', fontSize: 11, color: '#333', background: 'none', border: '1px dashed #21262d', borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}
-                    onMouseEnter={e => { e.currentTarget.style.color = '#58a6ff'; e.currentTarget.style.borderColor = '#388bfd44' }}
-                    onMouseLeave={e => { e.currentTarget.style.color = '#333'; e.currentTarget.style.borderColor = '#21262d' }}
+                    style={{ width: '100%', padding: '5px 0', fontSize: 11, color: '#9dc7ff', background: 'rgba(88,166,255,0.12)', border: '1px dashed #79bcff', borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0, fontWeight: 600 }}
+                    onMouseEnter={e => { e.currentTarget.style.color = '#d7eaff'; e.currentTarget.style.borderColor = '#9dc7ff'; e.currentTarget.style.background = 'rgba(88,166,255,0.24)' }}
+                    onMouseLeave={e => { e.currentTarget.style.color = '#9dc7ff'; e.currentTarget.style.borderColor = '#79bcff'; e.currentTarget.style.background = 'rgba(88,166,255,0.12)' }}
                   >+ Add card</button>
                 )}
               </div>
