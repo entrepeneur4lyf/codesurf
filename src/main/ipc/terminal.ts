@@ -1,6 +1,38 @@
 import { ipcMain } from 'electron'
+import { existsSync, chmodSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
+
+function ensureNodePtySpawnHelperExecutable(): void {
+  const candidates = [
+    join(__dirname, '../../node_modules/node-pty/build/Release/spawn-helper'),
+    join(__dirname, '../../node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper'),
+    join(__dirname, '../../node_modules/node-pty/prebuilds/darwin-x64/spawn-helper'),
+    join(__dirname, '../../node_modules/node-pty/prebuilds/linux-x64/spawn-helper'),
+    join(__dirname, '../../node_modules/node-pty/prebuilds/linux-arm64/spawn-helper'),
+    join(process.cwd(), 'node_modules/node-pty/build/Release/spawn-helper'),
+    join(process.cwd(), 'node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper'),
+    join(process.cwd(), 'node_modules/node-pty/prebuilds/darwin-x64/spawn-helper'),
+    join(process.cwd(), 'node_modules/node-pty/prebuilds/linux-x64/spawn-helper'),
+    join(process.cwd(), 'node_modules/node-pty/prebuilds/linux-arm64/spawn-helper'),
+  ]
+
+  let found = false
+  for (const helperPath of candidates) {
+    try {
+      if (!existsSync(helperPath)) continue
+      found = true
+      chmodSync(helperPath, 0o755)
+    } catch {
+      // best-effort only
+    }
+  }
+  if (!found) {
+    console.warn('node-pty spawn-helper: no candidates found among checked paths')
+  }
+}
+
+ensureNodePtySpawnHelperExecutable()
 
 // node-pty must be required (not imported) due to native module ESM issues
 // eslint-disable-next-line @typescript-eslint/no-var-requires

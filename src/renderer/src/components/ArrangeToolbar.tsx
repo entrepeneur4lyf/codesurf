@@ -12,47 +12,44 @@ interface Props {
 
 type Mode = 'grid' | 'column' | 'row'
 
-// ─── ELK grid layout ────────────────────────────────────────────────────────
-async function arrangeGrid(tiles: TileState[]): Promise<TileState[]> {
+// ─── Grid layout ────────────────────────────────────────────────────────────
+function arrangeGrid(tiles: TileState[]): TileState[] {
   if (tiles.length === 0) return tiles
 
-  // elk.bundled.js is a browserify bundle that clobbers globals.
-  // Save and restore Map/Set around the import to prevent React corruption.
-  const savedMap = globalThis.Map
-  const savedSet = globalThis.Set
-  await import('elkjs/lib/elk.bundled.js')
-  globalThis.Map = savedMap
-  globalThis.Set = savedSet
-  const ELK = (globalThis as any).ELK
-  if (!ELK) throw new Error('ELK failed to load')
-  const elk = new ELK()
-
-  const graph = {
-    id: 'root',
-    layoutOptions: {
-      'elk.algorithm': 'rectpacking',
-      'elk.spacing.nodeNode': String(GAP),
-      'elk.rectpacking.expandToFill': 'false',
-      'elk.padding': `[top=${GAP},left=${GAP},bottom=${GAP},right=${GAP}]`,
-    },
-    children: tiles.map(t => ({
-      id: t.id,
-      width: t.width,
-      height: t.height,
-    })),
-    edges: [],
-  }
-
-  const laid = await elk.layout(graph)
-
+  const sorted = [...tiles].sort((a, b) => (b.height * b.width) - (a.height * a.width))
   const originX = Math.min(...tiles.map(t => t.x))
   const originY = Math.min(...tiles.map(t => t.y))
+  const totalArea = tiles.reduce((sum, t) => sum + (t.width * t.height), 0)
+  const targetRowWidth = Math.max(
+    Math.max(...tiles.map(t => t.width)),
+    Math.round(Math.sqrt(totalArea) * 1.35)
+  )
 
-  return tiles.map(t => {
-    const node = laid.children?.find(n => n.id === t.id)
-    if (!node) return t
-    return { ...t, x: originX + (node.x ?? 0), y: originY + (node.y ?? 0) }
-  })
+  let cursorX = originX
+  let cursorY = originY
+  let rowHeight = 0
+
+  const placed = new Map<string, TileState>()
+
+  for (const tile of sorted) {
+    const nextWidth = cursorX === originX ? tile.width : (cursorX - originX) + GAP + tile.width
+    if (nextWidth > targetRowWidth && cursorX !== originX) {
+      cursorX = originX
+      cursorY += rowHeight + GAP
+      rowHeight = 0
+    }
+
+    placed.set(tile.id, {
+      ...tile,
+      x: cursorX,
+      y: cursorY,
+    })
+
+    cursorX += tile.width + GAP
+    rowHeight = Math.max(rowHeight, tile.height)
+  }
+
+  return tiles.map(tile => placed.get(tile.id) ?? tile)
 }
 
 // ─── Column layout ──────────────────────────────────────────────────────────
@@ -154,13 +151,13 @@ export function ArrangeToolbar({ tiles, onArrange }: Props): JSX.Element {
   const [loading, setLoading] = useState(false)
   const [lastMode, setLastMode] = useState<Mode | null>(null)
 
-  const run = async (mode: Mode) => {
+  const run = (mode: Mode) => {
     if (tiles.length < 2 || loading) return
     setLoading(true)
     setLastMode(mode)
     try {
       let updated: TileState[]
-      if (mode === 'grid') updated = await arrangeGrid(tiles)
+      if (mode === 'grid') updated = arrangeGrid(tiles)
       else if (mode === 'column') updated = arrangeColumn(tiles)
       else updated = arrangeRow(tiles)
       onArrange(updated)
@@ -191,7 +188,7 @@ export function ArrangeToolbar({ tiles, onArrange }: Props): JSX.Element {
       <span style={{ fontSize: 10, color: '#444', marginRight: 4, userSelect: 'none', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
         Arrange
       </span>
-      <Btn label={<GridIcon />}   title="Grid layout (ELK rect-packing)"  active={lastMode === 'grid'}   loading={loading} onClick={() => run('grid')} />
+      <Btn label={<GridIcon />}   title="Grid layout (auto-wrap)"  active={lastMode === 'grid'}   loading={loading} onClick={() => run('grid')} />
       <Btn label={<ColumnIcon />} title="Stack in column"                  active={lastMode === 'column'} loading={loading} onClick={() => run('column')} />
       <Btn label={<RowIcon />}    title="Arrange in row"                   active={lastMode === 'row'}    loading={loading} onClick={() => run('row')} />
     </div>

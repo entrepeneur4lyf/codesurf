@@ -1,12 +1,18 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
-import { KanbanCard, KanbanCardData, buildLaunchCmd } from './KanbanCard'
+import { KanbanCard, KanbanCardData } from './KanbanCard'
 import { buildAgentBrief } from '../utils/agentBrief'
 import { ActivityFeed, ActivityEvent } from './ActivityFeed'
 
 interface KanbanColumn { id: string; title: string }
 
+interface KanbanSavedState {
+  columns: KanbanColumn[]
+  cards: KanbanCardData[]
+}
+
 interface Props {
   tileId: string
+  workspaceId: string
   workspaceDir: string
   width: number
   height: number
@@ -16,20 +22,38 @@ interface Props {
 const COLORS = ['#0d2137','#0d2a1a','#2a0d1a','#1a1a0d','#1a0d2a','#0d1a2a','#2a1a0d','#0d2a2a']
 const ACTIVE_TTL = 4000
 
-const DONE_PATTERNS = [
-  /task complete/i, /all done/i, /completed successfully/i,
-  /ready for review/i, /✓\s*(done|complete)/i,
-  /\$ $/, /❯ $/, /% $/
+const TERMINAL_POLL_MS = 450
+const MAX_TASK_LOG = 240
+const MAX_TASK_ENTRIES = 240
+const MAX_BUFFER_BYTES = 8192
+
+function normalizeTerminalData(data: string): string {
+  // Strip ANSI escapes and control chars to keep terminal task logs readable
+  const ansi = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g
+  return data
+    .replace(ansi, '')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .replace(/\r\n?/g, '\n')
+    .trim()
+}
+
+function trimTaskMessage(message: string): string {
+  const noNewlines = message.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim()
+  if (noNewlines.length <= MAX_TASK_LOG) return noNewlines
+  return `${noNewlines.slice(0, MAX_TASK_LOG - 1)}…`
+}
+
+const DEFAULT_COLUMNS: KanbanColumn[] = [
+  { id: 'backlog', title: 'Backlog' },
+  { id: 'running', title: 'Running' },
+  { id: 'review',  title: 'Review' },
+  { id: 'done',    title: 'Done' }
 ]
 
-export function KanbanTile({ tileId, workspaceDir, width, height, onFocusTile }: Props): JSX.Element {
-  const [columns, setColumns] = useState<KanbanColumn[]>([
-    { id: 'backlog', title: 'Backlog' },
-    { id: 'running', title: 'Running' },
-    { id: 'review',  title: 'Review' },
-    { id: 'done',    title: 'Done' }
-  ])
+export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, onFocusTile }: Props): JSX.Element {
+  const [columns, setColumns] = useState<KanbanColumn[]>(DEFAULT_COLUMNS)
   const [cards, setCards] = useState<KanbanCardData[]>([])
+  const [loaded, setLoaded] = useState(false)
   const [dragging, setDragging] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [addingTo, setAddingTo] = useState<string | null>(null)
@@ -39,65 +63,127 @@ export function KanbanTile({ tileId, workspaceDir, width, height, onFocusTile }:
   const [activeTerminals, setActiveTerminals] = useState<Record<string, number>>({})
   const [activityLog, setActivityLog] = useState<ActivityEvent[]>([])
   const cleanupRefs = useRef<Record<string, () => void>>({})
+  const terminalBufferRefs = useRef<Record<string, string>>({})
+  const terminalFlushRefs = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  // Load saved kanban state on mount
+  useEffect(() => {
+    if (!workspaceId) return
+    window.electron?.kanban?.load(workspaceId, tileId).then((saved: KanbanSavedState | null) => {
+      if (saved) {
+        if (saved.columns?.length) setColumns(saved.columns)
+        if (saved.cards?.length) setCards(saved.cards)
+      }
+      setLoaded(true)
+    }).catch(() => setLoaded(true))
+  }, [workspaceId, tileId])
+
+  // Auto-save kanban state on changes (debounced)
+  useEffect(() => {
+    if (!loaded || !workspaceId) return
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => {
+      const state: KanbanSavedState = { columns, cards }
+      window.electron?.kanban?.save(workspaceId, tileId, state)
+    }, 500)
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current) }
+  }, [columns, cards, loaded, workspaceId, tileId])
+
+  const terminalTaskCards = cards.filter(c => c.linkedTileId && (c.linkedTileType === 'terminal' || !c.linkedTileType))
+  const terminalCardIds = new Set(terminalTaskCards.map(c => c.id))
+
+  const terminalEvents = activityLog.filter(e => e.type === 'terminal' && terminalCardIds.has(e.cardId))
+  const terminalEventByCard = terminalEvents.reduce((acc, e) => {
+    acc[e.cardId] = e
+    return acc
+  }, {} as Record<string, ActivityEvent>)
 
   const HEADER = 38
   const MIN_COL_W = 180
 
-  // Watch terminals for activity (dot only — moves come from MCP card_complete)
+  const logActivity = useCallback((type: ActivityEvent['type'], cardId: string, message: string) => {
+    setCards(prev => {
+      const card = prev.find(c => c.id === cardId)
+      setActivityLog(log => {
+        const next = [...log, {
+          id: `ev-${Date.now()}-${Math.random()}`,
+          ts: Date.now(),
+          cardId,
+          cardTitle: card?.title ?? cardId,
+          event: type,
+          message,
+          type
+        }]
+        return next.length > MAX_TASK_ENTRIES * 4 ? next.slice(-(MAX_TASK_ENTRIES * 4)) : next
+      })
+      return prev
+    })
+  }, [])
+
+  // Watch linked standalone terminals for both activity pings and live output
   useEffect(() => {
-    const linked = cards.filter(c => c.linkedTileId && (c.linkedTileType === 'terminal' || !c.linkedTileType))
-    linked.forEach(card => {
+    const terminalCards = cards.filter(c => c.linkedTileId && (c.linkedTileType === 'terminal' || !c.linkedTileType))
+    const linkedIds = terminalCards.map(c => c.linkedTileId!)
+
+    terminalCards.forEach(card => {
       const id = card.linkedTileId!
       if (cleanupRefs.current[id]) return
-      const c1 = window.electron?.terminal?.onActive?.(id, () =>
-        setActiveTerminals(prev => ({ ...prev, [id]: Date.now() }))
-      )
-      cleanupRefs.current[id] = () => { c1?.() }
+      const markActive = () => setActiveTerminals(prev => ({ ...prev, [id]: Date.now() }))
+      const watchActive = window.electron?.terminal?.onActive?.(id, markActive)
+
+      const flushOutput = (terminalId: string, cardId: string) => {
+        const raw = terminalBufferRefs.current[terminalId]
+        if (!raw) {
+          terminalBufferRefs.current[terminalId] = ''
+          return
+        }
+        terminalBufferRefs.current[terminalId] = ''
+        const message = trimTaskMessage(normalizeTerminalData(raw))
+        if (!message) return
+        logActivity('terminal', cardId, message)
+      }
+
+      const watchData = window.electron?.terminal?.onData?.(id, (data: string) => {
+        const clean = normalizeTerminalData(data)
+        if (!clean) return
+        const prev = terminalBufferRefs.current[id] ?? ''
+        terminalBufferRefs.current[id] = prev.length >= MAX_BUFFER_BYTES
+          ? prev.slice(-MAX_BUFFER_BYTES) + clean
+          : prev + clean
+        if (terminalFlushRefs.current[id]) return
+        terminalFlushRefs.current[id] = setTimeout(() => {
+          terminalFlushRefs.current[id] = undefined
+          flushOutput(id, card.id)
+        }, TERMINAL_POLL_MS)
+      })
+
+      cleanupRefs.current[id] = () => {
+        watchActive?.()
+        watchData?.()
+        if (terminalFlushRefs.current[id]) {
+          clearTimeout(terminalFlushRefs.current[id])
+          terminalFlushRefs.current[id] = undefined
+        }
+        terminalBufferRefs.current[id] = ''
+        delete terminalBufferRefs.current[id]
+      }
     })
+
     Object.keys(cleanupRefs.current).forEach(id => {
-      if (!linked.find(c => c.linkedTileId === id)) {
+      if (!linkedIds.includes(id)) {
         cleanupRefs.current[id]?.()
         delete cleanupRefs.current[id]
       }
     })
-  }, [cards])
+  }, [cards, logActivity])
 
   useEffect(() => () => Object.values(cleanupRefs.current).forEach(fn => fn()), [])
 
-  // Subscribe to SSE stream from MCP server
-  useEffect(() => {
-    let es: EventSource | null = null
-    window.electron?.mcp?.getPort?.().then((port: number | null) => {
-      if (!port) return
-      es = new EventSource(`http://127.0.0.1:${port}/events?card_id=global`)
-      const handle = (e: MessageEvent) => {
-        try {
-          const { cardId, ...rest } = JSON.parse(e.data)
-          handleKanbanEvent(e.type, { cardId, ...rest })
-        } catch { /**/ }
-      }
-      ;['card_complete','card_update','card_error','canvas_event'].forEach(ev => {
-        es!.addEventListener(ev, handle as EventListener)
-      })
-    })
-    return () => es?.close()
-  }, [])
-
-  const logActivity = useCallback((type: ActivityEvent['type'], cardId: string, message: string) => {
-    setCards(prev => {
-      const card = prev.find(c => c.id === cardId)
-      setActivityLog(log => [...log, {
-        id: `ev-${Date.now()}-${Math.random()}`,
-        ts: Date.now(),
-        cardId,
-        cardTitle: card?.title ?? cardId,
-        event: type,
-        message,
-        type
-      }])
-      return prev
-    })
-  }, [])
+  const jumpToCard = (cardId: string) => {
+    const el = document.querySelector(`[data-card-id="${cardId}"]`)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
 
   const handleKanbanEvent = useCallback((event: string, data: any) => {
     if (event === 'card_complete') {
@@ -160,6 +246,25 @@ export function KanbanTile({ tileId, workspaceDir, width, height, onFocusTile }:
       }])
     }
   }, [columns, logActivity, cards])
+
+  // Subscribe to SSE stream from MCP server
+  useEffect(() => {
+    let es: EventSource | null = null
+    window.electron?.mcp?.getPort?.().then((port: number | null) => {
+      if (!port) return
+      es = new EventSource(`http://127.0.0.1:${port}/events?card_id=global`)
+      const handle = (e: MessageEvent) => {
+        try {
+          const { cardId, ...rest } = JSON.parse(e.data)
+          handleKanbanEvent(e.type, { cardId, ...rest })
+        } catch { /**/ }
+      }
+      ;['card_complete','card_update','card_error','canvas_event'].forEach(ev => {
+        es!.addEventListener(ev, handle as EventListener)
+      })
+    })
+    return () => es?.close()
+  }, [handleKanbanEvent])
 
   // Also listen via IPC (fallback for same-process events)
   useEffect(() => {
@@ -282,6 +387,46 @@ export function KanbanTile({ tileId, workspaceDir, width, height, onFocusTile }:
           onMouseLeave={e => { e.currentTarget.style.color = '#8b949e'; e.currentTarget.style.background = '#21262d' }}
         >+ List</button>
       </div>
+
+      {/* Terminal task activity */}
+      {terminalTaskCards.length > 0 && (
+        <div style={{ borderBottom: '1px solid #21262d', background: '#0b1017', padding: '4px 8px' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#58a6ff', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 4 }}>Task Activity</div>
+          <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
+            {terminalTaskCards.map(card => {
+              const ev = terminalEventByCard[card.id]
+              const hasAny = !!ev
+              const isLive = hasAny && Date.now() - ev.ts < ACTIVE_TTL * 2
+              return (
+                <button
+                  key={card.id}
+                  onClick={() => jumpToCard(card.id)}
+                  style={{
+                    fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer',
+                    borderRadius: 6, border: `1px solid ${isLive ? '#3fb95055' : '#30363d'}`,
+                    background: isLive ? '#162e20' : '#121820',
+                    padding: 7, minWidth: 180, maxWidth: 280,
+                    color: '#c9d1d9',
+                    display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0
+                  }}
+                  title={`Jump to ${card.title}`}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = '#58a6ff66' }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = isLive ? '#3fb95055' : '#30363d' }}
+                >
+                  <span style={{ fontSize: 11, color: '#58a6ff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.title}</span>
+                  <span style={{ fontSize: 10, color: hasAny ? '#8b949e' : '#333', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: isLive ? '#3fb950' : '#30363d', boxShadow: isLive ? '0 0 6px #3fb950' : 'none', display: 'inline-block' }} />
+                    {hasAny ? ev.message : 'No terminal output yet'}
+                  </span>
+                  <span style={{ fontSize: 9, color: '#555', letterSpacing: 0.2 }}>
+                    {hasAny ? new Date(ev.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '---'}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Columns */}
       <div style={{ flex: 1, display: 'flex', overflowX: 'auto', overflowY: 'hidden' }}>

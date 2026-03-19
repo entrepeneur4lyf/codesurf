@@ -17,12 +17,17 @@ contextBridge.exposeInMainWorld('electron', {
     readFile: (path: string) => ipcRenderer.invoke('fs:readFile', path),
     writeFile: (path: string, content: string) => ipcRenderer.invoke('fs:writeFile', path, content),
     createFile: (path: string) => ipcRenderer.invoke('fs:createFile', path),
+    createDir: (path: string) => ipcRenderer.invoke('fs:createDir', path),
     deleteFile: (path: string) => ipcRenderer.invoke('fs:deleteFile', path),
     renameFile: (oldPath: string, newPath: string) => ipcRenderer.invoke('fs:renameFile', oldPath, newPath),
-    watch: (path: string, callback: (event: string, filename: string) => void) => {
-      const channel = `fs:watch:${path}`
-      ipcRenderer.on(channel, (_, event, filename) => callback(event, filename))
-      return () => ipcRenderer.removeAllListeners(channel)
+    watch: (dirPath: string, callback: () => void) => {
+      const channel = `fs:watch:${dirPath}`
+      ipcRenderer.on(channel, () => callback())
+      ipcRenderer.invoke('fs:watchStart', dirPath)
+      return () => {
+        ipcRenderer.removeAllListeners(channel)
+        ipcRenderer.invoke('fs:watchStop', dirPath)
+      }
     },
     revealInFinder: (path: string) => ipcRenderer.invoke('fs:revealInFinder', path),
     writeBrief: (cardId: string, content: string) => ipcRenderer.invoke('fs:writeBrief', cardId, content)
@@ -32,6 +37,12 @@ contextBridge.exposeInMainWorld('electron', {
   canvas: {
     load: (workspaceId: string) => ipcRenderer.invoke('canvas:load', workspaceId),
     save: (workspaceId: string, state: any) => ipcRenderer.invoke('canvas:save', workspaceId, state)
+  },
+
+  // Kanban board state persistence
+  kanban: {
+    load: (workspaceId: string, tileId: string) => ipcRenderer.invoke('kanban:load', workspaceId, tileId),
+    save: (workspaceId: string, tileId: string, state: any) => ipcRenderer.invoke('kanban:save', workspaceId, tileId, state)
   },
 
   // Terminal operations (stub for now)

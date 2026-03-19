@@ -1,7 +1,9 @@
-import { app, ipcMain, shell } from 'electron'
-import { promises as fs } from 'fs'
+import { app, ipcMain, shell, BrowserWindow } from 'electron'
+import { promises as fs, watch as fsWatch, FSWatcher } from 'fs'
 import { basename, extname, join } from 'path'
 import { homedir } from 'os'
+
+const watchers = new Map<string, FSWatcher>()
 
 const resolveHome = (): string => app.getPath('home') || process.env.HOME || process.env.USERPROFILE || homedir()
 
@@ -97,5 +99,35 @@ export function registerFsIPC(): void {
     const briefPath = join(briefDir, `${cardId}.md`)
     await fs.writeFile(briefPath, content, 'utf8')
     return briefPath
+  })
+
+  ipcMain.handle('fs:watchStart', async (event, dirPath: string) => {
+    const resolved = resolveFsPath(dirPath)
+    if (watchers.has(resolved)) return
+    let debounce: ReturnType<typeof setTimeout> | null = null
+    try {
+      const watcher = fsWatch(resolved, { recursive: true }, () => {
+        if (debounce) clearTimeout(debounce)
+        debounce = setTimeout(() => {
+          if (event.sender.isDestroyed()) return
+          const win = BrowserWindow.fromWebContents(event.sender)
+          win?.webContents.send(`fs:watch:${dirPath}`)
+        }, 200)
+      })
+      watchers.set(resolved, watcher)
+
+      // Clean up watcher if the renderer process crashes or is destroyed
+      event.sender.once('destroyed', () => {
+        if (debounce) clearTimeout(debounce)
+        watcher.close()
+        watchers.delete(resolved)
+      })
+    } catch { /* ignore */ }
+  })
+
+  ipcMain.handle('fs:watchStop', async (_, dirPath: string) => {
+    const resolved = resolveFsPath(dirPath)
+    const watcher = watchers.get(resolved)
+    if (watcher) { watcher.close(); watchers.delete(resolved) }
   })
 }

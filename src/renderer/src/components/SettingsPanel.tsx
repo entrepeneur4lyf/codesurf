@@ -265,7 +265,20 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
               <ColorSwatch value={settings.canvasBackground} onChange={v => update('canvasBackground', v)} />
             </SettingRow>
             <SectionLabel label="Grid" />
-            <SettingRow label="Grid size" description="Snap grid size in pixels">
+            <SettingRow label="Small dot colour" description="Color of the small grid dots">
+              <ColorSwatch value={settings.gridColorSmall} onChange={v => update('gridColorSmall', v)} />
+            </SettingRow>
+            <SettingRow label="Large dot colour" description="Color of the large grid dots">
+              <ColorSwatch value={settings.gridColorLarge} onChange={v => update('gridColorLarge', v)} />
+            </SettingRow>
+            <SettingRow label="Small dot spacing" description="Distance between small dots in pixels">
+              <NumInput value={settings.gridSpacingSmall} min={4} max={200} onChange={v => update('gridSpacingSmall', v)} />
+            </SettingRow>
+            <SettingRow label="Large dot spacing" description="Distance between large dots in pixels">
+              <NumInput value={settings.gridSpacingLarge} min={20} max={500} onChange={v => update('gridSpacingLarge', v)} />
+            </SettingRow>
+            <SectionLabel label="Snap" />
+            <SettingRow label="Snap grid size" description="Snap grid size in pixels">
               <NumInput value={settings.gridSize} min={4} max={80} onChange={v => update('gridSize', v)} />
             </SettingRow>
             <SettingRow label="Snap to grid" description="Snap tiles to the grid when dragging">

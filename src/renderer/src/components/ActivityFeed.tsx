@@ -7,7 +7,7 @@ export interface ActivityEvent {
   cardTitle: string
   event: string
   message: string
-  type: 'complete' | 'update' | 'error' | 'custom' | 'input'
+  type: 'complete' | 'update' | 'error' | 'custom' | 'input' | 'terminal'
   question?: string
   options?: string[]
   answered?: boolean
@@ -25,7 +25,8 @@ const TYPE_COLOR: Record<string, string> = {
   update:   '#58a6ff',
   error:    '#ff7b72',
   custom:   '#d7ba7d',
-  input:    '#f9af4f'
+  input:    '#f9af4f',
+  terminal: '#3fb950'
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -33,7 +34,8 @@ const TYPE_LABEL: Record<string, string> = {
   update:   'update',
   error:    'error',
   custom:   'event',
-  input:    'input?'
+  input:    'input?',
+  terminal: 'term'
 }
 
 function EventRow({ ev, onJump, onReply }: { ev: ActivityEvent; onJump: (id: string) => void; onReply: (evId: string, cardId: string, msg: string) => void }): JSX.Element {
@@ -103,11 +105,15 @@ function EventRow({ ev, onJump, onReply }: { ev: ActivityEvent; onJump: (id: str
 
 export function ActivityFeed({ events, onClearAll, onJumpToCard, onReply }: Props): JSX.Element {
   const bottomRef = useRef<HTMLDivElement>(null)
+  const prevLenRef = useRef(events.length)
   const [collapsed, setCollapsed] = useState(false)
 
-  // Auto-scroll to latest
+  // Auto-scroll to latest — only when events are added, not on mount
   useEffect(() => {
-    if (!collapsed) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (!collapsed && events.length > 0 && events.length > prevLenRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+    prevLenRef.current = events.length
   }, [events.length, collapsed])
 
   const recent = events.slice(-50) // keep last 50

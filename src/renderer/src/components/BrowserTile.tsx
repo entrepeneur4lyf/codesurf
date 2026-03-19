@@ -1,12 +1,11 @@
-// @ts-nocheck
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowLeft, ArrowRight, RotateCcw, RotateCw, Home, Globe, Monitor, Smartphone } from 'lucide-react'
+import { ArrowLeft, ArrowRight, RotateCcw, RotateCw, Home, Globe, Monitor, Smartphone, Crosshair } from 'lucide-react'
 
 const HOMEPAGE = 'https://duckduckgo.com'
 
 const DESKTOP_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) @collaborator/electron/0.2.0 Chrome/132.0.6834.159 Safari/537.36'
 const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1'
 
@@ -16,7 +15,17 @@ const CLUSO_EMBED_CSS_PATH = '/Users/jkneen/clawd/agentation-real/dist/assets/cl
 // ---------------------------------------------------------------------------
 // Cluso injection script — ported verbatim from 1code agent-preview.tsx
 // ---------------------------------------------------------------------------
-const createClusoInjectScript = (jsContent: string, cssContent: string) => `
+
+/**
+ * CLUSO_INJECTION_SCRIPT generator.
+ *
+ * Builds a self-executing JS string that, when evaluated inside a webview,
+ * polyfills localStorage (for sandboxed contexts), creates an isolated
+ * shadow-DOM-like mount point, injects the Cluso embed CSS/JS, and wires
+ * up __CLUSO_HOST__ lifecycle hooks.  The returned string is passed to
+ * webview.executeJavaScript() after every page load.
+ */
+const createClusoInjectScript = (jsContent: string, cssContent: string): string => `
 (() => {
   // Polyfill localStorage for sandboxed/blank webviews where access is denied
   try { void window.localStorage; } catch {
@@ -201,7 +210,7 @@ function ToolbarButton({
   active?: boolean
   onClick: () => void
   children: React.ReactNode
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <button
       type="button"
@@ -246,6 +255,7 @@ interface Props {
   width: number
   height: number
   zIndex: number
+  isInteracting?: boolean
 }
 
 type BrowserMode = 'desktop' | 'mobile'
@@ -253,11 +263,25 @@ type BrowserMode = 'desktop' | 'mobile'
 // ---------------------------------------------------------------------------
 // BrowserTile
 // ---------------------------------------------------------------------------
-export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex }: Props): JSX.Element {
+export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex, isInteracting }: Props): React.JSX.Element {
   const wvContainerRef = useRef<HTMLDivElement>(null)
   const wvRef = useRef<Electron.WebviewTag | null>(null)
   const wvReadyRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const mountedRef = useRef(true)
+  const clusoToggleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Track component mount state for async cleanup
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (clusoToggleTimerRef.current !== null) {
+        clearTimeout(clusoToggleTimerRef.current)
+        clusoToggleTimerRef.current = null
+      }
+    }
+  }, [])
 
   const initialSrc = useRef(normalizeUrl(initialUrl ?? ''))
   const startUrl = initialSrc.current
@@ -381,7 +405,9 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
     const onNavigateInPage = () => updateNav()
 
     const onNewWindow = (e: Event) => {
-      const ev = e as Electron.NewWindowWebContentsEvent
+      // 'new-window' is deprecated but still fires at runtime; the event
+      // carries a `url` property that isn't in the base Event type.
+      const ev = e as Event & { url?: string }
       if (ev.url) {
         e.preventDefault()
         window.electron?.shell?.openExternal?.(ev.url)
@@ -389,9 +415,8 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
     }
 
     // ---- cluso console message handler ----------------------------------
-    const onConsoleMessage = (e: Event) => {
-      const event = e as unknown as { message: string; level: number }
-      const { message } = event
+    const onConsoleMessage = (e: Electron.ConsoleMessageEvent) => {
+      const { message } = e
 
       if (!message.startsWith('__CLUSO_')) return
 
@@ -507,6 +532,48 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
     }
   }, [])
 
+  // Toggle cluso element selector.
+  // Uses a retry loop outside the webview (via setTimeout) so that:
+  //  - the attempts counter always increments
+  //  - the timer is cleaned up if the component unmounts mid-polling
+  const handleToggleCluso = useCallback(() => {
+    const TOGGLE_SCRIPT = `
+      (() => {
+        const host = window.__CLUSO_HOST__;
+        if (!host) return '__CLUSO_NOT_READY__';
+        try {
+          if (typeof host.toggleActive === 'function') {
+            host.toggleActive();
+          } else if (typeof host.setActive === 'function') {
+            const current = host.isActive?.() ?? host.active ?? false;
+            host.setActive(!current);
+          }
+          return '__CLUSO_TOGGLED__';
+        } catch {
+          return '__CLUSO_TOGGLE_ERROR__';
+        }
+      })();
+    `
+
+    const MAX_ATTEMPTS = 20
+    const RETRY_DELAY_MS = 100
+
+    const tryToggle = (attempt: number) => {
+      const webview = wvRef.current
+      if (!webview || !wvReadyRef.current || !mountedRef.current) return
+
+      webview.executeJavaScript(TOGGLE_SCRIPT).then((result: string) => {
+        if (result === '__CLUSO_NOT_READY__' && attempt < MAX_ATTEMPTS && mountedRef.current) {
+          clusoToggleTimerRef.current = setTimeout(() => tryToggle(attempt + 1), RETRY_DELAY_MS)
+        }
+      }).catch((err: unknown) => {
+        console.error('[BrowserTile] Failed to toggle Cluso:', err)
+      })
+    }
+
+    tryToggle(0)
+  }, [])
+
   // ---- portal toolbar ---------------------------------------------------
   const headerSlot =
     typeof document !== 'undefined'
@@ -606,21 +673,16 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
         >
           <Smartphone size={12} />
         </ToolbarButton>
+        <ToolbarButton
+          label="Cluso"
+          title={isClusoActive ? 'Finish selection' : isClusoReady ? 'Select elements for chat context' : 'Load selector'}
+          active={isClusoActive}
+          disabled={!isClusoReady && !currentUrl}
+          onClick={handleToggleCluso}
+        >
+          <Crosshair size={12} />
+        </ToolbarButton>
 
-        {/* Cluso ready indicator */}
-        {isClusoReady && (
-          <div
-            title={isClusoActive ? 'Cluso active' : 'Cluso ready'}
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: '50%',
-              background: isClusoActive ? '#f97316' : '#3fb950',
-              flexShrink: 0,
-              marginLeft: 2
-            }}
-          />
-        )}
       </div>
     </form>
   )
@@ -635,6 +697,22 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
         ref={wvContainerRef}
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
       />
+
+      {/* Invisible overlay during drag/resize — blocks mouse events from reaching webview */}
+      {isInteracting && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            pointerEvents: 'auto',
+            background: 'transparent',
+            zIndex: 9999
+          }}
+        />
+      )}
 
       {(width < 260 || height < 170) && (
         <div

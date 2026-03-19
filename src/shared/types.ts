@@ -8,9 +8,13 @@ export type TileType = 'terminal' | 'note' | 'code' | 'image' | 'kanban' | 'brow
 
 export interface AppSettings {
   // Canvas
-  gridSize: number
-  snapToGrid: boolean
   canvasBackground: string
+  gridColorSmall: string
+  gridColorLarge: string
+  gridSpacingSmall: number
+  gridSpacingLarge: number
+  snapToGrid: boolean
+  gridSize: number
   // Terminal
   terminalFontSize: number
   terminalFontFamily: string
@@ -25,9 +29,13 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  gridSize: 20,
+  canvasBackground: '#1e1e1e',
+  gridColorSmall: '#333333',
+  gridColorLarge: '#4a4a4a',
+  gridSpacingSmall: 20,
+  gridSpacingLarge: 100,
   snapToGrid: true,
-  canvasBackground: '#3c3c3c',
+  gridSize: 20,
   terminalFontSize: 13,
   terminalFontFamily: '"JetBrains Mono", "Menlo", "Monaco", "SF Mono", monospace',
   uiFontSize: 12,

@@ -1,23 +1,38 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react'
-import { Unlink, Layers, Scissors, ClipboardPaste, Map, AppWindow, SquarePlus, Server, Settings2 } from 'lucide-react'
-import { Tooltip } from './components/Tooltip'
-import type { TileState, GroupState, CanvasState, Workspace } from '../../shared/types'
-import { withDefaultSettings } from '../../shared/types'
-import { Sidebar } from './components/Sidebar'
-import { TileChrome } from './components/TileChrome'
-import { TerminalTile } from './components/TerminalTile'
-import { CodeTile } from './components/CodeTile'
-import { NoteTile } from './components/NoteTile'
-import { ImageTile } from './components/ImageTile'
-import { KanbanTile } from './components/KanbanTile'
-import { BrowserTile } from './components/BrowserTile'
-import { MCPPanel } from './components/MCPPanel'
-import { ArrangeToolbar } from './components/ArrangeToolbar'
-import { Minimap } from './components/Minimap'
-import { ContextMenu, MenuItem } from './components/ContextMenu'
-import { SettingsPanel } from './components/SettingsPanel'
-import type { AppSettings } from '../../shared/types'
-import { DEFAULT_SETTINGS } from '../../shared/types'
+import React, { useState, useRef, useCallback, useEffect, Suspense } from 'react'
+import type { TileState, GroupState, CanvasState, Workspace, AppSettings } from '../../shared/types'
+import { withDefaultSettings, DEFAULT_SETTINGS } from '../../shared/types'
+import type { MenuItem } from './components/ContextMenu'
+
+const textIconStyle = (size: number): React.CSSProperties => ({
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: size,
+  height: size,
+  fontSize: Math.max(10, size - 2),
+  lineHeight: 1,
+  fontFamily: 'monospace',
+  userSelect: 'none'
+})
+
+const Icon = ({ glyph, size = 15 }: { glyph: string; size?: number }): JSX.Element => (
+  <span style={textIconStyle(size)}>{glyph}</span>
+)
+
+const LazyTileChrome = React.lazy(() => import('./components/TileChrome').then(m => ({ default: m.TileChrome })))
+const LazySidebar = React.lazy(() => import('./components/Sidebar').then(m => ({ default: m.Sidebar })))
+const LazyContextMenu = React.lazy(() => import('./components/ContextMenu').then(m => ({ default: m.ContextMenu })))
+const LazyImageTile = React.lazy(() => import('./components/ImageTile').then(m => ({ default: m.ImageTile })))
+const LazyBrowserTile = React.lazy(() => import('./components/BrowserTile').then(m => ({ default: m.BrowserTile })))
+const LazyKanbanTile = React.lazy(() => import('./components/KanbanTile').then(m => ({ default: m.KanbanTile })))
+const LazyMCPPanel = React.lazy(() => import('./components/MCPPanel').then(m => ({ default: m.MCPPanel })))
+const LazyArrangeToolbar = React.lazy(() => import('./components/ArrangeToolbar').then(m => ({ default: m.ArrangeToolbar })))
+const LazyMinimap = React.lazy(() => import('./components/Minimap').then(m => ({ default: m.Minimap })))
+const LazySettingsPanel = React.lazy(() => import('./components/SettingsPanel').then(m => ({ default: m.SettingsPanel })))
+const LazyTerminalTile = React.lazy(() => import('./components/TerminalTile').then(m => ({ default: m.TerminalTile })))
+const LazyCodeTile = React.lazy(() => import('./components/CodeTile').then(m => ({ default: m.CodeTile })))
+const LazyNoteTile = React.lazy(() => import('./components/NoteTile').then(m => ({ default: m.NoteTile })))
+const LazyClusoWidgetMount = React.lazy(() => import('./components/ClusoWidgetMount').then(m => ({ default: m.ClusoWidgetMount })))
 
 type DragState =
   | { type: null }
@@ -36,6 +51,8 @@ function extToType(filePath: string): TileState['type'] {
   if (['ts', 'tsx', 'js', 'jsx', 'json', 'py', 'rs', 'go', 'cpp', 'c', 'java', 'css', 'html', 'sh', 'bash', 'yaml', 'yml', 'toml', 'xml'].includes(ext)) return 'code'
   if (['md', 'txt', 'markdown', 'mdx'].includes(ext)) return 'note'
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) return 'image'
+  // Files with no extension or unrecognized extensions default to code editor
+  if (!filePath.includes('.')) return 'code'
   return 'terminal'
 }
 
@@ -1019,7 +1036,7 @@ function App(): JSX.Element {
     switch (tile.type) {
       case 'terminal':
         return (
-          <TerminalTile
+          <LazyTerminalTile
             tileId={tile.id}
             workspaceDir={workspace?.path ?? ''}
             width={tile.width}
@@ -1029,17 +1046,20 @@ function App(): JSX.Element {
           />
         )
       case 'code':
-        return <CodeTile filePath={tile.filePath} />
+        return <LazyCodeTile filePath={tile.filePath} />
       case 'note':
-        return <NoteTile filePath={tile.filePath} />
+        return <LazyNoteTile filePath={tile.filePath} />
       case 'image':
-        return tile.filePath ? <ImageTile filePath={tile.filePath} /> : null
+        return tile.filePath ? <LazyImageTile filePath={tile.filePath} /> : null
       case 'browser':
-        return <BrowserTile tileId={tile.id} initialUrl={tile.filePath ?? ''} width={tile.width} height={tile.height} zIndex={tile.zIndex} />
+        return (
+          <LazyBrowserTile tileId={tile.id} initialUrl={tile.filePath ?? ''} width={tile.width} height={tile.height} zIndex={tile.zIndex} isInteracting={dragState.type !== null} />
+        )
       case 'kanban':
         return (
-          <KanbanTile
+          <LazyKanbanTile
             tileId={tile.id}
+            workspaceId={workspace?.id ?? ''}
             workspaceDir={workspace?.path ?? ''}
             width={tile.width}
             height={tile.height}
@@ -1094,55 +1114,72 @@ function App(): JSX.Element {
 
           {/* Icon buttons */}
           {([
-            { icon: <AppWindow size={15} />, label: 'New Window (⌘N)', action: () => window.electron.window?.new(), active: false },
-            { icon: <SquarePlus size={15} />, label: 'New Tab (⌘T)', action: () => window.electron.window?.newTab(), active: false },
-            { icon: <Map size={15} />, label: 'Minimap', action: () => setShowMinimap(p => !p), active: showMinimap },
-            { icon: <Server size={15} />, label: 'MCP Servers', action: () => { setShowSettings(true) }, active: false },
-            { icon: <Settings2 size={15} />, label: 'Settings', action: () => setShowSettings(true), active: false },
+            { icon: <Icon glyph="□" size={15} />, label: 'New Window (⌘N)', action: () => window.electron.window?.new(), active: false },
+            { icon: <Icon glyph="+" size={15} />, label: 'New Tab (⌘T)', action: () => window.electron.window?.newTab(), active: false },
+            { icon: <Icon glyph="◉" size={15} />, label: 'Minimap', action: () => setShowMinimap(p => !p), active: showMinimap },
+            { icon: <Icon glyph="◯" size={15} />, label: 'MCP Servers', action: () => { setShowSettings(true) }, active: false },
+            { icon: <Icon glyph="⚙" size={15} />, label: 'Settings', action: () => setShowSettings(true), active: false },
           ] as { icon: React.ReactNode; label: string; action: () => void; active: boolean }[]).map(btn => (
-            <Tooltip key={btn.label} label={btn.label} side="bottom">
-              <button
-                onClick={btn.action}
-                style={{
-                  width: 30, height: 30, borderRadius: 6,
-                  background: btn.active ? 'rgba(74,158,255,0.15)' : 'transparent',
-                  border: btn.active ? '1px solid rgba(74,158,255,0.3)' : '1px solid transparent',
-                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: btn.active ? '#4a9eff' : '#666',
-                  transition: 'all 0.1s'
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.background = btn.active ? 'rgba(74,158,255,0.2)' : 'rgba(255,255,255,0.06)'
-                  e.currentTarget.style.color = btn.active ? '#4a9eff' : '#ccc'
-                  e.currentTarget.style.borderColor = btn.active ? 'rgba(74,158,255,0.4)' : 'rgba(255,255,255,0.1)'
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = btn.active ? 'rgba(74,158,255,0.15)' : 'transparent'
-                  e.currentTarget.style.color = btn.active ? '#4a9eff' : '#666'
-                  e.currentTarget.style.borderColor = btn.active ? 'rgba(74,158,255,0.3)' : 'transparent'
-                }}
-              >
-                {btn.icon}
-              </button>
-            </Tooltip>
+            <button
+              key={btn.label}
+              title={btn.label}
+              onClick={btn.action}
+              style={{
+                width: 30, height: 30, borderRadius: 6,
+                background: btn.active ? 'rgba(74,158,255,0.15)' : 'transparent',
+                border: btn.active ? '1px solid rgba(74,158,255,0.3)' : '1px solid transparent',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: btn.active ? '#4a9eff' : '#666',
+                transition: 'all 0.1s'
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = btn.active ? 'rgba(74,158,255,0.2)' : 'rgba(255,255,255,0.06)'
+                e.currentTarget.style.color = btn.active ? '#4a9eff' : '#ccc'
+                e.currentTarget.style.borderColor = btn.active ? 'rgba(74,158,255,0.4)' : 'rgba(255,255,255,0.1)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = btn.active ? 'rgba(74,158,255,0.15)' : 'transparent'
+                e.currentTarget.style.color = btn.active ? '#4a9eff' : '#666'
+                e.currentTarget.style.borderColor = btn.active ? 'rgba(74,158,255,0.3)' : 'transparent'
+              }}
+            >
+              {btn.icon}
+            </button>
           ))}
         </div>
       </div>
 
       {/* Main layout */}
       <div className="flex-1 flex overflow-hidden" style={{ position: 'relative' }}>
-        <Sidebar
-          workspace={workspace}
-          workspaces={workspaces}
-          onSwitchWorkspace={handleSwitchWorkspace}
-          onNewWorkspace={handleNewWorkspace}
-          onOpenFile={handleOpenFile}
-          onNewTerminal={() => addTile('terminal')}
-          onNewKanban={() => addTile('kanban')}
-          onNewBrowser={() => addTile('browser')}
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={() => setSidebarCollapsed(p => !p)}
-        />
+        <Suspense fallback={
+          <div
+            style={{
+              width: sidebarCollapsed ? 32 : 280,
+              background: '#1e1e1e',
+              borderRight: '1px solid #2d2d2d',
+              color: '#666',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 11
+            }}
+          >
+            Loading sidebar…
+          </div>
+        }>
+          <LazySidebar
+            workspace={workspace}
+            workspaces={workspaces}
+            onSwitchWorkspace={handleSwitchWorkspace}
+            onNewWorkspace={handleNewWorkspace}
+            onOpenFile={handleOpenFile}
+            onNewTerminal={() => addTile('terminal')}
+            onNewKanban={() => addTile('kanban')}
+            onNewBrowser={() => addTile('browser')}
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed(p => !p)}
+          />
+        </Suspense>
 
         {/* Sidebar collapse pill — floats over the canvas left edge, always visible */}
         <div
@@ -1222,13 +1259,22 @@ function App(): JSX.Element {
             if (filePath) addTile(extToType(filePath), filePath, world)
           }}
         >
-          {/* Dot grid */}
+          {/* Dot grid - small */}
           <div
             className="absolute inset-0 pointer-events-none"
             style={{
-              backgroundImage: `radial-gradient(circle, #4a4a4a 1.5px, transparent 1.5px)`,
-              backgroundSize: `${settings.gridSize * viewport.zoom}px ${settings.gridSize * viewport.zoom}px`,
-              backgroundPosition: `${viewport.tx % (settings.gridSize * viewport.zoom)}px ${viewport.ty % (settings.gridSize * viewport.zoom)}px`
+              backgroundImage: `radial-gradient(circle, ${settings.gridColorSmall} 1px, transparent 1px)`,
+              backgroundSize: `${settings.gridSpacingSmall * viewport.zoom}px ${settings.gridSpacingSmall * viewport.zoom}px`,
+              backgroundPosition: `${viewport.tx % (settings.gridSpacingSmall * viewport.zoom)}px ${viewport.ty % (settings.gridSpacingSmall * viewport.zoom)}px`
+            }}
+          />
+          {/* Dot grid - large */}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundImage: `radial-gradient(circle, ${settings.gridColorLarge} 2px, transparent 2px)`,
+              backgroundSize: `${settings.gridSpacingLarge * viewport.zoom}px ${settings.gridSpacingLarge * viewport.zoom}px`,
+              backgroundPosition: `${viewport.tx % (settings.gridSpacingLarge * viewport.zoom)}px ${viewport.ty % (settings.gridSpacingLarge * viewport.zoom)}px`
             }}
           />
 
@@ -1341,30 +1387,30 @@ function App(): JSX.Element {
                       <span style={{ width: 1, height: 10, background: '#444' }} />
 
                       {([
-                        { icon: <Unlink size={11} />, label: 'Ungroup', action: () => ungroupTilesRef.current(g.id) },
-                        { icon: <Layers size={11} />, label: 'Ungroup all', action: () => ungroupAllRef.current(g.id) },
-                        { icon: <Scissors size={11} />, label: 'Cut', action: () => {
+                        { icon: <Icon glyph='⟂' size={11} />, label: 'Ungroup', action: () => ungroupTilesRef.current(g.id) },
+                        { icon: <Icon glyph='▦' size={11} />, label: 'Ungroup all', action: () => ungroupAllRef.current(g.id) },
+                        { icon: <Icon glyph='✂' size={11} />, label: 'Cut', action: () => {
                           const ids = collectGroupTileIds(g.id)
                           setSelectedTileIds(new Set(ids))
                           setSelectedTileId(null)
                           setTimeout(() => copyTilesRef.current(true), 0)
                         }},
-                        ...(clipboard.current.length > 0 ? [{ icon: <ClipboardPaste size={11} />, label: 'Paste in', action: () => pasteTilesRef.current(undefined, g.id) }] : [])
+                        ...(clipboard.current.length > 0 ? [{ icon: <Icon glyph='📋' size={11} />, label: 'Paste in', action: () => pasteTilesRef.current(undefined, g.id) }] : [])
                       ] as { icon: React.ReactNode; label: string; action: () => void }[]).map(btn => (
-                        <Tooltip key={btn.label} label={btn.label} side="bottom">
-                          <div
-                            onClick={e => { e.stopPropagation(); btn.action() }}
-                            style={{
-                              display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              width: 20, height: 20, borderRadius: 4, cursor: 'pointer',
-                              color: '#999',
-                            }}
-                            onMouseEnter={e => (e.currentTarget.style.color = '#fff')}
-                            onMouseLeave={e => (e.currentTarget.style.color = '#999')}
-                          >
-                            {btn.icon}
-                          </div>
-                        </Tooltip>
+                        <div
+                          key={btn.label}
+                          title={btn.label}
+                          onClick={e => { e.stopPropagation(); btn.action() }}
+                          style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            width: 20, height: 20, borderRadius: 4, cursor: 'pointer',
+                            color: '#999',
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.color = '#fff')}
+                          onMouseLeave={e => (e.currentTarget.style.color = '#999')}
+                        >
+                          {btn.icon}
+                        </div>
                       ))}
                     </div>
 
@@ -1461,19 +1507,25 @@ function App(): JSX.Element {
                 ((dragState.type === 'group' || dragState.type === 'group-resize') && tile.groupId === dragState.groupId)
               const activeTile = isActiveDrag ? { ...tile, zIndex: 99990 } : tile
               return (
-                <TileChrome
+                <Suspense
                   key={tile.id}
-                  tile={activeTile}
-                  onClose={() => closeTile(tile.id)}
-                  onTitlebarMouseDown={e => handleTileMouseDown(e, tile)}
-                  onResizeMouseDown={(e, dir) => handleResizeMouseDown(e, tile, dir)}
-                  onContextMenu={e => handleTileContextMenu(e, tile)}
-                  isSelected={tile.id === selectedTileId || selectedTileIds.has(tile.id)}
-                  forceExpanded={expandedTileId === tile.id}
-                  onExpandChange={expanded => setExpandedTileId(expanded ? tile.id : null)}
+                  fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: 12, background: '#1e1e1e' }}>Loading tile frame…</div>}
                 >
-                  {renderTileBody(tile)}
-                </TileChrome>
+                  <LazyTileChrome
+                    tile={activeTile}
+                    onClose={() => closeTile(tile.id)}
+                    onTitlebarMouseDown={e => handleTileMouseDown(e, tile)}
+                    onResizeMouseDown={(e, dir) => handleResizeMouseDown(e, tile, dir)}
+                    onContextMenu={e => handleTileContextMenu(e, tile)}
+                    isSelected={tile.id === selectedTileId || selectedTileIds.has(tile.id)}
+                    forceExpanded={expandedTileId === tile.id}
+                    onExpandChange={expanded => setExpandedTileId(expanded ? tile.id : null)}
+                  >
+                    <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: 12, background: '#1a1a1a' }}>Loading tile…</div>}>
+                      {renderTileBody(tile)}
+                    </Suspense>
+                  </LazyTileChrome>
+                </Suspense>
               )
             })}
           </div>
@@ -1566,7 +1618,9 @@ function App(): JSX.Element {
                     position:absolute inset:0 is contained here, not the overlay.
                     Without it the webview escapes up and covers the titlebar. */}
                 <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, position: 'relative' }}>
-                  {renderTileBody(tile)}
+                  <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: 12, background: '#1a1a1a' }}>Loading tile…</div>}>
+                    {renderTileBody(tile)}
+                  </Suspense>
                 </div>
               </div>
             )
@@ -1574,25 +1628,43 @@ function App(): JSX.Element {
 
           {/* Minimap */}
           {showMinimap && (
-            <Minimap
-              tiles={tiles}
-              viewport={viewport}
-              canvasSize={{
-                w: canvasRef.current?.clientWidth ?? 1200,
-                h: canvasRef.current?.clientHeight ?? 800
-              }}
-              onPan={(tx, ty) => setViewport(prev => ({ ...prev, tx, ty }))}
-            />
+            <Suspense fallback={null}>
+              <LazyMinimap
+                tiles={tiles}
+                viewport={viewport}
+                canvasSize={{
+                  w: canvasRef.current?.clientWidth ?? 1200,
+                  h: canvasRef.current?.clientHeight ?? 800
+                }}
+                onPan={(tx, ty) => setViewport(prev => ({ ...prev, tx, ty }))}
+              />
+            </Suspense>
           )}
 
           {/* Arrange toolbar */}
-          <ArrangeToolbar tiles={tiles} onArrange={handleArrange} />
+          <Suspense fallback={null}>
+            <LazyArrangeToolbar tiles={tiles} onArrange={handleArrange} />
+          </Suspense>
         </div>
       </div>
-      {showMCP && <MCPPanel onClose={() => setShowMCP(false)} />}
-      {/* showMCP now opens Settings on MCP tab — kept for backwards compat */}
-      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} onSettingsChange={s => setSettings(s)} workspaces={workspaces} />}
-      {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={closeCtx} />}
+      {showMCP && (
+        <Suspense fallback={null}>
+          <LazyMCPPanel onClose={() => setShowMCP(false)} />
+        </Suspense>
+      )}
+      {showSettings && (
+        <Suspense fallback={null}>
+          <LazySettingsPanel onClose={() => setShowSettings(false)} onSettingsChange={s => setSettings(s)} workspaces={workspaces} />
+        </Suspense>
+      )}
+      {ctxMenu && (
+        <Suspense fallback={null}>
+          <LazyContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={closeCtx} />
+        </Suspense>
+      )}
+      <Suspense fallback={null}>
+        <LazyClusoWidgetMount />
+      </Suspense>
     </div>
   )
 }
