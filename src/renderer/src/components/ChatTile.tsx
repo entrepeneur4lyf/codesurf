@@ -25,6 +25,33 @@ function CodexIcon({ size = 12, color = 'currentColor' }: { size?: number; color
   )
 }
 
+// --- Thinking strength icon (brain + signal bars) --------------------------------
+
+const THINKING_LEVELS: Record<string, number> = { none: 0, low: 1, medium: 2, adaptive: 3, high: 4, max: 5 }
+
+function ThinkingIcon({ level }: { level: string }): JSX.Element {
+  const bars = THINKING_LEVELS[level] ?? 3
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+      <Brain size={12} />
+      <svg width="10" height="12" viewBox="0 0 10 12">
+        {[0, 1, 2, 3, 4].map(i => (
+          <rect
+            key={i}
+            x={i * 2}
+            y={12 - (i + 1) * 2.2}
+            width="1.4"
+            height={(i + 1) * 2.2}
+            rx="0.4"
+            fill="currentColor"
+            opacity={i < bars ? 1 : 0.2}
+          />
+        ))}
+      </svg>
+    </div>
+  )
+}
+
 // --- Types -----------------------------------------------------------------------
 
 interface ToolBlock {
@@ -242,6 +269,7 @@ export function ChatTile({ tileId, workspaceId: _workspaceId, workspaceDir: _wor
   const [mcpEnabled, setMcpEnabled] = useState(true)
   const [mode, setMode] = useState(PROVIDER_MODES.claude[0].id)
   const [thinking, setThinking] = useState('adaptive')
+  const [agentMode, setAgentMode] = useState(false)
   const [showModelMenu, setShowModelMenu] = useState(false)
   const [showProviderMenu, setShowProviderMenu] = useState(false)
   const [showMcpMenu, setShowMcpMenu] = useState(false)
@@ -887,22 +915,21 @@ export function ChatTile({ tileId, workspaceId: _workspaceId, workspaceDir: _wor
         {/* Toolbar */}
         <div style={{
           display: 'flex', alignItems: 'center',
-          padding: '4px 10px 8px 10px', gap: 2,
+          padding: '4px 8px 8px 8px', gap: 1,
         }}>
           {/* Attach */}
           <ToolbarBtn icon={<Paperclip size={14} />} tooltip="Attach files" onClick={() => {}} />
 
-          {/* Safety / Mode */}
+          {/* Safety / Mode — icon only, label in dropdown */}
           <div ref={modeMenuRef} style={{ position: 'relative' }}>
             {(() => {
               const currentMode = PROVIDER_MODES[provider].find(m => m.id === mode) ?? PROVIDER_MODES[provider][0]
               return (
                 <>
-                  <ToolbarPill
-                    prefix={<ShieldCheck size={11} />}
-                    label={currentMode.label}
+                  <ToolbarBtn
+                    icon={<ShieldCheck size={14} />}
+                    tooltip={`Permissions: ${currentMode.label}`}
                     color={currentMode.color}
-                    active={showModeMenu}
                     onClick={() => { closeAllMenus(); setShowModeMenu(p => !p) }}
                   />
                   {showModeMenu && (
@@ -924,14 +951,13 @@ export function ChatTile({ tileId, workspaceId: _workspaceId, workspaceDir: _wor
             })()}
           </div>
 
-          {/* Thinking (Claude only) */}
+          {/* Thinking (Claude only) — brain + signal bars icon, label in dropdown */}
           {provider === 'claude' && (
             <div ref={thinkingMenuRef} style={{ position: 'relative' }}>
-              <ToolbarPill
-                prefix={<Brain size={11} />}
-                label={THINKING_OPTIONS.find(t => t.id === thinking)?.label ?? 'Adaptive'}
+              <ToolbarBtn
+                icon={<ThinkingIcon level={thinking} />}
+                tooltip={`Thinking: ${THINKING_OPTIONS.find(t => t.id === thinking)?.label ?? 'Adaptive'}`}
                 color={thinking === 'none' ? '#666' : thinking === 'max' || thinking === 'high' ? '#c084fc' : '#9090c0'}
-                active={showThinkingMenu}
                 onClick={() => { closeAllMenus(); setShowThinkingMenu(p => !p) }}
               />
               {showThinkingMenu && (
@@ -998,19 +1024,26 @@ export function ChatTile({ tileId, workspaceId: _workspaceId, workspaceDir: _wor
             )}
           </div>
 
-          {/* MCP */}
+          {/* Agent Mode */}
+          <ToolbarBtn
+            icon={<Bot size={14} />}
+            tooltip={agentMode ? 'Agent mode (on)' : 'Agent mode (off)'}
+            color={agentMode ? '#58a6ff' : undefined}
+            onClick={() => setAgentMode(p => !p)}
+          />
+
+          {/* MCP — tools icon, popup menu */}
           <div ref={mcpMenuRef} style={{ position: 'relative' }}>
-            <ToolbarPill
-              prefix="mcp"
-              label={mcpEnabled ? 'On' : 'Off'}
-              color={mcpEnabled ? '#3fb950' : '#666'}
-              active={showMcpMenu}
+            <ToolbarBtn
+              icon={<Wrench size={14} />}
+              tooltip={`MCP Tools: ${mcpEnabled ? 'On' : 'Off'}`}
+              color={mcpEnabled ? '#3fb950' : undefined}
               onClick={() => { closeAllMenus(); setShowMcpMenu(p => !p) }}
             />
             {showMcpMenu && (
               <Dropdown>
-                <DropdownItem label="MCP Enabled" active={mcpEnabled} onClick={() => { setMcpEnabled(true); setShowMcpMenu(false) }} />
-                <DropdownItem label="MCP Disabled" active={!mcpEnabled} onClick={() => { setMcpEnabled(false); setShowMcpMenu(false) }} />
+                <DropdownItem icon={<Wrench size={11} />} label="MCP Enabled" active={mcpEnabled} onClick={() => { setMcpEnabled(true); setShowMcpMenu(false) }} />
+                <DropdownItem icon={<Wrench size={11} />} label="MCP Disabled" active={!mcpEnabled} onClick={() => { setMcpEnabled(false); setShowMcpMenu(false) }} />
               </Dropdown>
             )}
           </div>
