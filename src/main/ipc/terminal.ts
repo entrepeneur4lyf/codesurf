@@ -38,6 +38,29 @@ function ensureNodePtySpawnHelperExecutable(): void {
 
 ensureNodePtySpawnHelperExecutable()
 
+// --- Security: binary allowlist for pty spawn (SEC-04) ---
+const ALLOWED_SHELLS = new Set([
+  '/bin/bash', '/bin/zsh', '/bin/sh', '/usr/bin/bash', '/usr/bin/zsh',
+  '/usr/local/bin/bash', '/usr/local/bin/zsh', '/usr/local/bin/fish',
+  '/opt/homebrew/bin/bash', '/opt/homebrew/bin/zsh', '/opt/homebrew/bin/fish',
+])
+
+// Also allow the user's default shell
+const userShell = process.env.SHELL
+if (userShell) ALLOWED_SHELLS.add(userShell)
+
+// Known agent CLIs that are allowed to be spawned directly
+const ALLOWED_AGENT_BINS = ['claude', 'codex', 'aider', 'opencode']
+
+function isAllowedBinary(bin: string): boolean {
+  // Allow known shells
+  if (ALLOWED_SHELLS.has(bin)) return true
+  // Allow known agent CLIs (matched by basename)
+  const base = bin.split('/').pop() || ''
+  if (ALLOWED_AGENT_BINS.includes(base)) return true
+  return false
+}
+
 // node-pty must be required (not imported) due to native module ESM issues
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pty = require('node-pty')
@@ -103,6 +126,12 @@ export function registerTerminalIPC(): void {
         existing.listeners.delete(event.sender)
       })
       return { cols: 80, rows: 24, buffer: existing.buffer }
+    }
+
+    // If a binary is specified, validate it against the allowlist (SEC-04)
+    if (launchBin && !isAllowedBinary(launchBin)) {
+      console.warn(`[terminal] Blocked non-allowlisted binary: ${launchBin} — falling back to default shell`)
+      launchBin = undefined
     }
 
     // If a binary is specified, spawn it directly (no shell wrapper)
