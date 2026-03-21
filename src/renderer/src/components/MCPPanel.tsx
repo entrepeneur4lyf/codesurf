@@ -28,7 +28,7 @@ interface MCPConfig {
   updatedAt: string
 }
 
-const CONFIG_PATH = '~/clawd-collab/mcp-server.json'
+const CONFIG_PATH = '~/.contex/mcp-server.json'
 
 function serverCommandFromConfig(s: Partial<MCPServer>): string | undefined {
   if (typeof s.cmd === 'string' && s.cmd.trim()) return s.cmd.trim()
@@ -113,7 +113,7 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
         }
       } catch { /**/ }
 
-      const path = `${(window as any).process?.env?.HOME ?? '~'}/clawd-collab/mcp-server.json`
+      const path = `${(window as any).process?.env?.HOME ?? '~'}/.contex/mcp-server.json`
       try {
         const raw = await window.electron.fs.readFile(path.replace('~', (window as any).__HOME__ ?? '/Users/' + ((window as any).process?.env?.USER ?? '')))
         applyConfig(JSON.parse(raw) as MCPConfig)
@@ -128,7 +128,7 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
   const save = useCallback(async (updatedServers: MCPServer[]) => {
     const userServers: Record<string, Omit<MCPServer, 'name' | 'enabled'> > = {}
     for (const s of updatedServers) {
-      if (s.name === 'collaborator') continue
+      if (s.name === 'contex') continue
       const entry: Omit<MCPServer, 'name' | 'enabled'> = {
         ...(s.type || s.url ? { type: s.type || (s.url ? 'http' : 'stdio') } : {}),
         ...(s.url ? { url: s.url } : {}),
@@ -146,13 +146,13 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
     } else if (config) {
       // Fallback legacy path if IPC changed in future
       const mcpServers: MCPConfig['mcpServers'] = {}
-      mcpServers['collaborator'] = config.mcpServers['collaborator'] ?? { type: 'http', url: `${config.url.replace(/\/$/, '')}/mcp` }
+      mcpServers['contex'] = config.mcpServers['contex'] ?? { type: 'http', url: `${config.url.replace(/\/$/, '')}/mcp` }
       for (const [name, entry] of Object.entries(userServers)) {
         mcpServers[name] = entry as MCPConfig['mcpServers'][string]
       }
       updatedCfg = { ...config, mcpServers, updatedAt: new Date().toISOString() }
       const home = (window as any).process?.env?.HOME ?? ''
-      await window.electron.fs.writeFile(`${home}/clawd-collab/mcp-server.json`, JSON.stringify(updatedCfg, null, 2))
+      await window.electron.fs.writeFile(`${home}/.contex/mcp-server.json`, JSON.stringify(updatedCfg, null, 2))
     }
 
     if (updatedCfg) {
@@ -228,7 +228,7 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
           {/* Built-in server */}
           <Section label="BUILT-IN">
             <ServerRow
-              name="collaborator"
+              name="contex"
               description="Canvas, kanban, files, tiles — always running"
               url={config?.url}
               enabled={true}
@@ -243,7 +243,7 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
               <div style={{ fontSize: 11, color: '#444', padding: '8px 0' }}>Loading…</div>
             ) : (
               <>
-                {servers.filter(s => s.name !== 'collaborator').map((s, i) => (
+                {servers.filter(s => s.name !== 'contex').map((s, i) => (
                   <EditableServerRow
                     key={s.name}
                     server={s}

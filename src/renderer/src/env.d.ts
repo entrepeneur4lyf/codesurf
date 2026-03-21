@@ -59,13 +59,16 @@ interface ElectronAPI {
   canvas: {
     load(workspaceId: string): Promise<import('../../shared/types').CanvasState | null>
     save(workspaceId: string, state: import('../../shared/types').CanvasState): Promise<void>
+    loadTileState(workspaceId: string, tileId: string): Promise<any>
+    saveTileState(workspaceId: string, tileId: string, state: any): Promise<void>
+    clearTileState(workspaceId: string, tileId: string): Promise<void>
   }
   kanban?: {
     load(workspaceId: string, tileId: string): Promise<{ columns: Array<{ id: string; title: string }>; cards: import('./components/KanbanCard').KanbanCardData[] } | null>
     save(workspaceId: string, tileId: string, state: { columns: Array<{ id: string; title: string }>; cards: import('./components/KanbanCard').KanbanCardData[] }): Promise<void>
   }
   terminal: {
-    create(tileId: string, workspaceDir: string, launchBin?: string, launchArgs?: string[]): Promise<{ cols: number; rows: number }>
+    create(tileId: string, workspaceDir: string, launchBin?: string, launchArgs?: string[]): Promise<{ cols: number; rows: number; buffer?: string }>
     write(tileId: string, data: string): Promise<void>
     resize(tileId: string, cols: number, rows: number): Promise<void>
     destroy(tileId: string): Promise<void>
@@ -82,8 +85,9 @@ interface ElectronAPI {
     detect(): Promise<Array<{ id: string; label: string; cmd: string; path?: string; version?: string; available: boolean }>>
   }
   updater: {
-    check(): Promise<void>
-    download(): Promise<void>
+    check(): Promise<{ ok: boolean; currentVersion: string; status: string; updateAvailable: boolean; updateInfo?: { version?: string; releaseName?: string; releaseDate?: string } }>
+    download(): Promise<{ ok: boolean; status: string }>
+    quitAndInstall(): Promise<{ ok: boolean }>
   }
   settings: {
     get(): Promise<import('../../shared/types').AppSettings>
@@ -102,6 +106,8 @@ interface ElectronAPI {
     onEvent(callback: (event: import('../../shared/types').BusEvent) => void): () => void
   }
 }
+
+declare const __VERSION__: string
 
 declare global {
   interface Window {

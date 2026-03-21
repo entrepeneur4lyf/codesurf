@@ -1,12 +1,14 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 
 const clusoWidgetPath = resolve(__dirname, '../agentation-real/src/cluso/index.ts')
 const clusoAlias = existsSync(clusoWidgetPath)
   ? { 'cluso-widget': clusoWidgetPath }
   : {}
+
+const packageJson = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')) as { version: string }
 
 const targets = process.env.EV_BUILD_TARGET
   ? process.env.EV_BUILD_TARGET.split(',').map((t) => t.trim()).filter(Boolean)
@@ -60,7 +62,7 @@ export default defineConfig({
             }
           },
           define: {
-            __VERSION__: JSON.stringify('2.2.1')
+            __VERSION__: JSON.stringify(packageJson.version)
           },
           plugins: [react()],
           build: {

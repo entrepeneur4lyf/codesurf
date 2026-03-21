@@ -2,15 +2,24 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import type { CollabState, CollabSkills } from '../../shared/types'
+import { workspaceTileDir, workspaceTileContextDir, legacyWorkspaceTileDir, legacyWorkspaceTileContextDir } from '../paths'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function collabDir(workspacePath: string, tileId: string): string {
-  return join(workspacePath, '.collab', tileId)
+  return workspaceTileDir(workspacePath, tileId)
+}
+
+function legacyCollabDir(workspacePath: string, tileId: string): string {
+  return legacyWorkspaceTileDir(workspacePath, tileId)
 }
 
 function contextDir(workspacePath: string, tileId: string): string {
-  return join(workspacePath, '.collab', tileId, 'context')
+  return workspaceTileContextDir(workspacePath, tileId)
+}
+
+function legacyContextDir(workspacePath: string, tileId: string): string {
+  return legacyWorkspaceTileContextDir(workspacePath, tileId)
 }
 
 async function readJsonSafe<T>(path: string, fallback: T): Promise<T> {
@@ -19,6 +28,15 @@ async function readJsonSafe<T>(path: string, fallback: T): Promise<T> {
     return JSON.parse(raw) as T
   } catch {
     return fallback
+  }
+}
+
+async function readJsonFromEither<T>(primary: string, legacy: string, fallback: T): Promise<T> {
+  try {
+    const raw = await fs.readFile(primary, 'utf8')
+    return JSON.parse(raw) as T
+  } catch {
+    return readJsonSafe(legacy, fallback)
   }
 }
 
@@ -67,7 +85,7 @@ function stopWatcher(workspacePath: string, tileId: string): void {
 
 export function registerCollabIPC(): void {
 
-  // Ensure .collab/{tileId}/context/ exists
+  // Ensure .contex/{tileId}/context/ exists
   ipcMain.handle('collab:ensureDir', async (_, workspacePath: string, tileId: string) => {
     await fs.mkdir(contextDir(workspacePath, tileId), { recursive: true })
     return true
@@ -86,7 +104,11 @@ export function registerCollabIPC(): void {
     try {
       return await fs.readFile(join(collabDir(workspacePath, tileId), 'objective.md'), 'utf8')
     } catch {
-      return null
+      try {
+        return await fs.readFile(join(legacyCollabDir(workspacePath, tileId), 'objective.md'), 'utf8')
+      } catch {
+        return null
+      }
     }
   })
 
@@ -100,8 +122,9 @@ export function registerCollabIPC(): void {
   })
 
   ipcMain.handle('collab:readSkills', async (_, workspacePath: string, tileId: string) => {
-    return readJsonSafe<CollabSkills>(
+    return readJsonFromEither<CollabSkills>(
       join(collabDir(workspacePath, tileId), 'skills.json'),
+      join(legacyCollabDir(workspacePath, tileId), 'skills.json'),
       { enabled: [], disabled: [] },
     )
   })
@@ -116,8 +139,9 @@ export function registerCollabIPC(): void {
   })
 
   ipcMain.handle('collab:readState', async (_, workspacePath: string, tileId: string) => {
-    return readJsonSafe<CollabState>(
+    return readJsonFromEither<CollabState>(
       join(collabDir(workspacePath, tileId), 'state.json'),
+      join(legacyCollabDir(workspacePath, tileId), 'state.json'),
       { tasks: [], paused: false },
     )
   })
@@ -146,7 +170,12 @@ export function registerCollabIPC(): void {
       const entries = await fs.readdir(dir)
       return entries.filter(e => !e.startsWith('.'))
     } catch {
-      return []
+      try {
+        const entries = await fs.readdir(legacyContextDir(workspacePath, tileId))
+        return entries.filter(e => !e.startsWith('.'))
+      } catch {
+        return []
+      }
     }
   })
 
@@ -154,7 +183,11 @@ export function registerCollabIPC(): void {
     try {
       return await fs.readFile(join(contextDir(workspacePath, tileId), filename), 'utf8')
     } catch {
-      return null
+      try {
+        return await fs.readFile(join(legacyContextDir(workspacePath, tileId), filename), 'utf8')
+      } catch {
+        return null
+      }
     }
   })
 

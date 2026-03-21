@@ -44,7 +44,10 @@ contextBridge.exposeInMainWorld('electron', {
   // Canvas state persistence
   canvas: {
     load: (workspaceId: string) => ipcRenderer.invoke('canvas:load', workspaceId),
-    save: (workspaceId: string, state: any) => ipcRenderer.invoke('canvas:save', workspaceId, state)
+    save: (workspaceId: string, state: any) => ipcRenderer.invoke('canvas:save', workspaceId, state),
+    loadTileState: (workspaceId: string, tileId: string) => ipcRenderer.invoke('canvas:loadTileState', workspaceId, tileId),
+    saveTileState: (workspaceId: string, tileId: string, state: any) => ipcRenderer.invoke('canvas:saveTileState', workspaceId, tileId, state),
+    clearTileState: (workspaceId: string, tileId: string) => ipcRenderer.invoke('canvas:clearTileState', workspaceId, tileId)
   },
 
   // Kanban board state persistence
@@ -141,10 +144,11 @@ contextBridge.exposeInMainWorld('electron', {
     setRawJson: (json: string) => ipcRenderer.invoke('settings:setRawJson', json),
   },
 
-  // Update checker (stub)
+  // Update checker
   updater: {
     check: () => ipcRenderer.invoke('updater:check'),
-    download: () => ipcRenderer.invoke('updater:download')
+    download: () => ipcRenderer.invoke('updater:download'),
+    quitAndInstall: () => ipcRenderer.invoke('updater:quitAndInstall')
   },
 
   // MCP server
@@ -192,7 +196,7 @@ contextBridge.exposeInMainWorld('electron', {
     byAgent: (workspaceId: string) => ipcRenderer.invoke('activity:byAgent', workspaceId),
   },
 
-  // Collab protocol (.collab folder)
+  // Contex protocol (.contex folder)
   collab: {
     ensureDir: (workspacePath: string, tileId: string) => ipcRenderer.invoke('collab:ensureDir', workspacePath, tileId),
     writeObjective: (workspacePath: string, tileId: string, md: string) => ipcRenderer.invoke('collab:writeObjective', workspacePath, tileId, md),

@@ -4,7 +4,7 @@ import { ArrowLeft, ArrowRight, RotateCcw, RotateCw, Home, Globe, Monitor, Smart
 const HOMEPAGE = 'https://duckduckgo.com'
 
 const DESKTOP_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) @collaborator/electron/0.2.0 Chrome/132.0.6834.159 Safari/537.36'
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) @contex/electron/0.2.0 Chrome/132.0.6834.159 Safari/537.36'
 const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1'
 
@@ -172,14 +172,14 @@ const createClusoInjectScript = (jsContent: string, cssContent: string): string 
 function createBusBridgeScript(tileId: string): string {
   return `
     (function() {
-      if (window.__collaboratorBridge) return;
-      window.__collaboratorBridge = true;
+      if (window.__contexBridge) return;
+      window.__contexBridge = true;
 
       // Allow webview content to send events to the host via console.log transport
-      window.collaborator = {
+      window.contex = {
         publish: function(type, payload, channel) {
           console.log(JSON.stringify({
-            __collaborator: true,
+            __contex: true,
             type: type || 'data',
             channel: channel || 'tile:${tileId}',
             payload: payload || {}
@@ -298,6 +298,7 @@ function ToolbarButton({
 // ---------------------------------------------------------------------------
 interface Props {
   tileId: string
+  workspaceId?: string
   initialUrl?: string
   width: number
   height: number
@@ -310,13 +311,14 @@ type BrowserMode = 'desktop' | 'mobile'
 // ---------------------------------------------------------------------------
 // BrowserTile
 // ---------------------------------------------------------------------------
-export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex, isInteracting }: Props): React.JSX.Element {
+export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zIndex: _zIndex, isInteracting }: Props): React.JSX.Element {
   const wvContainerRef = useRef<HTMLDivElement>(null)
   const wvRef = useRef<Electron.WebviewTag | null>(null)
   const wvReadyRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const mountedRef = useRef(true)
   const clusoToggleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const stateLoadedRef = useRef(false)
 
   // Track component mount state for async cleanup
   useEffect(() => {
@@ -343,6 +345,41 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
   const [isClusoActive, setIsClusoActive] = useState(false)
   const [isToolbarHovered, setIsToolbarHovered] = useState(false)
   const [isAddressFocused, setIsAddressFocused] = useState(false)
+
+  useEffect(() => {
+    stateLoadedRef.current = false
+    if (!workspaceId) return
+    window.electron.canvas.loadTileState(workspaceId, tileId).then((saved: any) => {
+      if (!saved) return
+      if (typeof saved.addressBar === 'string') setAddressBar(saved.addressBar)
+      if (typeof saved.currentUrl === 'string') {
+        setCurrentUrl(saved.currentUrl)
+        initialSrc.current = saved.currentUrl
+        prevInitialUrl.current = saved.currentUrl
+        if (wvRef.current) {
+          try { wvRef.current.loadURL(saved.currentUrl) } catch { /* ignore */ }
+        }
+      }
+      if (typeof saved.canGoBack === 'boolean') setCanGoBack(saved.canGoBack)
+      if (typeof saved.canGoForward === 'boolean') setCanGoForward(saved.canGoForward)
+      if (typeof saved.isLoading === 'boolean') setIsLoading(saved.isLoading)
+      if (saved.mode === 'desktop' || saved.mode === 'mobile') setMode(saved.mode)
+    }).catch(() => {}).finally(() => {
+      stateLoadedRef.current = true
+    })
+  }, [workspaceId, tileId])
+
+  useEffect(() => {
+    if (!workspaceId || !stateLoadedRef.current) return
+    window.electron.canvas.saveTileState(workspaceId, tileId, {
+      addressBar,
+      currentUrl,
+      canGoBack,
+      canGoForward,
+      isLoading,
+      mode,
+    }).catch(() => {})
+  }, [workspaceId, tileId, addressBar, currentUrl, canGoBack, canGoForward, isLoading, mode])
 
   // Cluso embed assets — loaded once on mount
   const clusoAssetsRef = useRef<{ js: string | null; css: string | null }>({ js: null, css: null })
@@ -478,16 +515,16 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
     const onConsoleMessage = (e: Electron.ConsoleMessageEvent) => {
       const { message } = e
 
-      // Bridge collaborator postMessage to the EventBus
-      if (message.startsWith('{"__collaborator"')) {
+      // Bridge contex postMessage to the EventBus
+      if (message.startsWith('{"__contex"')) {
         try {
           const data = JSON.parse(message) as {
-            __collaborator?: boolean
+            __contex?: boolean
             type?: string
             channel?: string
             payload?: Record<string, unknown>
           }
-          if (data.__collaborator) {
+          if (data.__contex) {
             window.electron?.bus?.publish(
               data.channel || `tile:${tileId}`,
               data.type || 'data',

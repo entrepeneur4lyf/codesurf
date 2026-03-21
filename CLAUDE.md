@@ -1,4 +1,4 @@
-# collaborator-clone
+# contex
 
 Electron desktop app — infinite canvas workspace for AI agents and developers.
 
@@ -53,14 +53,14 @@ src/
 
 **Event bus** — Main-process pub/sub. Wildcard subscriptions (`tile:*`, `*`). Ring-buffer per channel (500 events). No persistence.
 
-**MCP server** — Starts on a random port. Config written to `~/.clawd-collab/mcp-server.json`. Agents call HTTP endpoints; results propagate to canvas/kanban via event bus.
+**MCP server** — Starts on a random port. Config written to `~/.contex/mcp-server.json`. Agents call HTTP endpoints; results propagate to canvas/kanban via event bus.
 
 **Refs for cross-effect sync** — Heavy use of `useRef` to keep mutable state accessible inside event handlers without stale closure issues.
 
 **Persistence** — File-based only, no cloud sync:
-- `~/.clawd-collab/workspaces/{id}/canvas.json` — canvas state (auto-saved, 500ms debounce)
-- `~/.clawd-collab/workspaces/{id}/tiles/{tileId}.json` — kanban tile state
-- `~/.clawd-collab/mcp-server.json` — MCP server config
+- `~/.contex/workspaces/{id}/canvas.json` — canvas state (auto-saved, 500ms debounce)
+- `~/.contex/workspaces/{id}/tiles/{tileId}.json` — kanban tile state
+- `~/.contex/mcp-server.json` — MCP server config
 
 ## Chat Providers
 

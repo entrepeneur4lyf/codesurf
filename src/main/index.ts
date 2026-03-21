@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell, ipcMain, Menu } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { autoUpdater } from 'electron-updater'
 import { initWorkspaces, readSettingsSync, registerWorkspaceIPC } from './ipc/workspace'
 import { registerFsIPC } from './ipc/fs'
 import { registerCanvasIPC } from './ipc/canvas'
@@ -15,6 +16,8 @@ import { registerActivityIPC } from './ipc/activity'
 import { registerCollabIPC, stopAllCollabWatchers } from './ipc/collab'
 import { flushAll as flushActivityStore } from './activity-store'
 import { applyWindowAppearance, getWindowAppearanceOptions } from './windowAppearance'
+import { migrateLegacyStorage } from './migration'
+import { APP_ID, APP_NAME, CONTEX_HOME } from './paths'
 // browserTile BrowserView IPC was removed — renderer uses <webview> tag directly
 
 // Per-window display titles (webContents.id → label set by renderer via workspace name)
@@ -32,7 +35,7 @@ function broadcastWindowList(): void {
     : undefined
   const list = wins.map(w => ({
     id: w.webContents.id,
-    title: windowTitles.get(w.webContents.id) ?? 'Collaborator',
+    title: windowTitles.get(w.webContents.id) ?? 'Contex',
     focused: w.webContents.id === focusedId,
   }))
   for (const w of wins) {
@@ -93,11 +96,14 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.vibeclaw.collaborator')
+  app.setName(APP_NAME)
+  electronApp.setAppUserModelId(APP_ID)
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
+
+  await migrateLegacyStorage()
 
   // Init workspace dirs + register all IPC handlers
   await initWorkspaces()
@@ -124,8 +130,8 @@ app.whenReady().then(async () => {
 
   // MCP config read/write
   const { join: pjoin } = await import('path')
-  const mcpConfigPath = pjoin(app.getPath('home'), 'clawd-collab', 'mcp-server.json')
-  const getRuntimeCollaboratorBase = (): string | undefined => {
+  const mcpConfigPath = pjoin(CONTEX_HOME, 'mcp-server.json')
+  const getRuntimeContexBase = (): string | undefined => {
     const port = getMCPPort()
     return port ? `http://127.0.0.1:${port}/mcp` : undefined
   }
@@ -176,14 +182,14 @@ app.whenReady().then(async () => {
       const { promises: fsP } = await import('fs')
       const raw = await fsP.readFile(mcpConfigPath, 'utf8')
       const cfg = JSON.parse(raw) as { mcpServers?: Record<string, unknown>, url?: string }
-      const collaboratorBase = (typeof cfg.url === 'string' ? `${cfg.url.replace(/\/$/, '')}/mcp` : undefined) ?? getRuntimeCollaboratorBase()
+      const contexBase = (typeof cfg.url === 'string' ? `${cfg.url.replace(/\/$/, '')}/mcp` : undefined) ?? getRuntimeContexBase()
       const globalServers = cfg.mcpServers ?? {}
       const normalizedServers = normalizeMcpServers(globalServers, (name) => {
-        if (name === 'collaborator' && collaboratorBase) return collaboratorBase
+        if (name === 'contex' && contexBase) return contexBase
         return undefined
       })
-      if (collaboratorBase && !normalizedServers['collaborator']) {
-        normalizedServers['collaborator'] = { type: 'http', url: collaboratorBase }
+      if (contexBase && !normalizedServers['contex']) {
+        normalizedServers['contex'] = { type: 'http', url: contexBase }
       }
       return { ...cfg, mcpServers: normalizedServers }
     } catch { return null }
@@ -194,11 +200,11 @@ app.whenReady().then(async () => {
       const { promises: fsP } = await import('fs')
       const raw = await fsP.readFile(mcpConfigPath, 'utf8')
       const cfg = JSON.parse(raw) as { mcpServers?: Record<string, unknown>, url?: string }
-      const collaboratorBase = (typeof cfg.url === 'string' ? `${cfg.url.replace(/\/$/, '')}/mcp` : undefined) ?? getRuntimeCollaboratorBase()
-      const collaborator = normalizeMcpServer(cfg.mcpServers?.collaborator ?? { url: collaboratorBase }, collaboratorBase)
+      const contexBase = (typeof cfg.url === 'string' ? `${cfg.url.replace(/\/$/, '')}/mcp` : undefined) ?? getRuntimeContexBase()
+      const contexServer = normalizeMcpServer(cfg.mcpServers?.contex ?? { url: contexBase }, contexBase)
       const customServers = normalizeMcpServers(servers)
       cfg.mcpServers = {
-        collaborator,
+        contex: contexServer,
         ...customServers
       }
       cfg.updatedAt = new Date().toISOString()
@@ -211,7 +217,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('mcp:getWorkspaceServers', async (_, workspaceId: string) => {
     try {
       const { promises: fsP } = await import('fs')
-      const p = pjoin(app.getPath('home'), 'clawd-collab', 'workspaces', workspaceId, 'mcp-servers.json')
+      const p = pjoin(CONTEX_HOME, 'workspaces', workspaceId, 'mcp-servers.json')
       const raw = await fsP.readFile(p, 'utf8')
       return JSON.parse(raw)
     } catch { return {} }
@@ -220,7 +226,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('mcp:saveWorkspaceServers', async (_, workspaceId: string, servers: Record<string, unknown>) => {
     try {
       const { promises: fsP } = await import('fs')
-      const dir = pjoin(app.getPath('home'), 'clawd-collab', 'workspaces', workspaceId)
+      const dir = pjoin(CONTEX_HOME, 'workspaces', workspaceId)
       await fsP.mkdir(dir, { recursive: true })
       const p = pjoin(dir, 'mcp-servers.json')
       const normalized = normalizeMcpServers(servers)
@@ -245,7 +251,7 @@ app.whenReady().then(async () => {
       // Workspace servers
       let wsServers: Record<string, unknown> = {}
       try {
-        const wsPath = pjoin(app.getPath('home'), 'clawd-collab', 'workspaces', workspaceId, 'mcp-servers.json')
+        const wsPath = pjoin(CONTEX_HOME, 'workspaces', workspaceId, 'mcp-servers.json')
         const raw = await fsP.readFile(wsPath, 'utf8')
         wsServers = JSON.parse(raw)
       } catch { /**/ }
@@ -253,14 +259,14 @@ app.whenReady().then(async () => {
       // Merge: global mcpServers + workspace servers
       const globalServers = (globalCfg as Record<string, Record<string, unknown>>).mcpServers ?? {}
       const globalCfgUrl = (globalCfg as { url?: string }).url
-      const collaboratorBase = (typeof globalCfgUrl === 'string' ? `${String(globalCfgUrl).replace(/\/$/, '')}/mcp` : undefined) ?? getRuntimeCollaboratorBase()
+      const contexBase = (typeof globalCfgUrl === 'string' ? `${String(globalCfgUrl).replace(/\/$/, '')}/mcp` : undefined) ?? getRuntimeContexBase()
 
       const normalizedGlobal = normalizeMcpServers(globalServers, (name) => {
-        if (name === 'collaborator' && collaboratorBase) return collaboratorBase
+        if (name === 'contex' && contexBase) return contexBase
         return undefined
       })
-      if (collaboratorBase && !normalizedGlobal['collaborator']) {
-        normalizedGlobal['collaborator'] = { type: 'http', url: collaboratorBase }
+      if (contexBase && !normalizedGlobal['contex']) {
+        normalizedGlobal['contex'] = { type: 'http', url: contexBase }
       }
       const normalizedWorkspace = normalizeMcpServers(wsServers)
 
@@ -275,7 +281,7 @@ app.whenReady().then(async () => {
       }
 
       // Also write a merged file the workspace dir so agents can reference it
-      const wsDir = pjoin(app.getPath('home'), 'clawd-collab', 'workspaces', workspaceId)
+      const wsDir = pjoin(CONTEX_HOME, 'workspaces', workspaceId)
       await fsP.mkdir(wsDir, { recursive: true })
       await fsP.writeFile(
         pjoin(wsDir, 'mcp-merged.json'),
@@ -284,6 +290,49 @@ app.whenReady().then(async () => {
 
       return merged
     } catch (e) { return null }
+  })
+
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = true
+
+  ipcMain.handle('updater:check', async () => {
+    try {
+      const result = await autoUpdater.checkForUpdates()
+      const info = result?.updateInfo
+      const updateAvailable = !!info && info.version !== app.getVersion()
+      return {
+        ok: true,
+        currentVersion: app.getVersion(),
+        status: updateAvailable ? 'update-available' : 'up-to-date',
+        updateAvailable,
+        updateInfo: info ? {
+          version: info.version,
+          releaseName: info.releaseName,
+          releaseDate: info.releaseDate,
+        } : undefined,
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        currentVersion: app.getVersion(),
+        status: error instanceof Error ? error.message : 'update-check-failed',
+        updateAvailable: false,
+      }
+    }
+  })
+
+  ipcMain.handle('updater:download', async () => {
+    try {
+      await autoUpdater.downloadUpdate()
+      return { ok: true, status: 'downloaded' }
+    } catch (error) {
+      return { ok: false, status: error instanceof Error ? error.message : 'download-failed' }
+    }
+  })
+
+  ipcMain.handle('updater:quitAndInstall', async () => {
+    setImmediate(() => autoUpdater.quitAndInstall())
+    return { ok: true }
   })
 
   // Window management
@@ -298,7 +347,7 @@ app.whenReady().then(async () => {
       : undefined
     return wins.map(w => ({
       id: w.webContents.id,
-      title: windowTitles.get(w.webContents.id) ?? 'Collaborator',
+      title: windowTitles.get(w.webContents.id) ?? APP_NAME,
       focused: w.webContents.id === focusedId,
     }))
   })

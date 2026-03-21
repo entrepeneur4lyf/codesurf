@@ -268,7 +268,7 @@ function chatClaude(req: ChatRequest): void {
   }
   const thinkingConfig = thinkingMap[req.thinking ?? ''] ?? { type: 'adaptive' }
 
-  // Wire up the collaborator MCP server so agents can use canvas/kanban tools
+  // Wire up the contex MCP server so agents can use canvas/kanban tools
   const mcpPort = getMCPPort()
   const mcpServers: Record<string, { type: 'http'; url: string }> = {}
   const mcpToolNames = [
@@ -279,7 +279,7 @@ function chatClaude(req: ChatRequest): void {
     'reload_objective', 'pause_task', 'get_context',
   ]
   if (mcpPort) {
-    mcpServers['collaborator'] = { type: 'http', url: `http://127.0.0.1:${mcpPort}/mcp` }
+    mcpServers['contex'] = { type: 'http', url: `http://127.0.0.1:${mcpPort}/mcp` }
     log('MCP server attached at port', mcpPort)
   }
 
@@ -291,8 +291,8 @@ function chatClaude(req: ChatRequest): void {
     permissionMode: permMode as any,
     thinking: thinkingConfig as any,
     ...(Object.keys(mcpServers).length > 0 && { mcpServers }),
-    // Auto-allow all collaborator MCP tools so agents don't need manual approval
-    allowedTools: mcpToolNames.map(t => `mcp__collaborator__${t}`),
+    // Auto-allow all contex MCP tools so agents don't need manual approval
+    allowedTools: mcpToolNames.map(t => `mcp__contex__${t}`),
   }
 
   // Resume existing session for multi-turn

@@ -109,9 +109,16 @@ function App(): JSX.Element {
   const [panelLayout, setPanelLayout] = useState<PanelNode | null>(null)
   const [activePanelId, setActivePanelId] = useState<string | null>(null)
   const savedLayoutRef = useRef<PanelNode | null>(null)
+  const panelLayoutRef = useRef<PanelNode | null>(null)
+  const activePanelIdRef = useRef<string | null>(null)
+  const expandedTileIdRef = useRef<string | null>(null)
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [guides, setGuides] = useState<{ x?: number; y?: number }[]>([])
+
+  useEffect(() => { panelLayoutRef.current = panelLayout }, [panelLayout])
+  useEffect(() => { activePanelIdRef.current = activePanelId }, [activePanelId])
+  useEffect(() => { expandedTileIdRef.current = expandedTileId }, [expandedTileId])
 
   // Workspace pill tabs — open workspace ids within this window
   const [openWorkspaceIds, setOpenWorkspaceIds] = useState<string[]>([])
@@ -180,6 +187,10 @@ function App(): JSX.Element {
             ? { tx: saved.viewport.tx, ty: saved.viewport.ty, zoom: saved.viewport.zoom }
             : { tx: 0, ty: 0, zoom: 1 })
           setNextZIndex(saved.nextZIndex ?? 1)
+          savedLayoutRef.current = (saved.panelLayout as PanelNode | null) ?? null
+          setPanelLayout(saved.tabViewActive ? (saved.panelLayout as PanelNode | null) ?? null : null)
+          setActivePanelId(saved.activePanelId ?? null)
+          setExpandedTileId(saved.expandedTileId ?? null)
         }
       }
     }
@@ -279,6 +290,26 @@ function App(): JSX.Element {
   }, [])
 
   // ─── Auto-save canvas state ───────────────────────────────────────────────
+  const persistCanvasState = useCallback((tileList: TileState[], vp: { tx: number; ty: number; zoom: number }, nz: number, grps?: GroupState[]) => {
+    if (!workspace) return
+    const resolvedGroups = grps ?? groupsRef.current
+
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => {
+      const state: CanvasState = {
+        tiles: tileList,
+        groups: resolvedGroups,
+        viewport: vp,
+        nextZIndex: nz,
+        panelLayout: panelLayoutRef.current ?? savedLayoutRef.current,
+        activePanelId: activePanelIdRef.current,
+        tabViewActive: Boolean(panelLayoutRef.current),
+        expandedTileId: expandedTileIdRef.current,
+      }
+      window.electron.canvas.save(workspace.id, state)
+    }, 500)
+  }, [workspace])
+
   const saveCanvas = useCallback((tileList: TileState[], vp: { tx: number; ty: number; zoom: number }, nz: number, grps?: GroupState[]) => {
     if (!workspace) return
     // Use explicitly passed groups, or fall back to current groups state
@@ -291,14 +322,15 @@ function App(): JSX.Element {
       historyForward.current = []
     }
 
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => {
-      const state: CanvasState = { tiles: tileList, groups: resolvedGroups, viewport: vp, nextZIndex: nz }
-      window.electron.canvas.save(workspace.id, state)
-    }, 500)
-  }, [workspace])
+    persistCanvasState(tileList, vp, nz, resolvedGroups)
+  }, [workspace, persistCanvasState])
 
   // ─── Coordinate helpers ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!workspace) return
+    persistCanvasState(tiles, viewport, nextZIndex, groups)
+  }, [workspace, panelLayout, activePanelId, expandedTileId, persistCanvasState])
+
   const screenToWorld = useCallback((sx: number, sy: number) => {
     const rect = canvasRef.current?.getBoundingClientRect()
     if (!rect) return { x: 0, y: 0 }
@@ -371,11 +403,18 @@ function App(): JSX.Element {
   }, [tiles, addTile])
 
   const closeTile = useCallback((id: string) => {
+    const tile = tiles.find(t => t.id === id)
+    if (tile?.type === 'terminal') {
+      window.electron.terminal.destroy(id)
+    }
+    if (workspace?.id) {
+      window.electron.canvas.clearTileState(workspace.id, id)
+    }
     const updated = tiles.filter(t => t.id !== id)
     setTiles(updated)
     if (selectedTileId === id) setSelectedTileId(null)
     saveCanvas(updated, viewport, nextZIndex)
-  }, [tiles, selectedTileId, viewport, nextZIndex, saveCanvas])
+  }, [tiles, workspace?.id, selectedTileId, viewport, nextZIndex, saveCanvas])
 
   const bringToFront = useCallback((id: string) => {
     const nz = nextZIndex
@@ -792,11 +831,19 @@ function App(): JSX.Element {
         setGroups(saved.groups ?? [])
         setViewport(saved.viewport ? { tx: saved.viewport.tx, ty: saved.viewport.ty, zoom: saved.viewport.zoom } : { tx: 0, ty: 0, zoom: 1 })
         setNextZIndex(saved.nextZIndex ?? 1)
+        savedLayoutRef.current = (saved.panelLayout as PanelNode | null) ?? null
+        setPanelLayout(saved.tabViewActive ? (saved.panelLayout as PanelNode | null) ?? null : null)
+        setActivePanelId(saved.activePanelId ?? null)
+        setExpandedTileId(saved.expandedTileId ?? null)
       } else {
         setTiles([])
         setGroups([])
         setViewport({ tx: 0, ty: 0, zoom: 1 })
         setNextZIndex(1)
+        savedLayoutRef.current = null
+        setPanelLayout(null)
+        setActivePanelId(null)
+        setExpandedTileId(null)
       }
     }
   }, [workspaces])
@@ -1202,7 +1249,7 @@ function App(): JSX.Element {
         return tile.filePath ? <LazyImageTile filePath={tile.filePath} /> : null
       case 'browser':
         return (
-          <LazyBrowserTile tileId={tile.id} initialUrl={tile.filePath ?? ''} width={tile.width} height={tile.height} zIndex={tile.zIndex} isInteracting={dragState.type !== null} />
+          <LazyBrowserTile tileId={tile.id} workspaceId={workspace?.id ?? ''} initialUrl={tile.filePath ?? ''} width={tile.width} height={tile.height} zIndex={tile.zIndex} isInteracting={dragState.type !== null} />
         )
       case 'kanban':
         return (

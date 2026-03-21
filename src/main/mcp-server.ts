@@ -1,9 +1,9 @@
 /**
- * Local MCP server for Collaborator kanban integration.
+ * Local MCP server for Contex kanban integration.
  * Agents call these tools to signal completion, update status, add notes.
  *
  * Exposes an HTTP server on a random port. Port is written to:
- *   ~/.clawd-collab/mcp-server.json
+ *   ~/.contex/mcp-server.json
  *
  * MCP config for agents:
  *   { "mcpServers": { "kanban": { "type": "http", "url": "http://localhost:<port>/mcp" } } }
@@ -20,7 +20,7 @@ const getHome = (): string => app.getPath('home') || process.env.HOME || process
 // SSE client registry: cardId → response streams
 const sseClients = new Map<string, Set<ServerResponse>>()
 
-const getColabDir = (): string => join(getHome(), 'clawd-collab')
+const getContexDir = (): string => join(getHome(), '.contex')
 
 interface MCPRequest {
   jsonrpc: string
@@ -68,10 +68,10 @@ function normalizeMcpServer(entry: unknown, fallbackUrl?: string): Record<string
   return server
 }
 
-function normalizeMcpServers(servers: Record<string, unknown>, collaboratorUrl?: string): Record<string, Record<string, unknown>> {
+function normalizeMcpServers(servers: Record<string, unknown>, contexUrl?: string): Record<string, Record<string, unknown>> {
   const normalized: Record<string, Record<string, unknown>> = {}
   for (const [name, server] of Object.entries(servers ?? {})) {
-    const fallbackUrl = name === 'collaborator' ? collaboratorUrl : undefined
+    const fallbackUrl = name === 'contex' ? contexUrl : undefined
     normalized[name] = normalizeMcpServer(server, fallbackUrl)
   }
   return normalized
@@ -298,7 +298,7 @@ const TOOLS = [
   },
   {
     name: 'get_context',
-    description: 'Read all context files dropped into a tile\'s .collab context folder. Returns concatenated content of all notes and reference files.',
+    description: 'Read all context files dropped into a tile\'s .contex context folder. Returns concatenated content of all notes and reference files.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -498,14 +498,14 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
   if (name === 'reload_objective') {
     const tileId = args.tile_id as string
-    // Search all known workspace paths for .collab/{tileId}/objective.md
+    // Search all known workspace paths for .contex/{tileId}/objective.md
     try {
-      const userConfigPath = join(getColabDir(), 'config.json')
+      const userConfigPath = join(getContexDir(), 'config.json')
       const raw = await fs.readFile(userConfigPath, 'utf8')
       const cfg = JSON.parse(raw) as { workspaces?: Array<{ path: string }> }
       if (cfg.workspaces) {
         for (const ws of cfg.workspaces) {
-          const objPath = join(ws.path, '.collab', tileId, 'objective.md')
+          const objPath = join(ws.path, '.contex', tileId, 'objective.md')
           try {
             const content = await fs.readFile(objPath, 'utf8')
             return content
@@ -530,12 +530,12 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   if (name === 'get_context') {
     const tileId = args.tile_id as string
     try {
-      const userConfigPath = join(getColabDir(), 'config.json')
+      const userConfigPath = join(getContexDir(), 'config.json')
       const raw = await fs.readFile(userConfigPath, 'utf8')
       const cfg = JSON.parse(raw) as { workspaces?: Array<{ path: string }> }
       if (cfg.workspaces) {
         for (const ws of cfg.workspaces) {
-          const ctxDir = join(ws.path, '.collab', tileId, 'context')
+          const ctxDir = join(ws.path, '.contex', tileId, 'context')
           try {
             const entries = await fs.readdir(ctxDir)
             const parts: string[] = []
@@ -564,7 +564,7 @@ async function handleMCP(req: MCPRequest): Promise<unknown> {
       result: {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'collaborator', version: '1.0.0' }
+        serverInfo: { name: 'contex', version: '1.0.0' }
       }
     }
   }
@@ -700,10 +700,10 @@ export async function startMCPServer(): Promise<number> {
       serverPort = addr.port
 
       const baseUrl = `http://127.0.0.1:${serverPort}`
-      const collaboratorUrl = `${baseUrl}/mcp`
-      const configPath = join(getColabDir(), 'mcp-server.json')
+      const contexUrl = `${baseUrl}/mcp`
+      const configPath = join(getContexDir(), 'mcp-server.json')
 
-      const COLLAB_DIR = getColabDir()
+      const COLLAB_DIR = getContexDir()
       await fs.mkdir(COLLAB_DIR, { recursive: true })
 
       let existingConfig: Record<string, unknown> = {}
@@ -716,11 +716,11 @@ export async function startMCPServer(): Promise<number> {
       const existingServers = typeof existingConfig.mcpServers === 'object' && existingConfig.mcpServers !== null
         ? existingConfig.mcpServers as Record<string, unknown>
         : {}
-      const normalizedServers = normalizeMcpServers(existingServers, collaboratorUrl)
-      normalizedServers['collaborator'] = {
-        ...(normalizeMcpServer(existingConfig.mcpServers && typeof existingConfig.mcpServers === 'object' ? (existingConfig.mcpServers as Record<string, unknown>)['collaborator'] : undefined, collaboratorUrl) as Record<string, unknown>),
+      const normalizedServers = normalizeMcpServers(existingServers, contexUrl)
+      normalizedServers['contex'] = {
+        ...(normalizeMcpServer(existingConfig.mcpServers && typeof existingConfig.mcpServers === 'object' ? (existingConfig.mcpServers as Record<string, unknown>)['contex'] : undefined, contexUrl) as Record<string, unknown>),
         type: 'http',
-        url: collaboratorUrl
+        url: contexUrl
       }
 
       const mcpConfig = {
@@ -740,9 +740,9 @@ export async function startMCPServer(): Promise<number> {
       await fs.writeFile(configPath, JSON.stringify(mcpConfig, null, 2))
 
       // Write .mcp.json to all known workspace directories so Claude Code
-      // sessions in terminal tiles auto-discover the collaborator MCP server
+      // sessions in terminal tiles auto-discover the contex MCP server
       try {
-        const userConfigPath = join(getColabDir(), 'config.json')
+        const userConfigPath = join(getContexDir(), 'config.json')
         const userConfigRaw = await fs.readFile(userConfigPath, 'utf8')
         const userConfig = JSON.parse(userConfigRaw) as { workspaces?: Array<{ path: string }> }
         if (userConfig.workspaces) {
@@ -766,13 +766,13 @@ export function getMCPPort(): number | null {
 
 /**
  * Write a .mcp.json to a workspace directory so Claude Code sessions
- * in terminal tiles auto-discover the collaborator MCP server.
+ * in terminal tiles auto-discover the contex MCP server.
  * Also adds tool permissions so MCP tools don't need manual approval.
  */
 export async function writeMCPConfigToWorkspace(workspacePath: string): Promise<void> {
   if (!serverPort) return
   const mcpJsonPath = join(workspacePath, '.mcp.json')
-  const collaboratorUrl = `http://127.0.0.1:${serverPort}/mcp`
+  const contexUrl = `http://127.0.0.1:${serverPort}/mcp`
 
   // Read existing .mcp.json to preserve user-added servers
   let existing: Record<string, unknown> = {}
@@ -786,9 +786,9 @@ export async function writeMCPConfigToWorkspace(workspacePath: string): Promise<
     ? existing.mcpServers as Record<string, unknown>
     : {}
 
-  existingServers['collaborator'] = {
+  existingServers['contex'] = {
     type: 'http',
-    url: collaboratorUrl,
+    url: contexUrl,
   }
 
   const config = {

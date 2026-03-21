@@ -10,15 +10,15 @@ const resolveHome = (): string => app.getPath('home') || process.env.HOME || pro
 function resolveFsPath(rawPath: string): string {
   const home = resolveHome()
   if (rawPath === '~') return home
-  if (rawPath.startsWith('~/.clawd-collab/')) {
-    return join(home, 'clawd-collab', rawPath.slice('~/.clawd-collab/'.length))
+  if (rawPath.startsWith('~/.contex/')) {
+    return join(home, '.contex', rawPath.slice('~/.contex/'.length))
   }
-  if (rawPath.startsWith('~\\.clawd-collab\\')) {
-    return join(home, 'clawd-collab', rawPath.slice('~\\.clawd-collab\\'.length))
+  if (rawPath.startsWith('~\\.contex\\')) {
+    return join(home, '.contex', rawPath.slice('~\\.contex\\'.length))
   }
   if (rawPath.startsWith('~/') || rawPath.startsWith('~\\')) return join(home, rawPath.slice(2))
-  if (rawPath.startsWith('/clawd-collab/')) return join(home, rawPath.slice(1))
-  if (rawPath === '/clawd-collab') return join(home, 'clawd-collab')
+  if (rawPath.startsWith('/.contex/')) return join(home, rawPath.slice(1))
+  if (rawPath === '/.contex') return join(home, '.contex')
   return rawPath
 }
 
@@ -94,7 +94,7 @@ export function registerFsIPC(): void {
 
   ipcMain.handle('fs:writeBrief', async (_, cardId: string, content: string) => {
     const { join } = await import('path')
-    const briefDir = join(resolveHome(), 'clawd-collab', 'briefs')
+    const briefDir = join(resolveHome(), '.contex', 'briefs')
     await fs.mkdir(briefDir, { recursive: true })
     const briefPath = join(briefDir, `${cardId}.md`)
     await fs.writeFile(briefPath, content, 'utf8')

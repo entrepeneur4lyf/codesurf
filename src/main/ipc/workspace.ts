@@ -7,8 +7,8 @@ import { DEFAULT_SETTINGS, withDefaultSettings } from '../../shared/types'
 import { writeMCPConfigToWorkspace } from '../mcp-server'
 import { applyWindowAppearance } from '../windowAppearance'
 
-const COLLAB_DIR = join(homedir(), 'clawd-collab')
-const CONFIG_PATH = join(COLLAB_DIR, 'config.json')
+const CONTEX_DIR = join(homedir(), '.contex')
+const CONFIG_PATH = join(CONTEX_DIR, 'config.json')
 
 async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true })
@@ -43,12 +43,12 @@ async function writeConfig(config: Config): Promise<void> {
 }
 
 export async function initWorkspaces(): Promise<void> {
-  await ensureDir(COLLAB_DIR)
+  await ensureDir(CONTEX_DIR)
   let config = await readConfig()
 
   if (config.workspaces.length === 0) {
     const defaultId = 'default'
-    const defaultPath = join(COLLAB_DIR, 'workspaces', defaultId)
+    const defaultPath = join(CONTEX_DIR, 'workspaces', defaultId)
     await ensureDir(defaultPath)
     config = {
       workspaces: [{ id: defaultId, name: 'Default', path: defaultPath }],
@@ -78,7 +78,7 @@ export function registerWorkspaceIPC(): void {
   ipcMain.handle('workspace:create', async (_, name: string) => {
     const config = await readConfig()
     const id = `ws-${Date.now()}`
-    const wsPath = join(COLLAB_DIR, 'workspaces', id)
+    const wsPath = join(CONTEX_DIR, 'workspaces', id)
     await ensureDir(wsPath)
     const workspace: Workspace = { id, name, path: wsPath }
     config.workspaces.push(workspace)

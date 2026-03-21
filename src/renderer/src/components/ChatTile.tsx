@@ -255,7 +255,7 @@ function WorkingDots({ color = '#58a6ff', size = 5 }: { color?: string; size?: n
 
 // --- Component -------------------------------------------------------------------
 
-export function ChatTile({ tileId, workspaceId: _workspaceId, workspaceDir: _workspaceDir, width: _width, height: _height, settings }: Props): JSX.Element {
+export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, width: _width, height: _height, settings }: Props): JSX.Element {
   const fontSans = settings?.primaryFont?.family ?? FONT_SANS
   const fontMono = settings?.monoFont?.family ?? FONT_MONO
   const fontSize = settings?.primaryFont?.size ?? FONT_SIZE_DEFAULT
@@ -277,6 +277,7 @@ export function ChatTile({ tileId, workspaceId: _workspaceId, workspaceDir: _wor
   const [showThinkingMenu, setShowThinkingMenu] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [opencodeModels, setOllamaModels] = useState<ModelOption[]>(DEFAULT_MODELS.opencode)
+  const stateLoadedRef = useRef(false)
 
   // Voice dictation state
   const [isDictating, setIsDictating] = useState(false)
@@ -333,6 +334,40 @@ export function ChatTile({ tileId, workspaceId: _workspaceId, workspaceDir: _wor
       if (result?.models?.length) setOllamaModels(result.models)
     }).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    stateLoadedRef.current = false
+    if (!workspaceId) return
+    window.electron.canvas.loadTileState(workspaceId, tileId).then((saved: any) => {
+      if (!saved) return
+      if (Array.isArray(saved.messages)) setMessages(saved.messages)
+      if (typeof saved.input === 'string') setInput(saved.input)
+      if (saved.provider) setProvider(saved.provider)
+      if (typeof saved.model === 'string') setModel(saved.model)
+      if (typeof saved.mcpEnabled === 'boolean') setMcpEnabled(saved.mcpEnabled)
+      if (typeof saved.mode === 'string') setMode(saved.mode)
+      if (typeof saved.thinking === 'string') setThinking(saved.thinking)
+      if (typeof saved.agentMode === 'boolean') setAgentMode(saved.agentMode)
+      if (typeof saved.sessionId === 'string' || saved.sessionId === null) setSessionId(saved.sessionId)
+    }).catch(() => {}).finally(() => {
+      stateLoadedRef.current = true
+    })
+  }, [workspaceId, tileId])
+
+  useEffect(() => {
+    if (!workspaceId || !stateLoadedRef.current || isStreaming) return
+    window.electron.canvas.saveTileState(workspaceId, tileId, {
+      messages,
+      input,
+      provider,
+      model,
+      mcpEnabled,
+      mode,
+      thinking,
+      agentMode,
+      sessionId,
+    }).catch(() => {})
+  }, [workspaceId, tileId, messages, input, provider, model, mcpEnabled, mode, thinking, agentMode, sessionId, isStreaming])
 
   const providerModels: Record<Provider, ModelOption[]> = {
     claude: DEFAULT_MODELS.claude,

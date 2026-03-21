@@ -324,6 +324,10 @@ export interface CanvasState {
   groups: GroupState[]
   viewport: { tx: number; ty: number; zoom: number }
   nextZIndex: number
+  panelLayout?: unknown
+  activePanelId?: string | null
+  tabViewActive?: boolean
+  expandedTileId?: string | null
 }
 
 // ─── Event Bus Types ────────────────────────────────────────────────────────

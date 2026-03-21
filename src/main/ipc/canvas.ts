@@ -1,9 +1,7 @@
 import { ipcMain } from 'electron'
 import { promises as fs } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
-
-const COLLAB_DIR = join(homedir(), 'clawd-collab')
+import { CONTEX_HOME } from '../paths'
 
 function assertSafeId(id: string): void {
   if (/[\/\\]|\.\./.test(id)) throw new Error(`Unsafe ID: ${id}`)
@@ -11,13 +9,19 @@ function assertSafeId(id: string): void {
 
 function canvasStatePath(workspaceId: string): string {
   assertSafeId(workspaceId)
-  return join(COLLAB_DIR, 'workspaces', workspaceId, 'canvas-state.json')
+  return join(CONTEX_HOME, 'workspaces', workspaceId, 'canvas-state.json')
 }
 
 function kanbanStatePath(workspaceId: string, tileId: string): string {
   assertSafeId(workspaceId)
   assertSafeId(tileId)
-  return join(COLLAB_DIR, 'workspaces', workspaceId, `kanban-${tileId}.json`)
+  return join(CONTEX_HOME, 'workspaces', workspaceId, `kanban-${tileId}.json`)
+}
+
+function tileStatePath(workspaceId: string, tileId: string): string {
+  assertSafeId(workspaceId)
+  assertSafeId(tileId)
+  return join(CONTEX_HOME, 'workspaces', workspaceId, `tile-state-${tileId}.json`)
 }
 
 export function registerCanvasIPC(): void {
@@ -32,6 +36,7 @@ export function registerCanvasIPC(): void {
 
   ipcMain.handle('canvas:save', async (_, workspaceId: string, state: unknown) => {
     const path = canvasStatePath(workspaceId)
+    await fs.mkdir(join(CONTEX_HOME, 'workspaces', workspaceId), { recursive: true })
     await fs.writeFile(path, JSON.stringify(state, null, 2))
   })
 
@@ -46,6 +51,30 @@ export function registerCanvasIPC(): void {
 
   ipcMain.handle('kanban:save', async (_, workspaceId: string, tileId: string, state: unknown) => {
     const path = kanbanStatePath(workspaceId, tileId)
+    await fs.mkdir(join(CONTEX_HOME, 'workspaces', workspaceId), { recursive: true })
     await fs.writeFile(path, JSON.stringify(state, null, 2))
+  })
+
+  ipcMain.handle('canvas:loadTileState', async (_, workspaceId: string, tileId: string) => {
+    try {
+      const raw = await fs.readFile(tileStatePath(workspaceId, tileId), 'utf8')
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle('canvas:saveTileState', async (_, workspaceId: string, tileId: string, state: unknown) => {
+    const path = tileStatePath(workspaceId, tileId)
+    await fs.mkdir(join(CONTEX_HOME, 'workspaces', workspaceId), { recursive: true })
+    await fs.writeFile(path, JSON.stringify(state, null, 2))
+  })
+
+  ipcMain.handle('canvas:clearTileState', async (_, workspaceId: string, tileId: string) => {
+    try {
+      await fs.unlink(tileStatePath(workspaceId, tileId))
+    } catch {
+      // ignore missing files
+    }
   })
 }

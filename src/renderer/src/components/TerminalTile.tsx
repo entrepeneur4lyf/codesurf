@@ -80,7 +80,8 @@ export function TerminalTile({ tileId, workspaceDir, width, height, fontSize = 1
     // Initial fit after paint
     requestAnimationFrame(() => requestAnimationFrame(() => doFit()))
 
-    window.electron.terminal.create(tileId, workspaceDir).then(() => {
+    window.electron.terminal.create(tileId, workspaceDir).then(({ buffer }) => {
+      if (buffer) term.write(buffer)
       const cleanup = window.electron.terminal.onData(tileId, (data: string) => {
         term.write(data)
       })
@@ -100,7 +101,6 @@ export function TerminalTile({ tileId, workspaceDir, width, height, fontSize = 1
       mountedRef.current = false
       ro.disconnect()
       cleanupRef.current?.()
-      window.electron.terminal.destroy(tileId)
       term.dispose()
     }
   }, [tileId, workspaceDir])

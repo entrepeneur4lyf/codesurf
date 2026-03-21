@@ -4,7 +4,7 @@ import { homedir } from 'os'
 import { randomUUID } from 'node:crypto'
 import type { ActivityRecord, ActivityQuery, ActivityType, ActivityStatus } from '../shared/types'
 
-const COLLAB_DIR = join(homedir(), 'clawd-collab')
+const CONTEX_DIR = join(homedir(), '.contex')
 const SAVE_DEBOUNCE_MS = 1000
 
 interface StoreState {
@@ -17,11 +17,11 @@ interface StoreState {
 const stores = new Map<string, StoreState>()
 
 function storePath(workspaceId: string): string {
-  return join(COLLAB_DIR, 'workspaces', workspaceId, 'activity.json')
+  return join(CONTEX_DIR, 'workspaces', workspaceId, 'activity.json')
 }
 
 async function ensureDir(workspaceId: string): Promise<void> {
-  await fs.mkdir(join(COLLAB_DIR, 'workspaces', workspaceId), { recursive: true })
+  await fs.mkdir(join(CONTEX_DIR, 'workspaces', workspaceId), { recursive: true })
 }
 
 async function loadStore(workspaceId: string): Promise<StoreState> {

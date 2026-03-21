@@ -231,6 +231,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
   const [expandedServer, setExpandedServer] = useState<string | null>(null)
   const [workspaceServers, setWorkspaceServers] = useState<Record<string, Record<string, MCPServerEntry>>>({})
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
+  const [updateState, setUpdateState] = useState<{ checking: boolean; downloading: boolean; result: null | { ok: boolean; currentVersion: string; status: string; updateAvailable: boolean; updateInfo?: { version?: string; releaseName?: string; releaseDate?: string } } }>({ checking: false, downloading: false, result: null })
 
   useEffect(() => {
     window.electron.settings?.get().then((s: AppSettings) => {
@@ -257,6 +258,22 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
     })
   }, [section, workspaces])
 
+  const checkForUpdates = useCallback(async () => {
+    setUpdateState(prev => ({ ...prev, checking: true }))
+    const result = await window.electron.updater.check()
+    setUpdateState(prev => ({ ...prev, checking: false, result }))
+  }, [])
+
+  const downloadUpdate = useCallback(async () => {
+    setUpdateState(prev => ({ ...prev, downloading: true }))
+    const result = await window.electron.updater.download()
+    setUpdateState(prev => ({
+      ...prev,
+      downloading: false,
+      result: prev.result ? { ...prev.result, status: result.status } : prev.result,
+    }))
+  }, [])
+
   // ─── MCP helpers ────────────────────────────────────────────────────────
   const saveMcpServers = useCallback(async (servers: Record<string, MCPServerEntry>) => {
     const cfg = await window.electron.mcp?.saveServers?.(servers)
@@ -271,20 +288,20 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
     if (!mcpConfig) return
     const servers = { ...mcpConfig.mcpServers }
     servers[name] = { ...servers[name], ...patch }
-    // Don't pass collaborator through saveServers — it's preserved server-side
-    const { collaborator: _, ...rest } = servers
+    // Don't pass contex through saveServers — it's preserved server-side
+    const { contex: _, ...rest } = servers
     saveMcpServers(rest)
   }, [mcpConfig, saveMcpServers])
 
   const removeServer = useCallback((name: string) => {
     if (!mcpConfig) return
-    const { collaborator: _, [name]: __, ...rest } = mcpConfig.mcpServers
+    const { contex: _, [name]: __, ...rest } = mcpConfig.mcpServers
     saveMcpServers(rest)
   }, [mcpConfig, saveMcpServers])
 
   const addServer = useCallback(() => {
     if (!newServer.name.trim() || !mcpConfig) return
-    const { collaborator: _, ...rest } = mcpConfig.mcpServers
+    const { contex: _, ...rest } = mcpConfig.mcpServers
     const entry: MCPServerEntry = {
       type: newServer.url ? 'http' : 'stdio',
       ...(newServer.url ? { url: newServer.url } : {}),
@@ -343,6 +360,78 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
             <FontGroup label="Primary Font" font={settings.primaryFont} onChange={v => update('primaryFont', v)} fonts={SANS_FONTS} />
             <FontGroup label="Secondary Font" font={settings.secondaryFont} onChange={v => update('secondaryFont', v)} fonts={SANS_FONTS} />
             <FontGroup label="Monospace Font" font={settings.monoFont} onChange={v => update('monoFont', v)} fonts={MONO_FONTS} />
+            <SectionLabel label="Updates" />
+            <SettingRow label="Current version" description="Installed desktop build version">
+              <span style={{ fontSize: 12, color: '#aaa', fontFamily: fonts.mono }}>{updateState.result?.currentVersion ?? __VERSION__}</span>
+            </SettingRow>
+            <SettingRow label="Check for updates" description="Look for a newer GitHub release and show install actions here">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  onClick={checkForUpdates}
+                  disabled={updateState.checking}
+                  style={{
+                    padding: '7px 12px',
+                    fontSize: 12,
+                    background: updateState.checking ? '#1a1a1a' : '#222',
+                    color: updateState.checking ? '#666' : '#ddd',
+                    border: '1px solid #333',
+                    borderRadius: 8,
+                    cursor: updateState.checking ? 'default' : 'pointer'
+                  }}
+                >
+                  {updateState.checking ? 'Checking…' : 'Check now'}
+                </button>
+                {updateState.result?.updateAvailable && (
+                  <button
+                    onClick={downloadUpdate}
+                    disabled={updateState.downloading}
+                    style={{
+                      padding: '7px 12px',
+                      fontSize: 12,
+                      background: updateState.downloading ? '#1a1a1a' : '#2a2416',
+                      color: updateState.downloading ? '#666' : '#f0d28a',
+                      border: '1px solid #4a3a16',
+                      borderRadius: 8,
+                      cursor: updateState.downloading ? 'default' : 'pointer'
+                    }}
+                  >
+                    {updateState.downloading ? 'Downloading…' : 'Download'}
+                  </button>
+                )}
+                {updateState.result?.status === 'downloaded' && (
+                  <button
+                    onClick={() => window.electron.updater.quitAndInstall()}
+                    style={{
+                      padding: '7px 12px',
+                      fontSize: 12,
+                      background: '#16261a',
+                      color: '#8fdb9a',
+                      border: '1px solid #23482a',
+                      borderRadius: 8,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Restart to install
+                  </button>
+                )}
+              </div>
+            </SettingRow>
+            {updateState.result && (
+              <div style={{ marginBottom: 8, padding: '12px 16px', background: '#0d0d0d', borderRadius: 10, border: '1px solid #1a1a1a' }}>
+                <div style={{ fontSize: 12, color: updateState.result.ok ? '#777' : '#c77' }}>
+                  {updateState.result.updateAvailable
+                    ? `Update available${updateState.result.updateInfo?.version ? `: ${updateState.result.updateInfo.version}` : ''}`
+                    : updateState.result.status === 'up-to-date'
+                      ? 'You are up to date.'
+                      : updateState.result.status}
+                </div>
+                {updateState.result.updateInfo?.releaseDate && (
+                  <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>
+                    Released {new Date(updateState.result.updateInfo.releaseDate).toLocaleString()}
+                  </div>
+                )}
+              </div>
+            )}
             <div style={{ marginTop: 16, padding: '12px 16px', background: '#0d0d0d', borderRadius: 10, border: '1px solid #1a1a1a' }}>
               <div style={{ fontSize: 12, color: '#555' }}>
                 <strong style={{ color: '#666' }}>Primary</strong> — headings, labels, and UI text.{' '}
@@ -451,7 +540,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
 
       case 'mcp': {
         const servers = mcpConfig?.mcpServers ?? {}
-        const userServers = Object.entries(servers).filter(([k]) => k !== 'collaborator')
+        const userServers = Object.entries(servers).filter(([k]) => k !== 'contex')
         return (
           <>
             {/* Status */}
@@ -459,7 +548,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
             <div style={{ background: '#161616', borderRadius: 10, padding: '12px 16px', marginBottom: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                 <span style={{ width: 7, height: 7, borderRadius: '50%', background: mcpConfig ? '#3fb950' : '#555', boxShadow: mcpConfig ? '0 0 6px #3fb950' : 'none', flexShrink: 0 }} />
-                <span style={{ fontSize: 13, color: '#e0e0e0', fontWeight: 500 }}>collaborator</span>
+                <span style={{ fontSize: 13, color: '#e0e0e0', fontWeight: 500 }}>contex</span>
                 <span style={{ fontSize: 11, color: '#444', fontFamily: 'inherit', marginLeft: 'auto' }}>built-in</span>
               </div>
               {mcpConfig && (
@@ -678,9 +767,9 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
             {/* Config paths */}
             <div style={{ marginTop: 20, padding: '14px 16px', background: '#0d0d0d', borderRadius: 10, border: '1px solid #1a1a1a', display: 'flex', flexDirection: 'column', gap: 10 }}>
               {[
-                { label: 'Global config', path: '~/clawd-collab/mcp-server.json' },
-                { label: 'Workspace servers', path: '~/clawd-collab/workspaces/<id>/mcp-servers.json' },
-                { label: 'Merged config (point agents here)', path: '~/clawd-collab/workspaces/<id>/mcp-merged.json', highlight: true },
+                { label: 'Global config', path: '~/.contex/mcp-server.json' },
+                { label: 'Workspace servers', path: '~/.contex/workspaces/<id>/mcp-servers.json' },
+                { label: 'Merged config (point agents here)', path: '~/.contex/workspaces/<id>/mcp-merged.json', highlight: true },
               ].map(row => (
                 <div key={row.label}>
                   <div style={{ fontSize: 10, color: '#444', marginBottom: 3, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{row.label}</div>
@@ -787,7 +876,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
 
           {/* Version */}
           <div style={{ padding: '0 16px', fontSize: 11, color: '#333' }}>
-            v0.1.0
+            v{__VERSION__}
           </div>
         </div>
 
@@ -883,7 +972,7 @@ function FontTokenEditor({ settings, onSettingsChange }: {
     if (typeof window.electron.settings.getRawJson !== 'function') {
       // Bridge not available — app needs restart to pick up preload changes
       setRawJson(JSON.stringify(settings.fonts ?? {}, null, 2))
-      setConfigPath('~/.clawd-collab/config.json')
+      setConfigPath('~/..contex/config.json')
       setLoading(false)
       return
     }

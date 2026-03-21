@@ -1,7 +1,7 @@
 {
-  "name": "collaborator-clone",
+  "name": "contex",
   "version": "2.2.1",
-  "description": "Infinite canvas workspace for AI agents — rebuilt from plan",
+  "description": "Infinite canvas workspace for AI agents",
   "main": "dist-electron/main/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -10,6 +10,8 @@
     "build:preload": "EV_BUILD_TARGET=preload electron-vite build",
     "build:renderer": "EV_BUILD_TARGET=renderer electron-vite build",
     "build": "EV_BUILD_TARGET=main electron-vite build && EV_BUILD_TARGET=preload electron-vite build && EV_BUILD_TARGET=renderer electron-vite build",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip",
+    "release:github": "npm run build && electron-builder --mac dmg zip --publish always",
     "preview": "electron-vite preview",
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-rebuild -f -w node-pty"
@@ -28,6 +30,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.27",
     "electron": "^40.8.2",
+    "electron-builder": "^26.8.1",
     "electron-rebuild": "^3.2.9",
     "electron-vite": "^5.0.0",
     "postcss": "^8.5.8",
@@ -54,5 +57,34 @@
   },
   "optionalDependencies": {
     "cluso-widget": "file:../agentation-real"
+  },
+  "build": {
+    "appId": "com.huggiapps.contex",
+    "productName": "Contex",
+    "directories": {
+      "buildResources": "resources",
+      "output": "release"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "out/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "resources/icon.png"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "jkneen",
+        "repo": "collaborator-clone"
+      }
+    ]
   }
 }
