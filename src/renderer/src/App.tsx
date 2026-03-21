@@ -541,7 +541,7 @@ function App(): JSX.Element {
   }, [tiles, addTile])
 
   const closeTile = useCallback((id: string) => {
-    const tile = tiles.find(t => t.id === id)
+    const tile = tilesRef.current.find(t => t.id === id)
     if (tile?.type === 'terminal') {
       window.electron.terminal.destroy(id)
     }
@@ -552,8 +552,11 @@ function App(): JSX.Element {
         workspace.path ? window.electron.collab.removeTileDir(workspace.path, id) : Promise.resolve(true),
       ])
     }
-    const updated = tiles.filter(t => t.id !== id)
-    setTiles(updated)
+    setTiles(prev => {
+      const updated = prev.filter(t => t.id !== id)
+      saveCanvas(updated, viewport, nextZIndex)
+      return updated
+    })
     setPanelLayout(prev => {
       if (!prev) return prev
       const next = removeTileFromTree(prev, id)
@@ -563,8 +566,7 @@ function App(): JSX.Element {
       return emptyLeaf
     })
     if (selectedTileId === id) setSelectedTileId(null)
-    saveCanvas(updated, viewport, nextZIndex)
-  }, [tiles, workspace?.id, workspace?.path, selectedTileId, viewport, nextZIndex, saveCanvas])
+  }, [workspace?.id, workspace?.path, selectedTileId, viewport, nextZIndex, saveCanvas])
 
   const bringToFront = useCallback((id: string) => {
     const nz = nextZIndex
