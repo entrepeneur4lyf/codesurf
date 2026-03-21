@@ -283,12 +283,11 @@ export function withDefaultSettings(input: Partial<AppSettings> | null | undefin
       ...DEFAULT_SETTINGS.defaultTileSizes,
       ...(settings.defaultTileSizes ?? {})
     },
-    fonts: mergeFonts(DEFAULT_FONTS, settings.fonts as Partial<Record<keyof FontSettings, Partial<FontToken>>>),
-  }
-  // If user set granular fonts.*, those win. Otherwise legacy primaryFont/monoFont
-  // cascade into the token set so the settings UI pickers still work.
-  if (!settings.fonts) {
-    base.fonts = applyLegacyFontOverrides(base.fonts, settings.primaryFont, settings.monoFont)
+    // Apply legacy primaryFont/monoFont first, then let explicit fonts.* tokens win on top
+    fonts: mergeFonts(
+      applyLegacyFontOverrides(DEFAULT_FONTS, settings.primaryFont, settings.monoFont),
+      settings.fonts as Partial<Record<keyof FontSettings, Partial<FontToken>>>
+    ),
   }
   return base
 }
