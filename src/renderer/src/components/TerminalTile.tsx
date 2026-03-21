@@ -63,6 +63,13 @@ export function TerminalTile({ tileId, workspaceDir, width, height, fontSize = 1
     term.loadAddon(fitAddon)
     term.open(containerRef.current)
 
+    // Apply padding inside xterm element so viewport bg covers behind it
+    const xtermEl = containerRef.current.querySelector('.xterm') as HTMLElement | null
+    if (xtermEl) {
+      xtermEl.style.paddingLeft = '8px'
+      xtermEl.style.paddingTop = '8px'
+    }
+
     termRef.current = term
     fitRef.current = fitAddon
 
@@ -106,7 +113,7 @@ export function TerminalTile({ tileId, workspaceDir, width, height, fontSize = 1
   return (
     <div
       ref={containerRef}
-      style={{ width: '100%', height: 'calc(100% + 4px)', background: '#1e1e1e', padding: '4px 6px 0 6px', boxSizing: 'border-box', overflow: 'hidden' }}
+      style={{ width: '100%', height: '100%', background: '#1e1e1e', overflow: 'hidden' }}
     />
   )
 }

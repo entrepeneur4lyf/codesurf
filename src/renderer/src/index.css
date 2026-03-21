@@ -20,15 +20,13 @@ body {
   color: #cccccc;
 }
 
-/* xterm overrides — eliminate bottom gap from fractional row heights */
-.xterm {
-  height: 100% !important;
-}
+/* xterm overrides — eliminate bottom gap from fractional row heights.
+   xterm.css hardcodes .xterm-viewport { background-color: #000 }.
+   xterm JS sets an inline bg from the theme, but only within the viewport's
+   sized area. Override to inherit so it always matches the container. */
 .xterm-viewport {
   overflow-y: auto !important;
-}
-.xterm .xterm-screen {
-  padding: 0 !important;
+  background-color: inherit !important;
 }
 /* Hide the horizontal scrollbar that creates a band at the bottom */
 .xterm-viewport::-webkit-scrollbar-corner {

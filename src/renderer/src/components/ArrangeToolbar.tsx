@@ -10,6 +10,7 @@ interface Props {
   onArrange: (updated: TileState[]) => void
   zoom: number
   onZoomToggle: () => void
+  onEnterTabs: () => void
 }
 
 type Mode = 'grid' | 'column' | 'row'
@@ -123,6 +124,14 @@ function Btn({ label, title, active, loading, onClick }: {
 }
 
 // ─── SVG icons ───────────────────────────────────────────────────────────────
+const TabsIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+    <rect x="1" y="5" width="14" height="10" rx="1"/>
+    <rect x="1" y="2" width="4" height="4" rx="1"/>
+    <rect x="6" y="2" width="4" height="4" rx="1"/>
+  </svg>
+)
+
 const GridIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
     <rect x="1" y="1" width="6" height="6" rx="1"/>
@@ -149,7 +158,7 @@ const RowIcon = () => (
 )
 
 // ─── Toolbar ─────────────────────────────────────────────────────────────────
-export function ArrangeToolbar({ tiles, onArrange, zoom, onZoomToggle }: Props): JSX.Element {
+export function ArrangeToolbar({ tiles, onArrange, zoom, onZoomToggle, onEnterTabs }: Props): JSX.Element {
   const [loading, setLoading] = useState(false)
   const [lastMode, setLastMode] = useState<Mode | null>(null)
 
@@ -187,6 +196,12 @@ export function ArrangeToolbar({ tiles, onArrange, zoom, onZoomToggle }: Props):
         alignItems: 'center',
       }}
     >
+      <Btn label={<TabsIcon />}   title="Tabbed view"              active={false}                loading={false}   onClick={onEnterTabs} />
+      <div style={{ width: 1, height: 20, background: '#2d2d2d', margin: '0 2px' }} />
+      <Btn label={<GridIcon />}   title="Grid layout (auto-wrap)"  active={lastMode === 'grid'}   loading={loading} onClick={() => run('grid')} />
+      <Btn label={<ColumnIcon />} title="Stack in column"          active={lastMode === 'column'} loading={loading} onClick={() => run('column')} />
+      <Btn label={<RowIcon />}    title="Arrange in row"           active={lastMode === 'row'}    loading={loading} onClick={() => run('row')} />
+      <div style={{ width: 1, height: 20, background: '#2d2d2d', margin: '0 2px' }} />
       <button
         onClick={onZoomToggle}
         title="Toggle zoom to 100%"
@@ -202,9 +217,6 @@ export function ArrangeToolbar({ tiles, onArrange, zoom, onZoomToggle }: Props):
       >
         {Math.round(zoom * 100)}%
       </button>
-      <Btn label={<GridIcon />}   title="Grid layout (auto-wrap)"  active={lastMode === 'grid'}   loading={loading} onClick={() => run('grid')} />
-      <Btn label={<ColumnIcon />} title="Stack in column"                  active={lastMode === 'column'} loading={loading} onClick={() => run('column')} />
-      <Btn label={<RowIcon />}    title="Arrange in row"                   active={lastMode === 'row'}    loading={loading} onClick={() => run('row')} />
     </div>
   )
 }

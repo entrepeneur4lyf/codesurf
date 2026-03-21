@@ -27,6 +27,7 @@ function createWindow(asTab = false): BrowserWindow {
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 16, y: 18 },
     backgroundColor: '#111111',
     // macOS native tabs — all windows share the same tabbing group
     tabbingIdentifier: 'collaborator',
@@ -40,7 +41,6 @@ function createWindow(asTab = false): BrowserWindow {
   })
 
   win.on('ready-to-show', () => {
-    // Add as a tab to the focused window if requested and on macOS
     if (asTab && focused && process.platform === 'darwin') {
       focused.addTabbedWindow(win)
     }

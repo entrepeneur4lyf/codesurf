@@ -4,6 +4,10 @@ import type { TileState, GroupState, CanvasState, Workspace, AppSettings } from 
 import { withDefaultSettings, DEFAULT_SETTINGS } from '../../shared/types'
 import type { MenuItem } from './components/ContextMenu'
 import { FontProvider, FontTokenProvider, SANS_DEFAULT, MONO_DEFAULT } from './FontContext'
+import type { PanelNode } from './components/PanelLayout'
+import { createLeaf, removeTileFromTree, addTabToLeaf, getAllTileIds, splitLeaf, closeOthersInLeaf, closeToRightInLeaf } from './components/PanelLayout'
+
+const LazyPanelLayout = React.lazy(() => import('./components/PanelLayout').then(m => ({ default: m.PanelLayout })))
 
 const textIconStyle = (size: number): React.CSSProperties => ({
   display: 'inline-flex',
@@ -73,6 +77,9 @@ function App(): JSX.Element {
   const [showSettings, setShowSettings] = useState(false)
   const [showMinimap, setShowMinimap] = useState(false)
   const [expandedTileId, setExpandedTileId] = useState<string | null>(null)
+  const [panelLayout, setPanelLayout] = useState<PanelNode | null>(null)
+  const [activePanelId, setActivePanelId] = useState<string | null>(null)
+  const savedLayoutRef = useRef<PanelNode | null>(null)
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [guides, setGuides] = useState<{ x?: number; y?: number }[]>([])
@@ -108,6 +115,8 @@ function App(): JSX.Element {
   const closeCtx = useCallback(() => setCtxMenu(null), [])
 
   const canvasRef = useRef<HTMLDivElement>(null)
+  const dotGlowSmallRef = useRef<HTMLDivElement>(null)
+  const dotGlowLargeRef = useRef<HTMLDivElement>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const spaceHeld = useRef(false)
   const skipHistory = useRef(false)
@@ -143,9 +152,66 @@ function App(): JSX.Element {
   }, [])
 
   // ─── Escape to collapse expanded tile ────────────────────────────────────
+  const exitExpandedMode = useCallback(() => {
+    // Save layout before clearing so re-entry can restore it
+    setPanelLayout(prev => { savedLayoutRef.current = prev; return null })
+    setExpandedTileId(null)
+    setActivePanelId(null)
+  }, [])
+
+  const enterExpandedMode = useCallback((tileId: string) => {
+    // All open tiles become tabs, with the expanded tile as the active one
+    const allIds = tilesRef.current.map(t => t.id)
+    const leaf = createLeaf(allIds, tileId)
+    setExpandedTileId(tileId)
+    setPanelLayout(leaf)
+    setActivePanelId(leaf.id)
+  }, [])
+
+  const enterTabbedView = useCallback(() => {
+    const currentIds = tilesRef.current.map(t => t.id)
+    const currentIdSet = new Set(currentIds)
+
+    if (savedLayoutRef.current) {
+      // Restore saved layout — prune removed tiles, append any new ones
+      let restored: PanelNode = savedLayoutRef.current
+
+      // Remove tiles that no longer exist on canvas
+      const savedIds = getAllTileIds(savedLayoutRef.current)
+      for (const id of savedIds) {
+        if (!currentIdSet.has(id)) {
+          restored = removeTileFromTree(restored, id) ?? restored
+        }
+      }
+
+      // Append new tiles (not in saved layout) to the first leaf
+      const restoredIds = new Set(getAllTileIds(restored))
+      const newIds = currentIds.filter(id => !restoredIds.has(id))
+      // Find active panel id from restored tree
+      const firstLeaf = (function find(n: PanelNode): string | null {
+        if (n.type === 'leaf') return n.id
+        return find(n.children[0])
+      })(restored)
+
+      for (const id of newIds) {
+        if (firstLeaf) restored = addTabToLeaf(restored, firstLeaf, id)
+      }
+
+      setPanelLayout(restored)
+      setActivePanelId(firstLeaf)
+      setExpandedTileId(null)
+    } else {
+      // No saved layout — fresh leaf with all tiles
+      const leaf = createLeaf(currentIds, currentIds[0])
+      setPanelLayout(leaf)
+      setActivePanelId(leaf.id)
+      setExpandedTileId(null)
+    }
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setExpandedTileId(null)
+      if (e.key === 'Escape') exitExpandedMode()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -234,7 +300,12 @@ function App(): JSX.Element {
     setNextZIndex(newNZ)
     setSelectedTileId(newTile.id)
     saveCanvas(updated, viewport, newNZ)
-  }, [tiles, nextZIndex, viewport, viewportCenter, saveCanvas])
+
+    // If in expanded/tabbed mode, add as a tab to the active panel
+    if (panelLayout && activePanelId) {
+      setPanelLayout(prev => prev ? addTabToLeaf(prev, activePanelId, newTile.id) : prev)
+    }
+  }, [tiles, nextZIndex, viewport, viewportCenter, saveCanvas, panelLayout, activePanelId])
 
   // ─── MCP canvas tool handlers (must be after addTile) ────────────────────
   useEffect(() => {
@@ -308,15 +379,18 @@ function App(): JSX.Element {
     }
   }, [viewport])
 
-  // Double-click on canvas creates a terminal
+  // Double-click on blank canvas creates a terminal (not in tab view, not over a tile)
   const handleCanvasDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (panelLayout) return
+    if (e.target !== e.currentTarget) return
     const world = screenToWorld(e.clientX, e.clientY)
     addTile('terminal', undefined, world)
-  }, [screenToWorld, addTile])
+  }, [screenToWorld, addTile, panelLayout])
 
   // Right-click on empty canvas
   const handleCanvasContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
+    if (panelLayout) return
     const world = screenToWorld(e.clientX, e.clientY)
     const hitGroup = groups.find(g => {
       const b = groupBoundsRef.current(g.id)
@@ -340,7 +414,7 @@ function App(): JSX.Element {
       items.push({ label: `Group ${selectedTileIds.size} tiles`, action: () => groupSelectedTilesRef.current() })
     }
     setCtxMenu({ x: e.clientX, y: e.clientY, items })
-  }, [screenToWorld, addTile, selectedTileIds, groups])
+  }, [screenToWorld, addTile, selectedTileIds, groups, panelLayout])
 
   // Right-click on a tile titlebar
   const handleTileContextMenu = useCallback((e: React.MouseEvent, tile: TileState) => {
@@ -1105,6 +1179,12 @@ function App(): JSX.Element {
     }
   }
 
+  // Set of tile IDs currently in the panel tree — these should not render on canvas
+  const panelTileIds = React.useMemo(() => {
+    if (!panelLayout) return new Set<string>()
+    return new Set(getAllTileIds(panelLayout))
+  }, [panelLayout])
+
   const isDraggingCanvas = dragState.type === 'pan'
 
   const appFonts = React.useMemo(() => ({
@@ -1141,10 +1221,37 @@ function App(): JSX.Element {
             style={{
               height: 52,
               flexShrink: 0,
+              position: 'relative',
               // @ts-ignore
               WebkitAppRegion: 'drag',
             }}
-          />
+          >
+            {panelLayout && (
+              <button
+                onClick={() => setSidebarCollapsed(p => !p)}
+                title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+                style={{
+                  position: 'absolute', top: '50%', right: 8,
+                  transform: 'translateY(-50%)',
+                  width: 22, height: 22, borderRadius: 5,
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: '#444',
+                  // @ts-ignore
+                  WebkitAppRegion: 'no-drag',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = '#aaa' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#444' }}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  {sidebarCollapsed
+                    ? <path d="M5 2H12V12H5M2 7H8M5 4L2 7L5 10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+                    : <path d="M5 2H12V12H5M8 4L11 7L8 10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+                  }
+                </svg>
+              </button>
+            )}
+          </div>
           {/* Sidebar content */}
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <Suspense fallback={
@@ -1187,7 +1294,7 @@ function App(): JSX.Element {
             height: 52,
             // @ts-ignore
             WebkitAppRegion: 'drag',
-            paddingLeft: 16,
+            paddingLeft: sidebarCollapsed ? 90 : 16,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
@@ -1199,18 +1306,10 @@ function App(): JSX.Element {
             )}
           </div>
           <div style={{ marginLeft: 'auto', marginRight: 16, display: 'flex', gap: 4, alignItems: 'center', WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-            {/* Stats */}
-            <span style={{ fontSize: 11, color: '#777', marginRight: 8 }}>
-              {tiles.length} tile{tiles.length !== 1 ? 's' : ''}
-            </span>
-
             {/* Icon buttons */}
             {([
-              { icon: <Icon glyph="□" size={15} />, label: 'New Window (⌘N)', action: () => window.electron.window?.new(), active: false },
-              { icon: <Icon glyph="+" size={15} />, label: 'New Tab (⌘T)', action: () => window.electron.window?.newTab(), active: false },
-              { icon: <Icon glyph="◉" size={15} />, label: 'Minimap', action: () => setShowMinimap(p => !p), active: showMinimap },
-              { icon: <Icon glyph="◯" size={15} />, label: 'MCP Servers', action: () => { setShowSettings(true) }, active: false },
-              { icon: <Icon glyph="⚙" size={15} />, label: 'Settings', action: () => setShowSettings(true), active: false },
+              { icon: <Icon glyph="+" size={28} />, label: 'New Tab (⌘T)', action: () => window.electron.window?.newTab(), active: false },
+              { icon: <Icon glyph="⚙" size={28} />, label: 'Settings', action: () => setShowSettings(true), active: false },
             ] as { icon: React.ReactNode; label: string; action: () => void; active: boolean }[]).map(btn => (
               <button
                 key={btn.label}
@@ -1241,22 +1340,22 @@ function App(): JSX.Element {
           </div>
         </div>
 
-        {/* Sidebar collapse pill — floats over the canvas left edge */}
+        {/* Sidebar collapse pill — floats over the canvas left edge; hidden in tab mode */}
         <div
           onClick={() => setSidebarCollapsed(p => !p)}
           style={{
+            display: panelLayout ? 'none' : 'flex',
             position: 'absolute',
-            left: 0,
+            left: 8,
             top: '50%',
             transform: 'translateY(-50%)',
-            width: 16,
+            width: 8,
             height: 40,
-            background: '#1a1a1a',
-            border: '1px solid #252525',
-            borderLeft: 'none',
-            borderRadius: '0 6px 6px 0',
+            background: '#252525',
+            border: '1px solid #333',
+            borderRadius: 9999,
             cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            alignItems: 'center', justifyContent: 'center',
             color: '#555',
             fontSize: 9,
             userSelect: 'none',
@@ -1265,7 +1364,7 @@ function App(): JSX.Element {
           onMouseEnter={e => { e.currentTarget.style.background = '#252525'; e.currentTarget.style.color = '#aaa' }}
           onMouseLeave={e => { e.currentTarget.style.background = '#1a1a1a'; e.currentTarget.style.color = '#555' }}
         >
-          {sidebarCollapsed ? '▸' : '◂'}
+          {''}
         </div>
 
         {/* Canvas */}
@@ -1282,6 +1381,27 @@ function App(): JSX.Element {
           onDoubleClick={handleCanvasDoubleClick}
           onContextMenu={handleCanvasContextMenu}
           onWheel={handleWheel}
+          onMouseMove={e => {
+            const rect = canvasRef.current?.getBoundingClientRect()
+            if (!rect) return
+            const x = e.clientX - rect.left
+            const y = e.clientY - rect.top
+            const mask = `radial-gradient(circle 120px at ${x}px ${y}px, rgba(0,0,0,1) 0%, rgba(0,0,0,0.6) 30%, rgba(0,0,0,0) 100%)`
+            if (dotGlowSmallRef.current) {
+              dotGlowSmallRef.current.style.maskImage = mask
+              dotGlowSmallRef.current.style.webkitMaskImage = mask
+              dotGlowSmallRef.current.style.opacity = '1'
+            }
+            if (dotGlowLargeRef.current) {
+              dotGlowLargeRef.current.style.maskImage = mask
+              dotGlowLargeRef.current.style.webkitMaskImage = mask
+              dotGlowLargeRef.current.style.opacity = '1'
+            }
+          }}
+          onMouseLeave={() => {
+            if (dotGlowSmallRef.current) dotGlowSmallRef.current.style.opacity = '0'
+            if (dotGlowLargeRef.current) dotGlowLargeRef.current.style.opacity = '0'
+          }}
           onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }}
           onDrop={e => {
             e.preventDefault()
@@ -1319,6 +1439,13 @@ function App(): JSX.Element {
             if (filePath) addTile(extToType(filePath), filePath, world)
           }}
         >
+          {/* Canvas content wrapper — fades out when in expanded/tabbed mode */}
+          <div style={{
+            position: 'absolute', inset: 0,
+            opacity: panelLayout ? 0 : 1,
+            transition: 'opacity 0.3s ease',
+            pointerEvents: panelLayout ? 'none' : 'auto',
+          }}>
           {/* Dot grid - small */}
           <div
             className="absolute inset-0 pointer-events-none"
@@ -1335,6 +1462,31 @@ function App(): JSX.Element {
               backgroundImage: `radial-gradient(circle, ${settings.gridColorLarge} 2px, transparent 2px)`,
               backgroundSize: `${settings.gridSpacingLarge * viewport.zoom}px ${settings.gridSpacingLarge * viewport.zoom}px`,
               backgroundPosition: `${viewport.tx % (settings.gridSpacingLarge * viewport.zoom)}px ${viewport.ty % (settings.gridSpacingLarge * viewport.zoom)}px`
+            }}
+          />
+
+          {/* Dot grid glow - small (cursor proximity light) */}
+          <div
+            ref={dotGlowSmallRef}
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundImage: `radial-gradient(circle, rgba(255,255,255,0.7) 1px, transparent 1px)`,
+              backgroundSize: `${settings.gridSpacingSmall * viewport.zoom}px ${settings.gridSpacingSmall * viewport.zoom}px`,
+              backgroundPosition: `${viewport.tx % (settings.gridSpacingSmall * viewport.zoom)}px ${viewport.ty % (settings.gridSpacingSmall * viewport.zoom)}px`,
+              opacity: 0,
+              transition: 'opacity 0.3s ease-out',
+            }}
+          />
+          {/* Dot grid glow - large (cursor proximity light) */}
+          <div
+            ref={dotGlowLargeRef}
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundImage: `radial-gradient(circle, rgba(255,255,255,0.8) 2px, transparent 2px)`,
+              backgroundSize: `${settings.gridSpacingLarge * viewport.zoom}px ${settings.gridSpacingLarge * viewport.zoom}px`,
+              backgroundPosition: `${viewport.tx % (settings.gridSpacingLarge * viewport.zoom)}px ${viewport.ty % (settings.gridSpacingLarge * viewport.zoom)}px`,
+              opacity: 0,
+              transition: 'opacity 0.3s ease-out',
             }}
           />
 
@@ -1595,8 +1747,8 @@ function App(): JSX.Element {
                     onResizeMouseDown={(e, dir) => handleResizeMouseDown(e, tile, dir)}
                     onContextMenu={e => handleTileContextMenu(e, tile)}
                     isSelected={tile.id === selectedTileId || selectedTileIds.has(tile.id)}
-                    forceExpanded={expandedTileId === tile.id}
-                    onExpandChange={expanded => setExpandedTileId(expanded ? tile.id : null)}
+                    forceExpanded={panelTileIds.has(tile.id)}
+                    onExpandChange={expanded => expanded ? enterExpandedMode(tile.id) : exitExpandedMode()}
                   >
                     <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: 12, background: '#1a1a1a' }}>Loading tile…</div>}>
                       {renderTileBody(tile)}
@@ -1645,50 +1797,67 @@ function App(): JSX.Element {
             </div>
           )}
 
-          {/* Expanded tile — fills the canvas panel, canvas disabled */}
-          {expandedTileId && (() => {
-            const tile = tiles.find(t => t.id === expandedTileId)
-            if (!tile) return null
-            return (
-              <div style={{
-                position: 'absolute', inset: 0,
-                zIndex: 99990,
-                background: '#1e1e1e',
-                display: 'flex', flexDirection: 'column',
-                borderLeft: '1px solid #2d2d2d',
-              }}>
-                {/* Titlebar — position:relative + z-index keeps it above the webview
-                    compositor layer when a browser tile is expanded */}
-                <div style={{
-                  height: 36, background: '#252525', borderBottom: '1px solid #2d2d2d',
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '0 12px 0 12px', userSelect: 'none', flexShrink: 0,
-                  position: 'relative', zIndex: 1
-                }}>
-                  <span style={{ fontSize: 13, fontWeight: 500, color: '#cccccc' }}>
-                    {tile.filePath?.replace(/\\/g, '/').split('/').pop() ?? tile.type.charAt(0).toUpperCase() + tile.type.slice(1)}
-                  </span>
-                  <button
-                    onClick={() => setExpandedTileId(null)}
-                    style={{
-                      width: 14, height: 14, borderRadius: '50%', background: '#444',
-                      border: 'none', cursor: 'pointer', transition: 'background 0.1s'
-                    }}
-                    onMouseEnter={e => (e.currentTarget.style.background = '#ff5f56')}
-                    onMouseLeave={e => (e.currentTarget.style.background = '#444')}
-                  />
-                </div>
-                {/* Content — position:relative is required so that BrowserTile's
-                    position:absolute inset:0 is contained here, not the overlay.
-                    Without it the webview escapes up and covers the titlebar. */}
-                <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, position: 'relative' }}>
-                  <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: 12, background: '#1a1a1a' }}>Loading tile…</div>}>
-                    {renderTileBody(tile)}
-                  </Suspense>
-                </div>
-              </div>
-            )
-          })()}
+          </div>{/* end canvas content wrapper */}
+
+          {/* Expanded panel layout — VS Code-style tabs + splits */}
+          {panelLayout && (
+            <Suspense fallback={null}>
+              <LazyPanelLayout
+                root={panelLayout}
+                getTileLabel={(tileId) => {
+                  const t = tiles.find(ti => ti.id === tileId)
+                  if (!t) return 'Unknown'
+                  return t.filePath?.replace(/\\/g, '/').split('/').pop()
+                    ?? t.type.charAt(0).toUpperCase() + t.type.slice(1)
+                }}
+                renderTile={(tileId) => {
+                  const t = tiles.find(ti => ti.id === tileId)
+                  if (!t) return null
+                  return (
+                    <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: 12, background: '#1a1a1a' }}>Loading tile…</div>}>
+                      {renderTileBody(t)}
+                    </Suspense>
+                  )
+                }}
+                onLayoutChange={setPanelLayout}
+                onCloseTab={(tileId) => {
+                  const updated = removeTileFromTree(panelLayout, tileId)
+                  if (!updated) {
+                    // Last tab closed — show empty state with fresh leaf
+                    const emptyLeaf = createLeaf([])
+                    setPanelLayout(emptyLeaf)
+                    setActivePanelId(emptyLeaf.id)
+                  } else {
+                    setPanelLayout(updated)
+                  }
+                }}
+                onAddTile={(type) => addTile(type as TileState['type'])}
+                onExit={exitExpandedMode}
+                activePanelId={activePanelId}
+                onActivePanelChange={setActivePanelId}
+                getTileType={(tileId) => tiles.find(t => t.id === tileId)?.type ?? 'note'}
+                onSplitNew={(panelId, tileType, zone) => {
+                  const center = viewportCenter()
+                  const { w, h } = settings.defaultTileSizes[tileType as TileState['type']]
+                  const newTile: TileState = {
+                    id: `tile-${Date.now()}`,
+                    type: tileType as TileState['type'],
+                    x: snap(center.x - w / 2), y: snap(center.y - h / 2),
+                    width: w, height: h, zIndex: nextZIndex,
+                  }
+                  setTiles(prev => [...prev, newTile])
+                  setNextZIndex(prev => prev + 1)
+                  setPanelLayout(prev => prev ? splitLeaf(prev, panelId, newTile.id, zone) : prev)
+                }}
+                onCloseOthers={(panelId, tileId) => {
+                  setPanelLayout(prev => prev ? closeOthersInLeaf(prev, panelId, tileId) : prev)
+                }}
+                onCloseToRight={(panelId, tileId) => {
+                  setPanelLayout(prev => prev ? closeToRightInLeaf(prev, panelId, tileId) : prev)
+                }}
+              />
+            </Suspense>
+          )}
 
           {/* Minimap */}
           {showMinimap && (
@@ -1711,6 +1880,7 @@ function App(): JSX.Element {
               tiles={tiles}
               onArrange={handleArrange}
               zoom={viewport.zoom}
+              onEnterTabs={enterTabbedView}
               onZoomToggle={() => {
                 setViewport(prev => {
                   if (prev.zoom === 1) {

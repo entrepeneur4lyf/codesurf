@@ -82,33 +82,41 @@ export function NoteTile({ filePath, initialContent = '' }: Props): JSX.Element 
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current) }, [])
 
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#1e1e1e' }}>
-      {/* Mode toggle */}
-      <div style={{
-        display: 'flex', gap: 1, padding: '4px 8px',
-        borderBottom: '1px solid #2d2d2d', flexShrink: 0
-      }}>
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#1e1e1e', position: 'relative' }}>
+      {/* Mode toggle icons — float top-right over content */}
+      <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, display: 'flex', gap: 2 }}>
         <button
           onClick={() => setMode('edit')}
+          title="Edit"
           style={{
-            fontSize: 11, padding: '2px 10px', borderRadius: '3px 0 0 3px',
-            background: mode === 'edit' ? '#3a3a3a' : '#252525',
-            color: mode === 'edit' ? '#ccc' : '#666',
-            border: '1px solid #333', cursor: 'pointer', fontFamily: 'inherit'
+            width: 24, height: 24, borderRadius: 4, border: 'none', cursor: 'pointer', padding: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: mode === 'edit' ? 'rgba(74,158,255,0.18)' : 'rgba(30,30,30,0.75)',
+            color: mode === 'edit' ? '#4a9eff' : '#555',
           }}
+          onMouseEnter={e => { if (mode !== 'edit') { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#aaa' } }}
+          onMouseLeave={e => { if (mode !== 'edit') { e.currentTarget.style.background = 'rgba(30,30,30,0.75)'; e.currentTarget.style.color = '#555' } }}
         >
-          Edit
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+            <path d="M9 1.5L11.5 4L4.5 11H2V8.5L9 1.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
         </button>
         <button
           onClick={() => setMode('preview')}
+          title="Preview"
           style={{
-            fontSize: 11, padding: '2px 10px', borderRadius: '0 3px 3px 0',
-            background: mode === 'preview' ? '#3a3a3a' : '#252525',
-            color: mode === 'preview' ? '#ccc' : '#666',
-            border: '1px solid #333', borderLeft: 'none', cursor: 'pointer', fontFamily: 'inherit'
+            width: 24, height: 24, borderRadius: 4, border: 'none', cursor: 'pointer', padding: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: mode === 'preview' ? 'rgba(74,158,255,0.18)' : 'rgba(30,30,30,0.75)',
+            color: mode === 'preview' ? '#4a9eff' : '#555',
           }}
+          onMouseEnter={e => { if (mode !== 'preview') { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#aaa' } }}
+          onMouseLeave={e => { if (mode !== 'preview') { e.currentTarget.style.background = 'rgba(30,30,30,0.75)'; e.currentTarget.style.color = '#555' } }}
         >
-          Preview
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M1 7C1 7 3 3 7 3C11 3 13 7 13 7C13 7 11 11 7 11C3 11 1 7 1 7Z" stroke="currentColor" strokeWidth="1.3"/>
+            <circle cx="7" cy="7" r="1.5" stroke="currentColor" strokeWidth="1.3"/>
+          </svg>
         </button>
       </div>
 
