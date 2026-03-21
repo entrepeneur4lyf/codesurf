@@ -1864,7 +1864,7 @@ function App(): JSX.Element {
                         setTimeout(() => ghost.remove(), 0)
                       }}
                       style={{
-                        position: 'absolute', top: -28 / viewport.zoom, left: 0,
+                        position: 'absolute', top: -24 / viewport.zoom, left: 0,
                         display: 'flex', gap: 6, alignItems: 'center',
                         userSelect: 'none', pointerEvents: 'all',
                         background: 'none',
@@ -1872,7 +1872,7 @@ function App(): JSX.Element {
                         padding: '3px 0',
                         cursor: 'grab',
                         transform: `scale(${1 / viewport.zoom})`,
-                        transformOrigin: 'left bottom',
+                        transformOrigin: 'left top',
                       }}>
                       {/* Color swatch / picker */}
                       <div style={{ position: 'relative' }}>
@@ -2193,6 +2193,7 @@ function App(): JSX.Element {
         <Suspense fallback={null}>
           <LazyArrangeToolbar
             tiles={tiles}
+            groups={groups}
             onArrange={(updated, mode) => {
               if (panelLayout) exitExpandedMode()
               setCanvasArrangeMode(mode)
