@@ -85,6 +85,16 @@ export function getAllTileIds(node: PanelNode): string[] {
   return node.children.flatMap(getAllTileIds)
 }
 
+function getNodeMinWidth(node: PanelNode, getTileType: (tileId: string) => string): number {
+  if (node.type === 'leaf') {
+    return node.tabs.some(tileId => getTileType(tileId) === 'chat') ? 450 : 0
+  }
+  const childWidths = node.children.map(child => getNodeMinWidth(child, getTileType))
+  return node.direction === 'horizontal'
+    ? childWidths.reduce((sum, width) => sum + width, 0)
+    : Math.max(0, ...childWidths)
+}
+
 export function removeTileFromTree(node: PanelNode, tileId: string): PanelNode | null {
   if (node.type === 'leaf') {
     const newTabs = node.tabs.filter(id => id !== tileId)
@@ -323,31 +333,6 @@ function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown,
         })}
       </div>
 
-      {/* Fixed right actions — never scrolls with tabs */}
-      <div style={{
-        display: 'flex', alignItems: 'center', flexShrink: 0,
-        padding: '0 8px', gap: 4,
-        borderLeft: '1px solid #2d2d2d', background: '#1e1e1e',
-      }}>
-        {onExit && (
-          <button
-            onMouseDown={e => e.stopPropagation()}
-            onClick={e => { e.stopPropagation(); onExit() }}
-            title="Back to canvas"
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-              color: '#555', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 24, height: 24, borderRadius: 4, flexShrink: 0,
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#ccc' }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#555' }}
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M1 4V1H4M10 1H13V4M13 10V13H10M4 13H1V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-        )}
-      </div>
 
       {/* Context menu — position: fixed to escape overflow clipping */}
       {ctxMenu && (
@@ -599,16 +584,28 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
     const update = (node: PanelNode): PanelNode => {
       if (node.type === 'leaf') return node
       if (node.id === splitId) {
-        const pct = (delta / totalPx) * 100
         const sizes = [...node.sizes]
-        sizes[index] = Math.max(10, sizes[index] + pct)
-        sizes[index + 1] = Math.max(10, sizes[index + 1] - pct)
+        if (node.direction === 'horizontal') {
+          const currentPxA = totalPx * (sizes[index] / 100)
+          const currentPxB = totalPx * (sizes[index + 1] / 100)
+          const pairTotalPx = currentPxA + currentPxB
+          const minPxA = getNodeMinWidth(node.children[index], getTileType)
+          const minPxB = getNodeMinWidth(node.children[index + 1], getTileType)
+          const nextPxA = Math.min(Math.max(currentPxA + delta, minPxA), pairTotalPx - minPxB)
+          const nextPxB = pairTotalPx - nextPxA
+          sizes[index] = (nextPxA / totalPx) * 100
+          sizes[index + 1] = (nextPxB / totalPx) * 100
+        } else {
+          const pct = (delta / totalPx) * 100
+          sizes[index] = Math.max(10, sizes[index] + pct)
+          sizes[index + 1] = Math.max(10, sizes[index + 1] - pct)
+        }
         return { ...node, sizes }
       }
       return { ...node, children: node.children.map(update) }
     }
     onLayoutChange(update(root))
-  }, [root, onLayoutChange])
+  }, [root, onLayoutChange, getTileType])
 
   const renderNode = (node: PanelNode): React.ReactNode => {
     if (node.type === 'leaf') {
@@ -641,7 +638,13 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
       >
         {node.children.map((child, i) => (
           <React.Fragment key={child.id}>
-            <div style={{ flex: `${node.sizes[i]} 0 0%`, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <div style={{
+              flex: `${node.sizes[i]} 0 0%`,
+              minWidth: node.direction === 'horizontal' ? getNodeMinWidth(child, getTileType) : 0,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column'
+            }}>
               {renderNode(child)}
             </div>
             {i < node.children.length - 1 && (

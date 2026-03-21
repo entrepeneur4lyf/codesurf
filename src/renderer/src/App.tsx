@@ -88,6 +88,25 @@ function withAlpha(color: string, alpha: number): string {
   return color
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT'
+    || tag === 'TEXTAREA'
+    || el.isContentEditable
+    || !!el.closest('.monaco-editor')
+}
+
+function getMinTileWidth(tileOrType: TileState | TileState['type']): number {
+  const type = typeof tileOrType === 'string' ? tileOrType : tileOrType.type
+  return type === 'chat' ? 450 : 200
+}
+
+function getMinTileHeight(_tileOrType: TileState | TileState['type']): number {
+  return 150
+}
+
 function App(): JSX.Element {
   const [tiles, setTiles] = useState<TileState[]>([])
   const [groups, setGroups] = useState<GroupState[]>([])
@@ -308,16 +327,22 @@ function App(): JSX.Element {
 
   // ─── Space key for pan mode ───────────────────────────────────────────────
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat) {
-        if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return
+        if (isEditableTarget(e.target)) return
         e.preventDefault()
-        spaceHeld.current = e.type === 'keydown'
+        spaceHeld.current = true
       }
     }
-    window.addEventListener('keydown', onKey)
-    window.addEventListener('keyup', (e) => { if (e.code === 'Space') spaceHeld.current = false })
-    return () => window.removeEventListener('keydown', onKey)
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') spaceHeld.current = false
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
   }, [])
 
   // ─── Cmd+0 reset zoom ─────────────────────────────────────────────────────
@@ -394,13 +419,17 @@ function App(): JSX.Element {
     const center = pos ?? viewportCenter()
     const defaultSizes = settings.defaultTileSizes
     const { w, h } = defaultSizes[type]
+    const minW = getMinTileWidth(type)
+    const minH = getMinTileHeight(type)
+    const width = Math.max(w, minW)
+    const height = Math.max(h, minH)
     const newTile: TileState = {
       id: `tile-${Date.now()}`,
       type,
-      x: snap(center.x - w / 2),
-      y: snap(center.y - h / 2),
-      width: w,
-      height: h,
+      x: snap(center.x - width / 2),
+      y: snap(center.y - height / 2),
+      width,
+      height,
       zIndex: nextZIndex,
       filePath
     }
@@ -415,7 +444,28 @@ function App(): JSX.Element {
     if (panelLayout && activePanelId) {
       setPanelLayout(prev => prev ? addTabToLeaf(prev, activePanelId, newTile.id) : prev)
     }
-  }, [tiles, nextZIndex, viewport, viewportCenter, saveCanvas, panelLayout, activePanelId])
+  }, [tiles, nextZIndex, viewport, viewportCenter, saveCanvas, panelLayout, activePanelId, settings.defaultTileSizes])
+
+  useEffect(() => {
+    if (!tiles.some(tile => tile.width < getMinTileWidth(tile) || tile.height < getMinTileHeight(tile))) return
+    setTiles(prev => {
+      let changed = false
+      const updated = prev.map(tile => {
+        const minW = getMinTileWidth(tile)
+        const minH = getMinTileHeight(tile)
+        if (tile.width >= minW && tile.height >= minH) return tile
+        changed = true
+        return {
+          ...tile,
+          width: Math.max(tile.width, minW),
+          height: Math.max(tile.height, minH),
+        }
+      })
+      if (!changed) return prev
+      saveCanvas(updated, viewport, nextZIndex)
+      return updated
+    })
+  }, [tiles, viewport, nextZIndex, saveCanvas])
 
   // ─── MCP canvas tool handlers (must be after addTile) ────────────────────
   useEffect(() => {
@@ -659,6 +709,8 @@ function App(): JSX.Element {
         setTiles(prev => prev.map(t => {
           const s = snaps.find(s2 => s2.id === t.id)
           if (!s) return t
+          const minW = getMinTileWidth(t)
+          const minH = getMinTileHeight(t)
           // Scale position relative to group origin
           const relX = s.x - ib.x
           const relY = s.y - ib.y
@@ -666,8 +718,8 @@ function App(): JSX.Element {
             ...t,
             x: snap(nx + relX * scaleX),
             y: snap(ny + relY * scaleY),
-            width:  Math.max(120, snap(s.width  * scaleX)),
-            height: Math.max(80,  snap(s.height * scaleY)),
+            width: Math.max(minW, snap(s.width * scaleX)),
+            height: Math.max(minH, snap(s.height * scaleY)),
           }
         }))
       } else if (dragState.type === 'group') {
@@ -735,11 +787,13 @@ function App(): JSX.Element {
         const dir = dragState.dir
         setTiles(prev => prev.map(t => {
           if (t.id !== dragState.tileId) return t
+          const minW = getMinTileWidth(t)
+          const minH = getMinTileHeight(t)
           let { x, y, width: w, height: h } = t
-          if (dir.includes('e'))  w = Math.max(200, snap(dragState.initW + wdx))
-          if (dir.includes('s'))  h = Math.max(150, snap(dragState.initH + wdy))
-          if (dir.includes('w')) { w = Math.max(200, snap(dragState.initW - wdx)); x = snap(dragState.initX + wdx) }
-          if (dir.includes('n')) { h = Math.max(150, snap(dragState.initH - wdy)); y = snap(dragState.initY + wdy) }
+          if (dir.includes('e'))  w = Math.max(minW, snap(dragState.initW + wdx))
+          if (dir.includes('s'))  h = Math.max(minH, snap(dragState.initH + wdy))
+          if (dir.includes('w')) { w = Math.max(minW, snap(dragState.initW - wdx)); x = snap(dragState.initX + wdx) }
+          if (dir.includes('n')) { h = Math.max(minH, snap(dragState.initH - wdy)); y = snap(dragState.initY + wdy) }
           return { ...t, x, y, width: w, height: h }
         }))
       }
@@ -961,8 +1015,7 @@ function App(): JSX.Element {
   // ─── Cmd+G to group ───────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (isEditableTarget(e.target)) return
       if ((e.metaKey || e.ctrlKey) && e.key === 'g') {
         e.preventDefault()
         if (selectedTileIds.size >= 2) groupSelectedTiles()
@@ -1154,8 +1207,7 @@ function App(): JSX.Element {
   // ─── Copy / Cut / Paste / Duplicate / Delete shortcuts ───────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (isEditableTarget(e.target)) return
       const mod = e.metaKey || e.ctrlKey
       if (mod && e.key === 'c') { e.preventDefault(); copyTiles(false) }
       if (mod && e.key === 'x') { e.preventDefault(); copyTiles(true) }
@@ -1184,8 +1236,7 @@ function App(): JSX.Element {
   // ─── Undo / redo ─────────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (isEditableTarget(e.target)) return
       const mod = e.metaKey || e.ctrlKey
       if (!mod) return
 
