@@ -278,7 +278,7 @@ function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown,
 
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', height: 38,
+      display: 'flex', alignItems: 'center', height: 34,
       background: '#1e1e1e', borderBottom: '1px solid #2d2d2d',
       overflow: 'hidden', flexShrink: 0, zIndex: 1,
       padding: '0 8px',
@@ -306,10 +306,10 @@ function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown,
                 setCtxMenu({ tileId: tab.id, tileType: getTileType(tab.id), x: e.clientX, y: e.clientY })
               }}
               style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                height: 28,
-                padding: '0 11px', cursor: 'grab', userSelect: 'none',
-                fontSize: 11, color: isActive ? '#58a6ff' : '#6f7782',
+                display: 'flex', alignItems: 'center', gap: 5,
+                height: 21,
+                padding: '0 8px', cursor: 'grab', userSelect: 'none',
+                fontSize: 10, color: isActive ? '#58a6ff' : '#6f7782',
                 background: isActive ? '#252525' : 'transparent',
                 border: `1px solid ${isActive ? '#333' : 'transparent'}`,
                 borderRadius: 7,
@@ -340,7 +340,7 @@ function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown,
               <span
                 onMouseDown={e => e.stopPropagation()}
                 onClick={e => { e.stopPropagation(); onClose(tab.id) }}
-                style={{ width: 14, height: 14, borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: isActive ? '#4f647b' : '#4f5761', flexShrink: 0, cursor: 'pointer', transition: 'color 0.15s, background 0.15s' }}
+                style={{ width: 15, height: 15, borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, lineHeight: 1, color: isActive ? '#4f647b' : '#4f5761', flexShrink: 0, cursor: 'pointer', transition: 'color 0.15s, background 0.15s' }}
                 onMouseEnter={e => { e.currentTarget.style.color = isActive ? '#9cc9ff' : '#c2cad4'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
                 onMouseLeave={e => { e.currentTarget.style.color = isActive ? '#4f647b' : '#4f5761'; e.currentTarget.style.background = 'transparent' }}
               >
