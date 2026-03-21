@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { ArrowLeft, ArrowRight, RotateCcw, RotateCw, Home, Globe, Monitor, Smartphone, Crosshair } from 'lucide-react'
 
 const HOMEPAGE = 'https://duckduckgo.com'
@@ -245,13 +244,27 @@ function ToolbarButton({
   onClick: () => void
   children: React.ReactNode
 }): React.JSX.Element {
+  const handleMouseDown = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation()
+    if (disabled) return
+    e.preventDefault()
+    onClick()
+  }
+
+  const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation()
+    // Keyboard activation still dispatches click with detail=0.
+    if (!disabled && e.detail === 0) onClick()
+  }
+
   return (
     <button
       type="button"
       aria-label={label}
       title={title}
       disabled={disabled}
-      onClick={onClick}
+      onMouseDown={handleMouseDown}
+      onClick={handleClick}
       style={{
         width: 26,
         height: 26,
@@ -328,6 +341,8 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
   const [mode, setMode] = useState<BrowserMode>('desktop')
   const [isClusoReady, setIsClusoReady] = useState(false)
   const [isClusoActive, setIsClusoActive] = useState(false)
+  const [isToolbarHovered, setIsToolbarHovered] = useState(false)
+  const [isAddressFocused, setIsAddressFocused] = useState(false)
 
   // Cluso embed assets — loaded once on mount
   const clusoAssetsRef = useRef<{ js: string | null; css: string | null }>({ js: null, css: null })
@@ -348,25 +363,6 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
   const setIsClusoActiveRef = useRef(setIsClusoActive)
   setIsClusoActiveRef.current = setIsClusoActive
 
-  // Load cluso embed assets from filesystem (once)
-  useEffect(() => {
-    const loadAssets = async () => {
-      try {
-        const [jsResult, cssResult] = await Promise.all([
-          window.electron?.fs?.readFile(CLUSO_EMBED_JS_PATH),
-          window.electron?.fs?.readFile(CLUSO_EMBED_CSS_PATH)
-        ])
-        clusoAssetsRef.current = {
-          js: typeof jsResult === 'string' ? jsResult : null,
-          css: typeof cssResult === 'string' ? cssResult : null
-        }
-      } catch (err) {
-        console.warn('[BrowserTile] Could not load cluso embed assets:', err)
-      }
-    }
-    loadAssets()
-  }, [])
-
   // Inject cluso into the webview — called after each page load
   const injectCluso = useCallback(() => {
     const webview = wvRef.current
@@ -382,6 +378,30 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
       .executeJavaScript(createClusoInjectScript(js, css))
       .catch(err => console.error('[BrowserTile] Cluso injection failed:', err))
   }, []) // stable — reads assets via ref
+
+  // Load cluso embed assets from filesystem (once)
+  useEffect(() => {
+    const loadAssets = async () => {
+      try {
+        const [jsResult, cssResult] = await Promise.all([
+          window.electron?.fs?.readFile(CLUSO_EMBED_JS_PATH),
+          window.electron?.fs?.readFile(CLUSO_EMBED_CSS_PATH)
+        ])
+        clusoAssetsRef.current = {
+          js: typeof jsResult === 'string' ? jsResult : null,
+          css: typeof cssResult === 'string' ? cssResult : null
+        }
+        // The page can finish loading before the assets arrive from disk.
+        // If that happened, retry injection now instead of waiting for another navigation.
+        if (mountedRef.current && wvReadyRef.current) {
+          injectCluso()
+        }
+      } catch (err) {
+        console.warn('[BrowserTile] Could not load cluso embed assets:', err)
+      }
+    }
+    loadAssets()
+  }, [injectCluso])
 
   // Create the webview imperatively (1code pattern)
   useEffect(() => {
@@ -554,6 +574,14 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
     }
   }, [initialUrl])
 
+  // When the toolbar is engaged, explicitly disable pointer handling on the
+  // actual <webview> element so Chromium can't steal mouseup/click/focus.
+  useEffect(() => {
+    const webview = wvRef.current
+    if (!webview) return
+    webview.style.pointerEvents = (isToolbarHovered || isAddressFocused) ? 'none' : 'auto'
+  }, [isToolbarHovered, isAddressFocused])
+
   // ---- navigation actions -----------------------------------------------
   const navigate = useCallback((rawUrl: string) => {
     const next = normalizeUrl(rawUrl)
@@ -632,21 +660,36 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
       })
     }
 
+    // If the page loaded before the embed assets were ready, injection may not
+    // have happened yet. Retry it here before polling for the host bridge.
+    if (!isClusoReady) injectCluso()
     tryToggle(0)
+  }, [injectCluso, isClusoReady])
+
+  const focusAddressInput = useCallback(() => {
+    requestAnimationFrame(() => {
+      const input = inputRef.current
+      if (!input) return
+      input.focus()
+      const pos = input.value.length
+      input.setSelectionRange(pos, pos)
+    })
   }, [])
 
-  // ---- portal toolbar ---------------------------------------------------
-  const headerSlot =
-    typeof document !== 'undefined'
-      ? document.getElementById(`tile-header-slot-${tileId}`)
-      : null
-
+  // ---- toolbar -----------------------------------------------------------
   const toolbar = (
     <form
       onSubmit={e => {
         e.preventDefault()
         navigate(addressBar)
       }}
+      onMouseEnter={() => setIsToolbarHovered(true)}
+      onMouseLeave={() => setIsToolbarHovered(false)}
+      onMouseDown={e => {
+        e.stopPropagation()
+        setIsToolbarHovered(true)
+      }}
+      onClick={e => e.stopPropagation()}
       style={{
         width: '100%',
         height: '100%',
@@ -683,7 +726,15 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
           ref={inputRef}
           aria-label="Address"
           value={addressBar}
+          onFocus={() => setIsAddressFocused(true)}
+          onBlur={() => setIsAddressFocused(false)}
           onChange={e => setAddressBar(e.target.value)}
+          onMouseDown={e => {
+            e.stopPropagation()
+            setIsToolbarHovered(true)
+            focusAddressInput()
+          }}
+          onClick={e => e.stopPropagation()}
           onKeyDown={e => {
             if (e.key === 'Escape') (e.currentTarget as HTMLInputElement).blur()
           }}
@@ -709,7 +760,8 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
             transform: 'translateY(-50%)',
             color: currentUrl.startsWith('https://') ? '#3fb950' : '#888',
             display: 'flex',
-            alignItems: 'center'
+            alignItems: 'center',
+            pointerEvents: 'none'
           }}
         >
           <Globe size={10} />
@@ -750,13 +802,21 @@ export function BrowserTile({ tileId, initialUrl, width, height, zIndex: _zIndex
 
   // ---- render -----------------------------------------------------------
   return (
-    <div style={{ position: 'absolute', inset: 0, background: '#111', overflow: 'hidden' }}>
-      {headerSlot && createPortal(toolbar, headerSlot)}
+    <div style={{ position: 'absolute', inset: 0, background: '#111' }}>
+      {/* Toolbar — explicit top/height so compositor knows exact rect; zIndex above webview */}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: 34,
+        display: 'flex', alignItems: 'center', padding: '0 6px',
+        background: '#1e1e1e', borderBottom: '1px solid #2d2d2d',
+        zIndex: 2,
+      }}>
+        {toolbar}
+      </div>
 
-      {/* Imperative webview container — absolute inset avoids CSS transform clipping */}
+      {/* Webview container — starts below toolbar; explicit top: 34 keeps it out of toolbar's rect */}
       <div
         ref={wvContainerRef}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+        style={{ position: 'absolute', top: 34, left: 0, right: 0, bottom: 0, zIndex: 1 }}
       />
 
       {/* Invisible overlay during drag/resize — blocks mouse events from reaching webview */}

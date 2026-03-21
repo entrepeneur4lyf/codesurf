@@ -16,9 +16,23 @@ import { registerCollabIPC, stopAllCollabWatchers } from './ipc/collab'
 import { flushAll as flushActivityStore } from './activity-store'
 // browserTile BrowserView IPC was removed — renderer uses <webview> tag directly
 
-function createWindow(asTab = false): BrowserWindow {
-  const focused = BrowserWindow.getFocusedWindow()
+// Per-window display titles (webContents.id → label set by renderer via workspace name)
+const windowTitles = new Map<number, string>()
 
+function broadcastWindowList(): void {
+  const wins = BrowserWindow.getAllWindows()
+  const focusedId = BrowserWindow.getFocusedWindow()?.webContents.id
+  const list = wins.map(w => ({
+    id: w.webContents.id,
+    title: windowTitles.get(w.webContents.id) ?? 'Collaborator',
+    focused: w.webContents.id === focusedId,
+  }))
+  for (const w of wins) {
+    if (!w.isDestroyed()) w.webContents.send('window:list-changed', list)
+  }
+}
+
+function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -29,8 +43,6 @@ function createWindow(asTab = false): BrowserWindow {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 18 },
     backgroundColor: '#111111',
-    // macOS native tabs — all windows share the same tabbing group
-    tabbingIdentifier: 'collaborator',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -41,14 +53,17 @@ function createWindow(asTab = false): BrowserWindow {
   })
 
   win.on('ready-to-show', () => {
-    if (asTab && focused && process.platform === 'darwin') {
-      focused.addTabbedWindow(win)
-    }
+    win.setTitle('') // hide native title text; our pill tabs show workspace name
     win.show()
+    broadcastWindowList()
   })
 
+  win.on('focus', () => broadcastWindowList())
+  win.on('blur', () => broadcastWindowList())
+
   win.on('closed', () => {
-    // nothing to clean up — webview sessions are handled by Chromium
+    windowTitles.delete(win.webContents.id)
+    broadcastWindowList()
   })
 
   win.webContents.setWindowOpenHandler((details) => {
@@ -260,8 +275,35 @@ app.whenReady().then(async () => {
   })
 
   // Window management
-  ipcMain.handle('window:new', () => { createWindow(false); return null })
-  ipcMain.handle('window:newTab', () => { createWindow(true); return null })
+  ipcMain.handle('window:new', () => { createWindow(); return null })
+  ipcMain.handle('window:newTab', () => { createWindow(); return null })
+
+  ipcMain.handle('window:list', () => {
+    const wins = BrowserWindow.getAllWindows()
+    const focusedId = BrowserWindow.getFocusedWindow()?.webContents.id
+    return wins.map(w => ({
+      id: w.webContents.id,
+      title: windowTitles.get(w.webContents.id) ?? 'Collaborator',
+      focused: w.webContents.id === focusedId,
+    }))
+  })
+
+  ipcMain.handle('window:getCurrentId', (event) => event.sender.id)
+
+  ipcMain.handle('window:setTitle', (event, title: string) => {
+    windowTitles.set(event.sender.id, title)
+    broadcastWindowList()
+  })
+
+  ipcMain.handle('window:focusById', (_, id: number) => {
+    const win = BrowserWindow.getAllWindows().find(w => w.webContents.id === id)
+    win?.focus()
+  })
+
+  ipcMain.handle('window:closeById', (_, id: number) => {
+    const win = BrowserWindow.getAllWindows().find(w => w.webContents.id === id)
+    win?.close()
+  })
 
   // Native app menu with Cmd+N / Cmd+T
   const menu = Menu.buildFromTemplate([
@@ -285,12 +327,12 @@ app.whenReady().then(async () => {
         {
           label: 'New Window',
           accelerator: 'CmdOrCtrl+N',
-          click: () => createWindow(false)
+          click: () => createWindow()
         },
         {
           label: 'New Tab',
           accelerator: 'CmdOrCtrl+T',
-          click: () => createWindow(true)
+          click: () => createWindow()
         },
         { type: 'separator' },
         { role: 'close' }

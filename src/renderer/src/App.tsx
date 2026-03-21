@@ -84,6 +84,12 @@ function App(): JSX.Element {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [guides, setGuides] = useState<{ x?: number; y?: number }[]>([])
 
+  // Workspace pill tabs — open workspace ids within this window
+  const [openWorkspaceIds, setOpenWorkspaceIds] = useState<string[]>([])
+  useEffect(() => {
+    if (workspace?.id) setOpenWorkspaceIds(prev => prev.includes(workspace.id) ? prev : [...prev, workspace.id])
+  }, [workspace?.id])
+
   // Internal clipboard — stores tile snapshots (not OS clipboard)
   const clipboard = useRef<TileState[]>([])
   const isCut = useRef(false)
@@ -1211,7 +1217,7 @@ function App(): JSX.Element {
           height: '100%',
           background: '#1a1a1a',
           borderRadius: 10,
-          border: sidebarCollapsed ? 'none' : '1px solid #252525',
+          border: sidebarCollapsed ? 'none' : '1px solid rgba(255,255,255,0.12)',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
@@ -1277,7 +1283,6 @@ function App(): JSX.Element {
                 onNewKanban={() => addTile('kanban')}
                 onNewBrowser={() => addTile('browser')}
                 onNewChat={() => addTile('chat')}
-                onSettings={() => setShowSettings(true)}
                 collapsed={sidebarCollapsed}
                 onToggleCollapse={() => setSidebarCollapsed(p => !p)}
               />
@@ -1298,46 +1303,89 @@ function App(): JSX.Element {
             paddingLeft: sidebarCollapsed ? 90 : 16,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-            <span style={{ fontSize: 13, color: '#888', fontWeight: 500 }}>
-              {workspace?.name ?? 'Collaborator'}
-            </span>
-            {workspace && (
-              <span style={{ fontSize: 11, color: '#555' }}>{workspace.path}</span>
+          {/* Workspace pill tabs */}
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center', WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            {openWorkspaceIds.map(id => {
+              const ws = workspaces.find(w => w.id === id)
+              if (!ws) return null
+              const isActive = id === workspace?.id
+              return (
+                <button
+                  key={id}
+                  title={ws.name}
+                  onClick={() => { if (!isActive) handleSwitchWorkspace(id) }}
+                  style={{
+                    height: 26, paddingLeft: 12, paddingRight: openWorkspaceIds.length > 1 ? 6 : 12,
+                    borderRadius: 9999,
+                    background: isActive ? 'rgba(255,255,255,0.09)' : 'transparent',
+                    border: `1px solid ${isActive ? 'rgba(255,255,255,0.12)' : 'transparent'}`,
+                    color: isActive ? '#ccc' : '#555',
+                    fontSize: 12, fontWeight: isActive ? 500 : 400,
+                    cursor: isActive ? 'default' : 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    whiteSpace: 'nowrap', transition: 'all 0.1s',
+                  }}
+                  onMouseEnter={e => { if (!isActive) { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#aaa' } }}
+                  onMouseLeave={e => { if (!isActive) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#555' } }}
+                >
+                  <span>{ws.name}</span>
+                  {openWorkspaceIds.length > 1 && (
+                    <span
+                      onClick={e => {
+                        e.stopPropagation()
+                        setOpenWorkspaceIds(prev => {
+                          const next = prev.filter(x => x !== id)
+                          if (isActive && next.length > 0) handleSwitchWorkspace(next[next.length - 1])
+                          return next
+                        })
+                      }}
+                      style={{ fontSize: 14, lineHeight: 1, color: '#444', cursor: 'pointer', padding: '0 2px' }}
+                      onMouseEnter={e => { e.currentTarget.style.color = '#ccc' }}
+                      onMouseLeave={e => { e.currentTarget.style.color = '#444' }}
+                    >×</span>
+                  )}
+                </button>
+              )
+            })}
+            {/* Add workspace — picks the first unopened one */}
+            {workspaces.some(w => !openWorkspaceIds.includes(w.id)) && (
+              <button
+                title="Open another workspace"
+                onClick={() => {
+                  const next = workspaces.find(w => !openWorkspaceIds.includes(w.id))
+                  if (next) { setOpenWorkspaceIds(prev => [...prev, next.id]); handleSwitchWorkspace(next.id) }
+                }}
+                style={{
+                  width: 26, height: 26, borderRadius: 9999,
+                  background: 'transparent', border: '1px solid transparent',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: '#555', transition: 'all 0.1s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#ccc' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#555' }}
+              >
+                <Icon glyph="+" size={18} />
+              </button>
             )}
           </div>
-          <div style={{ marginLeft: 'auto', marginRight: 16, display: 'flex', gap: 4, alignItems: 'center', WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-            {/* Icon buttons */}
-            {([
-              { icon: <Icon glyph="+" size={28} />, label: 'New Tab (⌘T)', action: () => window.electron.window?.newTab(), active: false },
-            ] as { icon: React.ReactNode; label: string; action: () => void; active: boolean }[]).map(btn => (
-              <button
-                key={btn.label}
-                title={btn.label}
-                onClick={btn.action}
-                style={{
-                  width: 30, height: 30, borderRadius: 6,
-                  background: btn.active ? 'rgba(74,158,255,0.15)' : 'transparent',
-                  border: btn.active ? '1px solid rgba(74,158,255,0.3)' : '1px solid transparent',
-                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: btn.active ? '#4a9eff' : '#666',
-                  transition: 'all 0.1s'
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.background = btn.active ? 'rgba(74,158,255,0.2)' : 'rgba(255,255,255,0.06)'
-                  e.currentTarget.style.color = btn.active ? '#4a9eff' : '#ccc'
-                  e.currentTarget.style.borderColor = btn.active ? 'rgba(74,158,255,0.4)' : 'rgba(255,255,255,0.1)'
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = btn.active ? 'rgba(74,158,255,0.15)' : 'transparent'
-                  e.currentTarget.style.color = btn.active ? '#4a9eff' : '#666'
-                  e.currentTarget.style.borderColor = btn.active ? 'rgba(74,158,255,0.3)' : 'transparent'
-                }}
-              >
-                {btn.icon}
-              </button>
-            ))}
-          </div>
+          {/* Settings — pinned top-right */}
+          <button
+            title="Settings"
+            onClick={() => setShowSettings(true)}
+            style={{
+              marginLeft: 'auto', marginRight: 16,
+              width: 30, height: 30, borderRadius: 6,
+              background: 'transparent', border: '1px solid transparent',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#555', transition: 'all 0.1s',
+              // @ts-ignore
+              WebkitAppRegion: 'no-drag',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#ccc'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#555'; e.currentTarget.style.borderColor = 'transparent' }}
+          >
+            <Icon glyph="⚙" size={18} />
+          </button>
         </div>
 
         {/* Sidebar collapse pill — floats over the canvas left edge; hidden in tab mode */}
@@ -1726,7 +1774,7 @@ function App(): JSX.Element {
               )
             )}
 
-            {tiles.map(tile => {
+            {tiles.filter(tile => !panelTileIds.has(tile.id)).map(tile => {
               // Tile being dragged (or part of a group being dragged) gets max z-index
               const isActiveDrag =
                 (dragState.type === 'tile' && (dragState.tileId === tile.id || dragState.groupSnapshots.some(s => s.id === tile.id))) ||

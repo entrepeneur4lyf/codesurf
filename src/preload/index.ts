@@ -105,6 +105,16 @@ contextBridge.exposeInMainWorld('electron', {
   window: {
     new: () => ipcRenderer.invoke('window:new'),
     newTab: () => ipcRenderer.invoke('window:newTab'),
+    list: () => ipcRenderer.invoke('window:list'),
+    getCurrentId: () => ipcRenderer.invoke('window:getCurrentId'),
+    setTitle: (title: string) => ipcRenderer.invoke('window:setTitle', title),
+    focusById: (id: number) => ipcRenderer.invoke('window:focusById', id),
+    closeById: (id: number) => ipcRenderer.invoke('window:closeById', id),
+    onListChanged: (cb: (list: { id: number; title: string; focused: boolean }[]) => void) => {
+      const handler = (_: unknown, list: { id: number; title: string; focused: boolean }[]) => cb(list)
+      ipcRenderer.on('window:list-changed', handler)
+      return () => ipcRenderer.off('window:list-changed', handler)
+    },
   },
 
   browserTile: {
