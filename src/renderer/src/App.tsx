@@ -423,7 +423,7 @@ function App(): JSX.Element {
 
     // Push to undo history unless this save was triggered by undo/redo itself
     if (!skipHistory.current) {
-      historyBack.current.push({ tiles: tileList, groups: resolvedGroups })
+      historyBack.current.push({ tiles: tilesRef.current, groups: groupsRef.current })
       if (historyBack.current.length > 50) historyBack.current.shift()
       historyForward.current = []
     }
