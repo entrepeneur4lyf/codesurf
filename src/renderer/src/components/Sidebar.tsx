@@ -1229,29 +1229,70 @@ export function Sidebar({
         )}
       </div>
 
-      <div style={{ borderTop: '1px solid #252525', padding: '8px 12px', display: 'flex', justifyContent: 'flex-end', gap: 4 }}>
-        {([
-          { label: 'New Terminal', icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 3l4 4-4 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 11h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>, action: onNewTerminal },
-          { label: 'Agent Board', icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" /><rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" /><rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" /><rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" /></svg>, action: onNewKanban },
-          { label: 'Browser', icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" /><path d="M1 5h12" stroke="currentColor" strokeWidth="1.2" /><circle cx="3" cy="3.5" r="0.5" fill="currentColor" /><circle cx="5" cy="3.5" r="0.5" fill="currentColor" /></svg>, action: onNewBrowser },
-          { label: 'Chat', icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 2h10a1 1 0 011 1v6a1 1 0 01-1 1H5l-3 2.5V10H2a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" /></svg>, action: onNewChat },
-        ] as { label: string; icon: React.ReactNode; action: () => void }[]).map(btn => (
-          <button
-            key={btn.label}
-            title={btn.label}
+      <div style={{ borderTop: '1px solid #252525', padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <div
+            title="Beta build"
             style={{
-              width: 28, height: 28, borderRadius: 6,
-              border: '1px solid #2d2d2d', background: 'transparent',
-              color: '#555', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              height: 20,
+              padding: '0 11px',
+              borderRadius: 999,
+              border: '1px solid rgba(255,255,255,0.72)',
+              color: 'rgba(255,255,255,0.9)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 11,
+              fontWeight: 500,
+              letterSpacing: 0.3,
+              textTransform: 'uppercase',
+              fontFamily: 'inherit',
+              flexShrink: 0,
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = '#2a2a2a'; e.currentTarget.style.color = '#ccc' }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#555' }}
-            onClick={btn.action}
           >
-            {btn.icon}
-          </button>
-        ))}
+            Beta
+          </div>
+          <span
+            title={`Version ${__VERSION__}`}
+            style={{
+              fontSize: 11,
+              fontWeight: 500,
+              color: 'rgba(255,255,255,0.42)',
+              fontFamily: 'inherit',
+              letterSpacing: 0.2,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            v{__VERSION__}
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4, flexShrink: 0 }}>
+          {([
+            { label: 'New Terminal', icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 3l4 4-4 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 11h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>, action: onNewTerminal },
+            { label: 'Agent Board', icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" /><rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" /><rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" /><rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" /></svg>, action: onNewKanban },
+            { label: 'Browser', icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" /><path d="M1 5h12" stroke="currentColor" strokeWidth="1.2" /><circle cx="3" cy="3.5" r="0.5" fill="currentColor" /><circle cx="5" cy="3.5" r="0.5" fill="currentColor" /></svg>, action: onNewBrowser },
+            { label: 'Chat', icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 2h10a1 1 0 011 1v6a1 1 0 01-1 1H5l-3 2.5V10H2a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" /></svg>, action: onNewChat },
+          ] as { label: string; icon: React.ReactNode; action: () => void }[]).map(btn => (
+            <button
+              key={btn.label}
+              title={btn.label}
+              style={{
+                width: 28, height: 28, borderRadius: 6,
+                border: '1px solid #2d2d2d', background: 'transparent',
+                color: '#555', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#2a2a2a'; e.currentTarget.style.color = '#ccc' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#555' }}
+              onClick={btn.action}
+            >
+              {btn.icon}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div
