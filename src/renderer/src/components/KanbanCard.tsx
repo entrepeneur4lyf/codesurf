@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css'
 import { useDetectedAgents } from '../hooks/useDetectedAgents'
 import { useMCPServers } from '../hooks/useMCPServers'
 import { useAppFonts } from '../FontContext'
+import { useTheme } from '../ThemeContext'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -129,6 +130,7 @@ function MiniTerminal({ termId, workspaceDir, launchCmd }: {
   const mounted = useRef(false)
   const parsed = launchCmd ? parseLaunchCmd(launchCmd) : null
   const fonts = useAppFonts()
+  const theme = useTheme()
 
   useEffect(() => {
     if (!ref.current || mounted.current) return
@@ -138,13 +140,29 @@ function MiniTerminal({ termId, workspaceDir, launchCmd }: {
 
     const term = new Terminal({
       theme: {
-        background: '#0a0e14', foreground: '#b3b1ad', cursor: '#e6b450',
-        black: '#0a0e14', red: '#ff3333', green: '#91b362', yellow: '#f9af4f',
-        blue: '#53bdfa', magenta: '#fae994', cyan: '#90e1c6', white: '#c7c7c7',
-        brightBlack: '#686868', brightRed: '#f07178', brightGreen: '#c2d94c',
-        brightYellow: '#ffb454', brightBlue: '#59c2ff', brightMagenta: '#ffee99',
-        brightCyan: '#95e6cb', brightWhite: '#ffffff',
-        selectionBackground: 'rgba(83,189,250,0.2)'
+        background: theme.terminal.background,
+        foreground: theme.terminal.foreground,
+        cursor: theme.terminal.cursor,
+        black: theme.terminal.black,
+        red: theme.terminal.red,
+        green: theme.terminal.green,
+        yellow: theme.terminal.yellow,
+        blue: theme.terminal.blue,
+        magenta: theme.terminal.magenta,
+        cyan: theme.terminal.cyan,
+        white: theme.terminal.white,
+        brightBlack: theme.terminal.brightBlack,
+        brightRed: theme.terminal.brightRed,
+        brightGreen: theme.terminal.brightGreen,
+        brightYellow: theme.terminal.brightYellow,
+        brightBlue: theme.terminal.brightBlue,
+        brightMagenta: theme.terminal.brightMagenta,
+        brightCyan: theme.terminal.brightCyan,
+        brightWhite: theme.terminal.brightWhite,
+        selectionBackground: theme.terminal.selection,
+      },
+      overviewRuler: {
+        width: 10
       },
       fontFamily: fonts.mono,
       fontSize: 11, lineHeight: 1.3, cursorBlink: true,
@@ -180,7 +198,7 @@ function MiniTerminal({ termId, workspaceDir, launchCmd }: {
     }
   }, [termId, workspaceDir])
 
-  return <div ref={ref} style={{ width: '100%', height: '100%', background: '#0a0e14' }} />
+  return <div ref={ref} style={{ width: '100%', height: '100%', background: theme.terminal.background }} />
 }
 
 // ─── KanbanCard ───────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, RotateCcw, RotateCw, Home, Globe, Monitor, Smartphone, Crosshair } from 'lucide-react'
+import { useTheme } from '../ThemeContext'
 
 const HOMEPAGE = 'https://duckduckgo.com'
 
@@ -26,7 +27,7 @@ function createManagedWebview(tileId: string, src: string): Electron.WebviewTag 
   webview.setAttribute('useragent', DESKTOP_UA)
   webview.setAttribute('webpreferences', 'devTools=yes')
   webview.style.cssText =
-    'position: absolute; top: 0; left: 0; right: 0; bottom: 0; border: none; background: #111;'
+    'position: absolute; top: 0; left: 0; right: 0; bottom: 0; border: none; background: transparent;'
   webview.src = src
   return webview
 }
@@ -294,6 +295,7 @@ function ToolbarButton({
   onClick: () => void
   children: React.ReactNode
 }): React.JSX.Element {
+  const theme = useTheme()
   const handleMouseDown = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation()
     if (disabled) return
@@ -319,9 +321,9 @@ function ToolbarButton({
         width: 26,
         height: 26,
         borderRadius: 6,
-        border: `1px solid ${active ? '#4a9eff55' : '#333'}`,
-        background: disabled ? '#222' : active ? '#1e3654' : '#2b2b2b',
-        color: disabled ? '#555' : active ? '#9fc7ff' : '#ccc',
+        border: `1px solid ${active ? theme.border.accent : theme.border.default}`,
+        background: disabled ? theme.surface.panelMuted : active ? theme.surface.selection : theme.surface.panelElevated,
+        color: disabled ? theme.text.disabled : active ? theme.accent.hover : theme.text.secondary,
         cursor: disabled ? 'not-allowed' : 'pointer',
         display: 'flex',
         alignItems: 'center',
@@ -331,11 +333,11 @@ function ToolbarButton({
       }}
       onMouseEnter={e => {
         if (disabled || active) return
-        e.currentTarget.style.background = '#3a3a3a'
+        e.currentTarget.style.background = theme.surface.hover
       }}
       onMouseLeave={e => {
         if (disabled || active) return
-        e.currentTarget.style.background = '#2b2b2b'
+        e.currentTarget.style.background = theme.surface.panelElevated
       }}
     >
       {children}
@@ -362,6 +364,7 @@ type BrowserMode = 'desktop' | 'mobile'
 // BrowserTile
 // ---------------------------------------------------------------------------
 export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zIndex: _zIndex, isInteracting }: Props): React.JSX.Element {
+  const theme = useTheme()
   const wvContainerRef = useRef<HTMLDivElement>(null)
   const wvRef = useRef<Electron.WebviewTag | null>(null)
   const wvReadyRef = useRef(false)
@@ -829,9 +832,9 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
             width: '100%',
             height: 22,
             borderRadius: 6,
-            border: '1px solid #3a3a3a',
-            background: '#111',
-            color: '#d4d4d4',
+            border: `1px solid ${theme.border.default}`,
+            background: theme.surface.input,
+            color: theme.text.primary,
             padding: '0 8px 0 24px',
             fontSize: 11,
             outline: 'none',
@@ -845,7 +848,7 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
             left: 7,
             top: '50%',
             transform: 'translateY(-50%)',
-            color: currentUrl.startsWith('https://') ? '#3fb950' : '#888',
+            color: currentUrl.startsWith('https://') ? theme.status.success : theme.text.muted,
             display: 'flex',
             alignItems: 'center',
             pointerEvents: 'none'
@@ -889,12 +892,12 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
 
   // ---- render -----------------------------------------------------------
   return (
-    <div style={{ position: 'absolute', inset: 0, background: '#111' }}>
+    <div style={{ position: 'absolute', inset: 0, background: theme.browser.background }}>
       {/* Toolbar — explicit top/height so compositor knows exact rect; zIndex above webview */}
       <div style={{
         position: 'absolute', top: 0, left: 0, right: 0, height: 34,
         display: 'flex', alignItems: 'center', padding: '0 6px',
-        background: '#1e1e1e', borderBottom: '1px solid #2d2d2d',
+        background: theme.browser.toolbar, borderBottom: `1px solid ${theme.browser.border}`,
         zIndex: 2,
       }}>
         {toolbar}
@@ -929,9 +932,9 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
             bottom: 8,
             right: 8,
             fontSize: 10,
-            background: 'rgba(0,0,0,0.6)',
-            border: '1px solid #333',
-            color: '#777',
+            background: theme.surface.overlay,
+            border: `1px solid ${theme.border.default}`,
+            color: theme.text.muted,
             padding: '2px 6px',
             borderRadius: 4,
             pointerEvents: 'none'

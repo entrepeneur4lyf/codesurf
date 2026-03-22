@@ -5,6 +5,8 @@ import { withDefaultSettings, DEFAULT_SETTINGS } from '../../shared/types'
 import type { MenuItem } from './components/ContextMenu'
 import { useExtensions } from './hooks/useExtensions'
 import { FontProvider, FontTokenProvider, SANS_DEFAULT, MONO_DEFAULT } from './FontContext'
+import { ThemeProvider } from './ThemeContext'
+import { getThemeById } from './theme'
 import type { PanelNode } from './components/PanelLayout'
 import { createLeaf, removeTileFromTree, addTabToLeaf, getAllTileIds, splitLeaf, closeOthersInLeaf, closeToRightInLeaf, findLeafById } from './components/PanelLayout'
 import { getDroppedPaths } from './utils/dnd'
@@ -1560,10 +1562,7 @@ function App(): JSX.Element {
   }, [sidebarResizing])
 
   const fontTokens = React.useMemo(() => settings.fonts, [settings.fonts])
-  const shellBackground = 'transparent'
-  const sidebarBackground = 'transparent'
-  const pillBackground = '#252525'
-  const toolbarBackground = 'transparent'
+  const theme = React.useMemo(() => getThemeById(settings.themeId), [settings.themeId])
   const translucentBackgroundOpacity = Math.max(0.05, Math.min(1, settings.translucentBackgroundOpacity ?? 1))
   const canvasBackground = withAlpha(settings.canvasBackground, translucentBackgroundOpacity)
   const openSidebarToolbarPadding = sidebarWidth + 16
@@ -1571,9 +1570,10 @@ function App(): JSX.Element {
   const expandedLayoutLeft = sidebarWidth + 8
 
   return (
+    <ThemeProvider value={theme}>
     <FontTokenProvider value={fontTokens}>
     <FontProvider value={appFonts}>
-    <div className="w-full h-full" style={{ position: 'relative', color: '#d4d4d4', fontFamily: appFonts.sans, fontSize: appFonts.size }}>
+    <div className="w-full h-full" style={{ position: 'relative', color: theme.text.primary, fontFamily: appFonts.sans, fontSize: appFonts.size, background: theme.surface.app }}>
       {/* Sidebar inset panel — floats over the canvas */}
       <div style={{
         position: 'absolute',
@@ -1589,11 +1589,11 @@ function App(): JSX.Element {
       }}>
         <div style={{
           height: '100%',
-          background: 'rgba(30,30,30,0.85)',
+          background: theme.surface.sidebarOverlay,
           backdropFilter: 'blur(20px)',
           WebkitBackdropFilter: 'blur(20px)',
           borderRadius: 10,
-          border: sidebarCollapsed ? 'none' : '1px solid rgba(255,255,255,0.12)',
+          border: sidebarCollapsed ? 'none' : `1px solid ${theme.border.strong}`,
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
@@ -1619,12 +1619,12 @@ function App(): JSX.Element {
                   width: 22, height: 22, borderRadius: 5,
                   background: 'none', border: 'none', cursor: 'pointer', padding: 0,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#444',
+                  color: theme.text.disabled,
                   // @ts-ignore
                   WebkitAppRegion: 'no-drag',
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = '#aaa' }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#444' }}
+                onMouseEnter={e => { e.currentTarget.style.background = theme.surface.hover; e.currentTarget.style.color = theme.text.muted }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = theme.text.disabled }}
               >
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                   {sidebarCollapsed
@@ -1640,7 +1640,7 @@ function App(): JSX.Element {
             <Suspense fallback={
               <div style={{
                 flex: 1,
-                color: '#666',
+                color: theme.text.disabled,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -1709,15 +1709,15 @@ function App(): JSX.Element {
                     borderRadius: 8,
                     background: 'transparent',
                     border: '1px solid transparent',
-                    color: isActive ? '#e6e6e6' : '#666',
+                    color: isActive ? theme.text.primary : theme.text.disabled,
                     fontSize: 12, fontWeight: isActive ? 700 : 400,
                     cursor: isActive ? 'default' : 'pointer',
                     display: 'flex', alignItems: 'center', gap: 6,
                     whiteSpace: 'nowrap', transition: 'color 0.1s',
                     boxShadow: 'none',
                   }}
-                  onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = '#8fbfff' }}
-                  onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = '#666' }}
+                  onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = theme.accent.hover }}
+                  onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = theme.text.disabled }}
                 >
                   <span style={{ textTransform: 'uppercase', letterSpacing: 0.3 }}>{ws.name}</span>
                   {openWorkspaceIds.length > 1 && (
@@ -1730,9 +1730,9 @@ function App(): JSX.Element {
                           return next
                         })
                       }}
-                      style={{ fontSize: 14, lineHeight: 1, color: isActive ? '#777' : '#444', cursor: 'pointer', padding: '0 2px' }}
-                      onMouseEnter={e => { e.currentTarget.style.color = '#8fbfff' }}
-                      onMouseLeave={e => { e.currentTarget.style.color = isActive ? '#777' : '#444' }}
+                      style={{ fontSize: 14, lineHeight: 1, color: isActive ? theme.text.muted : theme.text.disabled, cursor: 'pointer', padding: '0 2px' }}
+                      onMouseEnter={e => { e.currentTarget.style.color = theme.accent.hover }}
+                      onMouseLeave={e => { e.currentTarget.style.color = isActive ? theme.text.muted : theme.text.disabled }}
                     >×</span>
                   )}
                 </button>
@@ -1750,10 +1750,10 @@ function App(): JSX.Element {
                   width: 26, height: 26, borderRadius: 8,
                   background: 'transparent', border: '1px solid transparent',
                   cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#555', transition: 'all 0.1s',
+                  color: theme.text.disabled, transition: 'all 0.1s',
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#ccc' }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#555' }}
+                onMouseEnter={e => { e.currentTarget.style.background = theme.surface.hover; e.currentTarget.style.color = theme.text.secondary }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = theme.text.disabled }}
               >
                 <Icon glyph="+" size={18} />
               </button>
@@ -1773,18 +1773,18 @@ function App(): JSX.Element {
             transition: 'opacity 0.12s ease',
             width: 8,
             height: 40,
-            background: '#555',
-            border: '1px solid #666',
+            background: theme.surface.panelElevated,
+            border: `1px solid ${theme.border.strong}`,
             borderRadius: 9999,
             cursor: 'pointer',
             alignItems: 'center', justifyContent: 'center',
-            color: '#555',
+            color: theme.text.disabled,
             fontSize: 9,
             userSelect: 'none',
             zIndex: 200,
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = '#777' }}
-          onMouseLeave={e => { e.currentTarget.style.background = '#555' }}
+          onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted }}
+          onMouseLeave={e => { e.currentTarget.style.background = theme.surface.panelElevated }}
         >
           {''}
         </div>
@@ -1893,7 +1893,7 @@ function App(): JSX.Element {
             ref={dotGlowSmallRef}
             className="absolute inset-0 pointer-events-none"
             style={{
-              backgroundImage: `radial-gradient(circle, rgba(255,255,255,0.7) 1px, transparent 1px)`,
+              backgroundImage: `radial-gradient(circle, ${theme.canvas.gridGlowSmall} 1px, transparent 1px)`,
               backgroundSize: `${settings.gridSpacingSmall * viewport.zoom}px ${settings.gridSpacingSmall * viewport.zoom}px`,
               backgroundPosition: `${viewport.tx % (settings.gridSpacingSmall * viewport.zoom)}px ${viewport.ty % (settings.gridSpacingSmall * viewport.zoom)}px`,
               opacity: 0,
@@ -1905,7 +1905,7 @@ function App(): JSX.Element {
             ref={dotGlowLargeRef}
             className="absolute inset-0 pointer-events-none"
             style={{
-              backgroundImage: `radial-gradient(circle, rgba(255,255,255,0.8) 2px, transparent 2px)`,
+              backgroundImage: `radial-gradient(circle, ${theme.canvas.gridGlowLarge} 2px, transparent 2px)`,
               backgroundSize: `${settings.gridSpacingLarge * viewport.zoom}px ${settings.gridSpacingLarge * viewport.zoom}px`,
               backgroundPosition: `${viewport.tx % (settings.gridSpacingLarge * viewport.zoom)}px ${viewport.ty % (settings.gridSpacingLarge * viewport.zoom)}px`,
               opacity: 0,
@@ -2161,7 +2161,7 @@ function App(): JSX.Element {
               return (
                 <Suspense
                   key={tile.id}
-                  fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: 12, background: '#1e1e1e' }}>Loading tile frame…</div>}
+                  fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 12, background: theme.surface.panel }}>Loading tile frame…</div>}
                 >
                   <LazyTileChrome
                     tile={activeTile}
@@ -2175,7 +2175,7 @@ function App(): JSX.Element {
                     forceExpanded={panelTileIds.has(tile.id)}
                     onExpandChange={expanded => expanded ? enterExpandedMode(tile.id) : exitExpandedMode()}
                   >
-                    <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: 12, background: '#1a1a1a' }}>Loading tile…</div>}>
+                    <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 12, background: theme.surface.panelMuted }}>Loading tile…</div>}>
                       {renderTileBody(tile)}
                     </Suspense>
                   </LazyTileChrome>
@@ -2191,29 +2191,29 @@ function App(): JSX.Element {
               style={{
               position: 'absolute', bottom: 62, left: '50%', transform: 'translateX(-50%)',
               display: 'flex', gap: 8, alignItems: 'center',
-              background: 'rgba(20,20,20,0.92)', border: '1px solid #2d2d2d',
+              background: theme.surface.overlay, border: `1px solid ${theme.border.default}`,
               borderRadius: 8, padding: '5px 12px',
               backdropFilter: 'blur(8px)',
-              boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+              boxShadow: theme.shadow.panel,
               zIndex: 1000
             }}>
-              <span style={{ fontSize: 11, color: '#666' }}>{selectedTileIds.size} selected</span>
+              <span style={{ fontSize: 11, color: theme.text.muted }}>{selectedTileIds.size} selected</span>
               <button
                 onClick={groupSelectedTiles}
                 style={{
-                  fontSize: 11, color: '#4a9eff', background: 'rgba(74,158,255,0.1)',
-                  border: '1px solid rgba(74,158,255,0.3)', borderRadius: 5,
+                  fontSize: 11, color: theme.accent.base, background: theme.accent.soft,
+                  border: `1px solid ${theme.border.accent}`, borderRadius: 5,
                   padding: '3px 10px', cursor: 'pointer'
                 }}
-                onMouseEnter={e => e.currentTarget.style.background = 'rgba(74,158,255,0.2)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'rgba(74,158,255,0.1)'}
+                onMouseEnter={e => e.currentTarget.style.background = theme.surface.selection}
+                onMouseLeave={e => e.currentTarget.style.background = theme.accent.soft}
               >
                 Group
               </button>
               <button
                 onClick={() => setSelectedTileIds(new Set())}
                 style={{
-                  fontSize: 11, color: '#555', background: 'transparent',
+                  fontSize: 11, color: theme.text.disabled, background: 'transparent',
                   border: 'none', cursor: 'pointer', padding: '3px 6px'
                 }}
               >
@@ -2248,7 +2248,7 @@ function App(): JSX.Element {
                   const t = tiles.find(ti => ti.id === tileId)
                   if (!t) return null
                   return (
-                    <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: 12, background: '#1a1a1a' }}>Loading tile…</div>}>
+                    <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 12, background: theme.surface.panelMuted }}>Loading tile…</div>}>
                       {renderTileBody(t)}
                     </Suspense>
                   )
@@ -2357,6 +2357,7 @@ function App(): JSX.Element {
     </div>
     </FontProvider>
     </FontTokenProvider>
+    </ThemeProvider>
   )
 }
 

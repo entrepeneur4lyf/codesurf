@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
+import { useTheme } from '../ThemeContext'
 
 // ─── Panel tree types ────────────────────────────────────────────────────────
 
@@ -87,7 +88,7 @@ export function getAllTileIds(node: PanelNode): string[] {
 
 function getNodeMinWidth(node: PanelNode, getTileType: (tileId: string) => string): number {
   if (node.type === 'leaf') {
-    return node.tabs.some(tileId => getTileType(tileId) === 'chat') ? 450 : 0
+    return node.tabs.some(tileId => getTileType(tileId) === 'chat') ? 360 : 0
   }
   const childWidths = node.children.map(child => getNodeMinWidth(child, getTileType))
   return node.direction === 'horizontal'
@@ -255,6 +256,7 @@ interface TabBarProps {
 interface CtxMenu { tileId: string; tileType: string; x: number; y: number }
 
 function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown, onExit, getTileType, onSplitNew, onCloseOthers, onCloseToRight }: TabBarProps): JSX.Element {
+  const theme = useTheme()
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -279,7 +281,7 @@ function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown,
   return (
     <div style={{
       display: 'flex', alignItems: 'center', height: 34,
-      background: '#1e1e1e', borderBottom: '1px solid #2d2d2d',
+      background: theme.surface.panel, borderBottom: `1px solid ${theme.border.subtle}`,
       overflow: 'hidden', flexShrink: 0, zIndex: 1,
       padding: '0 8px',
     }}>
@@ -309,9 +311,9 @@ function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown,
                 display: 'flex', alignItems: 'center', gap: 5,
                 height: 21,
                 padding: '0 8px', cursor: 'grab', userSelect: 'none',
-                fontSize: 10, color: isActive ? '#58a6ff' : '#6f7782',
-                background: isActive ? '#252525' : 'transparent',
-                border: `1px solid ${isActive ? '#333' : 'transparent'}`,
+                fontSize: 10, color: isActive ? theme.accent.base : theme.text.muted,
+                background: isActive ? theme.surface.selection : 'transparent',
+                border: `1px solid ${isActive ? theme.border.default : 'transparent'}`,
                 borderRadius: 7,
                 transition: 'background 0.15s, color 0.15s, border-color 0.15s',
                 flexShrink: 0, maxWidth: 220,
@@ -321,15 +323,15 @@ function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown,
               }}
               onMouseEnter={e => {
                 if (!isActive) {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
-                  e.currentTarget.style.color = '#aeb8c4'
-                  e.currentTarget.style.borderColor = '#333'
+                  e.currentTarget.style.background = theme.surface.hover
+                  e.currentTarget.style.color = theme.text.secondary
+                  e.currentTarget.style.borderColor = theme.border.default
                 }
               }}
               onMouseLeave={e => {
                 if (!isActive) {
                   e.currentTarget.style.background = 'transparent'
-                  e.currentTarget.style.color = '#6f7782'
+                  e.currentTarget.style.color = theme.text.muted
                   e.currentTarget.style.borderColor = 'transparent'
                 }
               }}
@@ -340,9 +342,9 @@ function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown,
               <span
                 onMouseDown={e => e.stopPropagation()}
                 onClick={e => { e.stopPropagation(); onClose(tab.id) }}
-                style={{ width: 15, height: 15, borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, lineHeight: 1, color: isActive ? '#4f647b' : '#4f5761', flexShrink: 0, cursor: 'pointer', transition: 'color 0.15s, background 0.15s' }}
-                onMouseEnter={e => { e.currentTarget.style.color = isActive ? '#9cc9ff' : '#c2cad4'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
-                onMouseLeave={e => { e.currentTarget.style.color = isActive ? '#4f647b' : '#4f5761'; e.currentTarget.style.background = 'transparent' }}
+                style={{ width: 15, height: 15, borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, lineHeight: 1, color: isActive ? theme.accent.hover : theme.text.disabled, flexShrink: 0, cursor: 'pointer', transition: 'color 0.15s, background 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.color = isActive ? theme.accent.base : theme.text.secondary; e.currentTarget.style.background = theme.surface.hover }}
+                onMouseLeave={e => { e.currentTarget.style.color = isActive ? theme.accent.hover : theme.text.disabled; e.currentTarget.style.background = 'transparent' }}
               >
                 ×
               </span>
@@ -358,9 +360,9 @@ function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown,
           onMouseDown={e => e.stopPropagation()}
           style={{
             position: 'fixed', left: ctxMenu.x, top: ctxMenu.y,
-            background: '#1c1c1c', border: '1px solid #2a2a2a',
+            background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`,
             borderRadius: 8, padding: 4, zIndex: 999999,
-            minWidth: 190, boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
+            minWidth: 190, boxShadow: theme.shadow.panel,
           }}
         >
           {([
@@ -385,14 +387,15 @@ function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown,
 }
 
 function CtxItem({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }): JSX.Element {
+  const theme = useTheme()
   return (
     <div
       onClick={disabled ? undefined : onClick}
       style={{
         padding: '5px 10px', borderRadius: 5, cursor: disabled ? 'default' : 'pointer',
-        fontSize: 12, color: disabled ? '#444' : '#ccc', userSelect: 'none',
+        fontSize: 12, color: disabled ? theme.text.disabled : theme.text.primary, userSelect: 'none',
       }}
-      onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = '#2a2a2a' }}
+      onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = theme.surface.hover }}
       onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
     >
       {label}
@@ -415,17 +418,18 @@ const QUICK_ACTIONS = [
 ]
 
 function EmptyPanel({ onAddTile }: { onAddTile: (type: string) => void }): JSX.Element {
+  const theme = useTheme()
   return (
-    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#1a1a1a', gap: 16 }}>
-      <span style={{ fontSize: 13, color: '#555', userSelect: 'none' }}>Open a tile or drag a tab here</span>
+    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: theme.surface.panelMuted, gap: 16 }}>
+      <span style={{ fontSize: 13, color: theme.text.disabled, userSelect: 'none' }}>Open a tile or drag a tab here</span>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
         {QUICK_ACTIONS.map(action => (
           <button
             key={action.type}
             onClick={() => onAddTile(action.type)}
-            style={{ background: '#252525', border: '1px solid #333', borderRadius: 6, color: '#aaa', fontSize: 12, padding: '6px 14px', cursor: 'pointer' }}
-            onMouseEnter={e => { e.currentTarget.style.background = '#2a2a2a'; e.currentTarget.style.borderColor = '#4a9eff'; e.currentTarget.style.color = '#ddd' }}
-            onMouseLeave={e => { e.currentTarget.style.background = '#252525'; e.currentTarget.style.borderColor = '#333'; e.currentTarget.style.color = '#aaa' }}
+            style={{ background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`, borderRadius: 6, color: theme.text.muted, fontSize: 12, padding: '6px 14px', cursor: 'pointer' }}
+            onMouseEnter={e => { e.currentTarget.style.background = theme.surface.hover; e.currentTarget.style.borderColor = theme.border.accent; e.currentTarget.style.color = theme.text.primary }}
+            onMouseLeave={e => { e.currentTarget.style.background = theme.surface.panelElevated; e.currentTarget.style.borderColor = theme.border.default; e.currentTarget.style.color = theme.text.muted }}
           >
             {action.label}
           </button>
@@ -530,6 +534,7 @@ export interface PanelLayoutProps {
 }
 
 export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, onCloseTab, onAddTile, onExit, activePanelId: _activePanelId, onActivePanelChange, getTileType, onSplitNew, onCloseOthers, onCloseToRight }: PanelLayoutProps): JSX.Element {
+  const theme = useTheme()
   const [dragTarget, setDragTarget] = useState<{ panelId: string; zone: DockZone } | null>(null)
   const [ghost, setGhost] = useState<{ x: number; y: number; label: string } | null>(null)
   const handleDockRef = useRef<(tileId: string, fromPanelId: string, targetPanelId: string, zone: DockZone) => void>(() => {})
@@ -683,7 +688,7 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
 
   return (
     <div
-      style={{ position: 'absolute', top: 0, right: 8, bottom: 8, left: 8, zIndex: 99990, background: '#1e1e1e', display: 'flex', flexDirection: 'column', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)' }}
+      style={{ position: 'absolute', top: 0, right: 8, bottom: 8, left: 8, zIndex: 99990, background: theme.surface.panel, display: 'flex', flexDirection: 'column', borderRadius: 8, overflow: 'hidden', border: `1px solid ${theme.border.default}` }}
       onMouseDown={e => e.stopPropagation()}
       onWheel={e => e.stopPropagation()}
     >
@@ -696,8 +701,8 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
       {ghost && (
         <div style={{
           position: 'fixed', left: ghost.x + 12, top: ghost.y - 10,
-          background: '#252525', border: '1px solid #4a9eff',
-          borderRadius: 4, padding: '2px 10px', fontSize: 12, color: '#e0e0e0',
+          background: theme.surface.panelElevated, border: `1px solid ${theme.border.accent}`,
+          borderRadius: 4, padding: '2px 10px', fontSize: 12, color: theme.text.primary,
           pointerEvents: 'none', zIndex: 100000, userSelect: 'none',
         }}>
           {ghost.label}

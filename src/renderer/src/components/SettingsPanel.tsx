@@ -3,6 +3,8 @@ import type { AppSettings, FontSettings, FontToken } from '../../../shared/types
 import { DEFAULT_SETTINGS, DEFAULT_FONTS, withDefaultSettings } from '../../../shared/types'
 import { Settings, Type, Monitor, Terminal, FolderOpen, Sliders, Network, Plus, Trash2, ChevronDown, ChevronRight, FileJson, AlertTriangle, Check, Copy, RotateCcw, FormInput, Code2 } from 'lucide-react'
 import { useAppFonts } from '../FontContext'
+import { useTheme } from '../ThemeContext'
+import { THEME_OPTIONS, getThemeCanvasDefaults } from '../theme'
 
 interface Workspace {
   id: string
@@ -48,12 +50,13 @@ interface MCPConfig {
 
 // ─── Control components ────────────────────────────────────────────────────────
 function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }): React.JSX.Element {
+  const theme = useTheme()
   return (
     <div
       onClick={() => onChange(!value)}
       style={{
         width: 44, height: 26, borderRadius: 13, cursor: 'pointer', flexShrink: 0,
-        background: value ? '#666' : '#333',
+        background: value ? theme.accent.base : theme.surface.panelMuted,
         position: 'relative', transition: 'background 0.2s',
       }}
     >
@@ -61,7 +64,7 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
         position: 'absolute',
         top: 3, left: value ? 21 : 3,
         width: 20, height: 20, borderRadius: '50%',
-        background: value ? '#fff' : '#888',
+        background: value ? theme.text.inverse : theme.text.muted,
         transition: 'left 0.2s, background 0.2s',
         boxShadow: '0 1px 3px rgba(0,0,0,0.4)'
       }} />
@@ -70,14 +73,15 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 }
 
 function NumInput({ value, min, max, step = 1, onChange }: { value: number; min: number; max: number; step?: number; onChange: (v: number) => void }): React.JSX.Element {
+  const theme = useTheme()
   return (
     <input
       type="number" value={value} min={min} max={max} step={step}
       onChange={e => onChange(Number(e.target.value))}
       style={{
         width: 72, padding: '5px 10px', fontSize: 13,
-        background: '#222', color: '#ccc',
-        border: '1px solid #333', borderRadius: 8, outline: 'none',
+        background: theme.surface.input, color: theme.text.secondary,
+        border: `1px solid ${theme.border.default}`, borderRadius: 8, outline: 'none',
         textAlign: 'right'
       }}
     />
@@ -85,6 +89,7 @@ function NumInput({ value, min, max, step = 1, onChange }: { value: number; min:
 }
 
 function RangeInput({ value, min, max, step = 0.01, onChange }: { value: number; min: number; max: number; step?: number; onChange: (v: number) => void }): React.JSX.Element {
+  const theme = useTheme()
   const clamped = Math.max(min, Math.min(max, value))
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -102,9 +107,9 @@ function RangeInput({ value, min, max, step = 0.01, onChange }: { value: number;
         padding: '5px 8px',
         fontSize: 12,
         textAlign: 'right',
-        color: '#aaa',
-        background: '#222',
-        border: '1px solid #333',
+        color: theme.text.muted,
+        background: theme.surface.input,
+        border: `1px solid ${theme.border.default}`,
         borderRadius: 8,
         fontVariantNumeric: 'tabular-nums'
       }}>
@@ -115,14 +120,15 @@ function RangeInput({ value, min, max, step = 0.01, onChange }: { value: number;
 }
 
 function TextInput({ value, onChange, width = 240 }: { value: string; onChange: (v: string) => void; width?: number }): React.JSX.Element {
+  const theme = useTheme()
   return (
     <input
       type="text" value={value}
       onChange={e => onChange(e.target.value)}
       style={{
         width, padding: '5px 10px', fontSize: 12,
-        background: '#222', color: '#ccc',
-        border: '1px solid #333', borderRadius: 8, outline: 'none'
+        background: theme.surface.input, color: theme.text.secondary,
+        border: `1px solid ${theme.border.default}`, borderRadius: 8, outline: 'none'
       }}
     />
   )
@@ -130,17 +136,18 @@ function TextInput({ value, onChange, width = 240 }: { value: string; onChange: 
 
 function ColorSwatch({ value, onChange }: { value: string; onChange: (v: string) => void }): React.JSX.Element {
   const fonts = useAppFonts()
+  const theme = useTheme()
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <div style={{ position: 'relative' }}>
         <div
-          style={{ width: 28, height: 28, borderRadius: 6, background: value, cursor: 'pointer', border: '1px solid #444' }}
+          style={{ width: 28, height: 28, borderRadius: 6, background: value, cursor: 'pointer', border: `1px solid ${theme.border.strong}` }}
           onClick={e => (e.currentTarget.nextSibling as HTMLInputElement)?.click()}
         />
         <input type="color" value={value} onChange={e => onChange(e.target.value)}
           style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }} />
       </div>
-      <span style={{ fontSize: 11, color: '#555', fontFamily: fonts.mono }}>{value}</span>
+      <span style={{ fontSize: 11, color: theme.text.disabled, fontFamily: fonts.mono }}>{value}</span>
     </div>
   )
 }
@@ -202,6 +209,7 @@ const MONO_FONTS = sortFonts([
 ])
 
 function FontSelect({ value, onChange, fonts }: { value: string; onChange: (v: string) => void; fonts: string[] }): React.JSX.Element {
+  const theme = useTheme()
   const displayName = fontDisplayName
   return (
     <select
@@ -209,8 +217,8 @@ function FontSelect({ value, onChange, fonts }: { value: string; onChange: (v: s
       onChange={e => onChange(e.target.value)}
       style={{
         width: '100%', maxWidth: 280, padding: '5px 10px', fontSize: 12,
-        background: '#222', color: '#ccc',
-        border: '1px solid #333', borderRadius: 8, outline: 'none',
+        background: theme.surface.input, color: theme.text.secondary,
+        border: `1px solid ${theme.border.default}`, borderRadius: 8, outline: 'none',
         fontFamily: value
       }}
     >
@@ -232,15 +240,16 @@ function FontSelect({ value, onChange, fonts }: { value: string; onChange: (v: s
 
 // ─── Setting row ──────────────────────────────────────────────────────────────
 function SettingRow({ label, description, children }: { label: string; description?: string; children: React.ReactNode }): React.JSX.Element {
+  const theme = useTheme()
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      background: '#161616', borderRadius: 10, padding: '14px 16px',
+      background: theme.surface.panelMuted, border: `1px solid ${theme.border.subtle}`, borderRadius: 10, padding: '14px 16px',
       marginBottom: 8, gap: 16
     }}>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 14, color: '#e0e0e0', fontWeight: 500, marginBottom: description ? 3 : 0 }}>{label}</div>
-        {description && <div style={{ fontSize: 12, color: '#555' }}>{description}</div>}
+        <div style={{ fontSize: 14, color: theme.text.primary, fontWeight: 500, marginBottom: description ? 3 : 0 }}>{label}</div>
+        {description && <div style={{ fontSize: 12, color: theme.text.disabled }}>{description}</div>}
       </div>
       <div style={{ flexShrink: 0 }}>{children}</div>
     </div>
@@ -248,9 +257,10 @@ function SettingRow({ label, description, children }: { label: string; descripti
 }
 
 function SectionLabel({ label }: { label: string }): React.JSX.Element {
+  const theme = useTheme()
   return (
     <div style={{
-      fontSize: 11, fontWeight: 600, color: '#555',
+      fontSize: 11, fontWeight: 600, color: theme.text.disabled,
       letterSpacing: '0.08em', textTransform: 'uppercase',
       marginTop: 20, marginBottom: 8, paddingLeft: 2
     }}>
@@ -265,6 +275,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
   const [section, setSection] = useState<Section>('general')
   const [mcpConfig, setMcpConfig] = useState<MCPConfig | null>(null)
   const fonts = useAppFonts()
+  const theme = useTheme()
   const [mcpSaved, setMcpSaved] = useState(false)
   const [addingServer, setAddingServer] = useState(false)
   const [newServer, setNewServer] = useState({ name: '', url: '', cmd: '', description: '' })
@@ -383,7 +394,17 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
 
   const updateSettingsPatch = useCallback((patch: Partial<AppSettings>) => {
     setSettings(prev => {
-      const next = withDefaultSettings({ ...prev, ...patch })
+      const themePatch = patch.themeId !== undefined && patch.canvasBackground === undefined && patch.gridColorSmall === undefined && patch.gridColorLarge === undefined
+        ? (() => {
+            const canvas = getThemeCanvasDefaults(patch.themeId)
+            return {
+              canvasBackground: canvas.background,
+              gridColorSmall: canvas.gridSmall,
+              gridColorLarge: canvas.gridLarge,
+            }
+          })()
+        : {}
+      const next = withDefaultSettings({ ...prev, ...patch, ...themePatch })
       window.electron.settings?.set(next).then((saved: AppSettings) => {
         if (saved) onSettingsChange(saved)
 
@@ -391,6 +412,16 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
       return next
     })
   }, [onSettingsChange])
+
+  const applyThemePreset = useCallback((themeId: string) => {
+    const canvas = getThemeCanvasDefaults(themeId)
+    updateSettingsPatch({
+      themeId,
+      canvasBackground: canvas.background,
+      gridColorSmall: canvas.gridSmall,
+      gridColorLarge: canvas.gridLarge,
+    })
+  }, [updateSettingsPatch])
 
   // Close on Escape
   useEffect(() => {
@@ -405,13 +436,38 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
     switch (section) {
       case 'general':
         return (
-          <DisplaySettingsEditor
-            settings={settings}
-            onApply={updateSettingsPatch}
-            updateState={updateState}
-            onCheckForUpdates={checkForUpdates}
-            onDownloadUpdate={downloadUpdate}
-          />
+          <>
+            <SectionLabel label="Theme" />
+            <SettingRow label="Preset" description="Changes tile chrome, terminal colours, shell surfaces, and resets the canvas palette to the preset defaults.">
+              <select
+                value={settings.themeId}
+                onChange={e => applyThemePreset(e.target.value)}
+                style={{
+                  minWidth: 220,
+                  padding: '6px 10px',
+                  fontSize: 12,
+                  background: theme.surface.input,
+                  color: theme.text.secondary,
+                  border: `1px solid ${theme.border.default}`,
+                  borderRadius: 8,
+                  outline: 'none',
+                }}
+              >
+                {THEME_OPTIONS.map(option => (
+                  <option key={option.id} value={option.id}>
+                    {option.label} · {option.mode}
+                  </option>
+                ))}
+              </select>
+            </SettingRow>
+            <DisplaySettingsEditor
+              settings={settings}
+              onApply={updateSettingsPatch}
+              updateState={updateState}
+              onCheckForUpdates={checkForUpdates}
+              onDownloadUpdate={downloadUpdate}
+            />
+          </>
         )
       case 'canvas':
         return (
@@ -464,7 +520,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
             <SettingRow label="Default sort" description="Initial sort order for the file tree">
               <select value={settings.sidebarDefaultSort}
                 onChange={e => update('sidebarDefaultSort', e.target.value as AppSettings['sidebarDefaultSort'])}
-                style={{ padding: '5px 10px', fontSize: 13, background: '#222', color: '#ccc', border: '1px solid #333', borderRadius: 8, outline: 'none' }}>
+                style={{ padding: '5px 10px', fontSize: 13, background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.border.default}`, borderRadius: 8, outline: 'none' }}>
                 <option value="name">Name</option>
                 <option value="type">Type</option>
                 <option value="ext">Ext</option>
@@ -755,23 +811,23 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
     <div
       style={{
         position: 'fixed', inset: 0, zIndex: 99999,
-        background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+        background: theme.mode === 'light' ? 'rgba(15,23,42,0.18)' : 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
         display: 'flex', alignItems: 'center', justifyContent: 'center'
       }}
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div style={{
         width: 720, height: 580,
-        background: '#111', borderRadius: 14,
-        border: '1px solid #222',
-        boxShadow: '0 32px 80px rgba(0,0,0,0.7)',
+        background: theme.surface.panel, borderRadius: 14,
+        border: `1px solid ${theme.border.default}`,
+        boxShadow: theme.shadow.modal,
         display: 'flex', overflow: 'hidden'
       }}>
 
         {/* Left nav */}
         <div style={{
-          width: 200, background: '#0d0d0d',
-          borderRight: '1px solid #1a1a1a',
+          width: 200, background: theme.surface.panelElevated,
+          borderRight: `1px solid ${theme.border.default}`,
           display: 'flex', flexDirection: 'column',
           padding: '20px 0',
           flexShrink: 0
@@ -782,10 +838,10 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
               onClick={onClose}
               style={{
                 display: 'flex', alignItems: 'center', gap: 8,
-                cursor: 'pointer', color: '#444',
+                cursor: 'pointer', color: theme.text.disabled,
               }}
-              onMouseEnter={e => (e.currentTarget.style.color = '#888')}
-              onMouseLeave={e => (e.currentTarget.style.color = '#444')}
+              onMouseEnter={e => (e.currentTarget.style.color = theme.text.muted)}
+              onMouseLeave={e => (e.currentTarget.style.color = theme.text.disabled)}
             >
               <div style={{
                 width: 22, height: 22, borderRadius: '50%',
@@ -801,8 +857,8 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
 
           {/* Settings header */}
           <div style={{ padding: '8px 16px 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Settings size={18} color="#fff" />
-            <span style={{ fontSize: 17, fontWeight: 700, color: '#fff' }}>Settings</span>
+            <Settings size={18} color={theme.text.primary} />
+            <span style={{ fontSize: 17, fontWeight: 700, color: theme.text.primary }}>Settings</span>
           </div>
 
           {/* Nav items */}
@@ -814,13 +870,13 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10,
                   padding: '9px 16px', cursor: 'pointer',
-                  color: section === s.id ? '#fff' : '#555',
-                  background: section === s.id ? 'rgba(255,255,255,0.06)' : 'transparent',
+                  color: section === s.id ? theme.text.primary : theme.text.disabled,
+                  background: section === s.id ? theme.surface.selection : 'transparent',
                   fontSize: 14, userSelect: 'none',
                   transition: 'color 0.1s'
                 }}
-                onMouseEnter={e => { if (section !== s.id) e.currentTarget.style.color = '#888' }}
-                onMouseLeave={e => { if (section !== s.id) e.currentTarget.style.color = '#555' }}
+                onMouseEnter={e => { if (section !== s.id) e.currentTarget.style.color = theme.text.muted }}
+                onMouseLeave={e => { if (section !== s.id) e.currentTarget.style.color = theme.text.disabled }}
               >
                 <span style={{ opacity: section === s.id ? 1 : 0.5 }}>{s.icon}</span>
                 {s.label}
@@ -829,7 +885,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
           </div>
 
           {/* Version */}
-          <div style={{ padding: '0 16px', fontSize: 11, color: '#333' }}>
+          <div style={{ padding: '0 16px', fontSize: 11, color: theme.text.disabled }}>
             v{__VERSION__}
           </div>
         </div>
@@ -838,8 +894,8 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {/* Section header */}
           <div style={{ padding: '28px 28px 0' }}>
-            <div style={{ fontSize: 22, fontWeight: 700, color: '#fff', marginBottom: 4 }}>{active.label}</div>
-            <div style={{ fontSize: 14, color: '#555' }}>{active.description}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: theme.text.primary, marginBottom: 4 }}>{active.label}</div>
+            <div style={{ fontSize: 14, color: theme.text.disabled }}>{active.description}</div>
           </div>
 
           {/* Content */}
@@ -923,6 +979,7 @@ const MONO_TOKEN_KEYS = new Set<keyof FontSettings>([
 
 function buildDisplayJson(settings: AppSettings): string {
   return JSON.stringify({
+    themeId: settings.themeId,
     primaryFont: settings.primaryFont,
     secondaryFont: settings.secondaryFont,
     monoFont: settings.monoFont,
@@ -951,13 +1008,17 @@ function validateDisplayJson(value: string): { ok: true; parsed: Partial<AppSett
       return { ok: false, error: 'Must be a JSON object' }
     }
 
-    const topLevel = new Set(['primaryFont', 'secondaryFont', 'monoFont', 'fonts'])
+    const topLevel = new Set(['themeId', 'primaryFont', 'secondaryFont', 'monoFont', 'fonts'])
     const invalidTopLevel = Object.keys(parsed).filter(key => !topLevel.has(key))
     if (invalidTopLevel.length > 0) {
       return { ok: false, error: `Unknown key${invalidTopLevel.length > 1 ? 's' : ''}: ${invalidTopLevel.join(', ')}` }
     }
 
     const config = parsed as Record<string, unknown>
+    if (config.themeId !== undefined && typeof config.themeId !== 'string') {
+      return { ok: false, error: 'themeId must be a string' }
+    }
+
     for (const key of ['primaryFont', 'secondaryFont', 'monoFont'] as const) {
       if (config[key] !== undefined) {
         const error = validateTokenLike(config[key], key)

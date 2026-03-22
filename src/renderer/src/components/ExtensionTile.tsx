@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTheme } from '../ThemeContext'
 
 const el = (window as any).electron
 
@@ -20,6 +21,7 @@ interface ExtensionTileProps {
 }
 
 export function ExtensionTile({ tileId, extType, width, height, workspaceId, workspacePath }: ExtensionTileProps) {
+  const theme = useTheme()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const busUnsubsRef = useRef<Map<string, () => void>>(new Map())
   const bridgeReadyRef = useRef(false)
@@ -32,13 +34,13 @@ export function ExtensionTile({ tileId, extType, width, height, workspaceId, wor
   const contentHeight = Math.max(0, height - 36)
 
   const themeColors = useMemo(() => ({
-    background: '#1e1e1e',
-    panel: '#252525',
-    border: '#333333',
-    text: '#e0e0e0',
-    muted: '#888888',
-    accent: '#4a9eff',
-  }), [])
+    background: theme.extension.background,
+    panel: theme.extension.panel,
+    border: theme.extension.border,
+    text: theme.extension.text,
+    muted: theme.extension.muted,
+    accent: theme.extension.accent,
+  }), [theme])
 
   const postToIframe = useCallback((message: Record<string, unknown>) => {
     iframeRef.current?.contentWindow?.postMessage(message, '*')

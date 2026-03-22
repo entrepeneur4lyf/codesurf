@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import type { TileState, SkillConfig, ContextItem, ActivityStatus } from '../../../shared/types'
 import { buildObjective } from '../utils/objectiveBuilder'
 import { ContextMenu, type MenuItem } from './ContextMenu'
+import { useTheme } from '../ThemeContext'
 
 // --- Drawer data types ---
 
@@ -781,6 +782,7 @@ export function TileChrome({
   onExpandChange, children, isSelected, forceExpanded,
   busUnreadCount, onBusPopupToggle, showBusPopup, busEvents
 }: Props): JSX.Element {
+  const theme = useTheme()
   const [localExpanded, setLocalExpanded] = useState(false)
   const expanded = forceExpanded ?? localExpanded
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -993,10 +995,10 @@ export function TileChrome({
           bottom: 5,
           left: tile.width - 12,
           width: DRAWER_WIDTH + 12,
-          background: '#141414',
+          background: theme.surface.panelMuted,
           borderRadius: 10,
-          border: '1px solid #252525',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+          border: `1px solid ${theme.border.default}`,
+          boxShadow: theme.shadow.panel,
           zIndex: -1,
           transform: drawerOpen ? 'translateX(0)' : `translateX(-${DRAWER_WIDTH}px)`,
           transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -1023,11 +1025,11 @@ export function TileChrome({
         style={{
           width: '100%', height: '100%',
           borderRadius: 8, overflow: 'hidden',
-          border: isSelected ? '0.5px solid #4a9eff' : '1px solid #3a3a3a',
+          border: isSelected ? `1px solid ${theme.accent.base}` : `1px solid ${theme.border.default}`,
           boxShadow: isSelected
-            ? '0 8px 32px rgba(0,0,0,0.5), 0 0 0 0.5px rgba(74,158,255,0.3)'
-            : '0 4px 20px rgba(0,0,0,0.4)',
-          background: '#1e1e1e',
+            ? `${theme.shadow.panel}, 0 0 0 1px ${theme.border.accent}`
+            : theme.shadow.panel,
+          background: theme.surface.panel,
           position: 'relative',
           zIndex: 1,
         }}
@@ -1036,7 +1038,7 @@ export function TileChrome({
         <div
           ref={titlebarRef}
           style={{
-            height: 32, background: '#252525', borderBottom: '1px solid #333',
+            height: 32, background: theme.surface.titlebar, borderBottom: `1px solid ${theme.border.default}`,
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             padding: '0 8px 0 0', userSelect: 'none', flexShrink: 0, cursor: 'move'
           }}
@@ -1061,7 +1063,7 @@ export function TileChrome({
             style={{
               width: 28, height: '100%',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              cursor: 'grab', flexShrink: 0, color: '#666', fontSize: 11
+              cursor: 'grab', flexShrink: 0, color: theme.text.disabled, fontSize: 11
             }}
           >
             ::
@@ -1074,7 +1076,7 @@ export function TileChrome({
             />
           ) : (
             <span style={{
-              flex: 1, fontSize: 12, fontWeight: 500, color: '#cccccc',
+              flex: 1, fontSize: 12, fontWeight: 500, color: theme.text.primary,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
             }}>
               {fileLabel(tile)}
@@ -1088,14 +1090,14 @@ export function TileChrome({
               style={{
                 width: 24, height: 24, borderRadius: 4, background: 'transparent',
                 border: 'none', cursor: 'pointer', flexShrink: 0,
-                color: drawerOpen ? '#4a9eff' : '#666',
+                color: drawerOpen ? theme.accent.base : theme.text.disabled,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 position: 'relative',
               }}
               onClick={e => { e.stopPropagation(); setDrawerOpen(p => !p) }}
               onMouseDown={e => e.stopPropagation()}
-              onMouseEnter={e => { if (!drawerOpen) e.currentTarget.style.color = '#aaa' }}
-              onMouseLeave={e => { if (!drawerOpen) e.currentTarget.style.color = '#666' }}
+              onMouseEnter={e => { if (!drawerOpen) e.currentTarget.style.color = theme.text.muted }}
+              onMouseLeave={e => { if (!drawerOpen) e.currentTarget.style.color = theme.text.disabled }}
               title={drawerOpen ? 'Hide panel' : 'Show panel'}
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -1105,7 +1107,7 @@ export function TileChrome({
                 <span style={{
                   position: 'absolute', top: 1, right: 1,
                   minWidth: 12, height: 12, borderRadius: 6,
-                  background: '#4a9eff', color: '#fff',
+                  background: theme.accent.base, color: theme.text.inverse,
                   fontSize: 8, fontWeight: 700,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   padding: '0 2px',
@@ -1122,12 +1124,12 @@ export function TileChrome({
             style={{
               width: 24, height: 24, borderRadius: 4, background: 'transparent',
               border: 'none', cursor: 'pointer', flexShrink: 0,
-              color: '#666', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center'
+              color: theme.text.disabled, fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}
             onClick={e => { e.stopPropagation(); toggle() }}
             onMouseDown={e => e.stopPropagation()}
-            onMouseEnter={e => (e.currentTarget.style.color = '#aaa')}
-            onMouseLeave={e => (e.currentTarget.style.color = '#666')}
+            onMouseEnter={e => (e.currentTarget.style.color = theme.text.muted)}
+            onMouseLeave={e => (e.currentTarget.style.color = theme.text.disabled)}
             title={expanded ? 'Collapse' : 'Expand'}
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -1147,16 +1149,16 @@ export function TileChrome({
               onMouseDown={e => e.stopPropagation()}
               style={{
                 minWidth: 18, height: 18, borderRadius: 9,
-                background: '#4a9eff',
+                background: theme.accent.base,
                 border: 'none', cursor: 'pointer',
-                color: '#fff', fontSize: 10, fontWeight: 600,
+                color: theme.text.inverse, fontSize: 10, fontWeight: 600,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 padding: '0 5px',
                 marginLeft: 4,
                 transition: 'background 0.1s',
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#5ab0ff')}
-              onMouseLeave={e => (e.currentTarget.style.background = '#4a9eff')}
+              onMouseEnter={e => (e.currentTarget.style.background = theme.accent.hover)}
+              onMouseLeave={e => (e.currentTarget.style.background = theme.accent.base)}
               title={`${busUnreadCount} new event${busUnreadCount !== 1 ? 's' : ''}`}
             >
               {busUnreadCount! > 99 ? '99+' : busUnreadCount}
@@ -1168,13 +1170,13 @@ export function TileChrome({
             style={{
               width: 24, height: 24, borderRadius: 4, background: 'transparent',
               border: 'none', cursor: 'pointer', flexShrink: 0,
-              color: '#666', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: theme.text.disabled, display: 'flex', alignItems: 'center', justifyContent: 'center',
               marginLeft: 4
             }}
             onClick={e => { e.stopPropagation(); onClose() }}
             onMouseDown={e => e.stopPropagation()}
-            onMouseEnter={e => (e.currentTarget.style.color = '#ff5f56')}
-            onMouseLeave={e => (e.currentTarget.style.color = '#666')}
+            onMouseEnter={e => (e.currentTarget.style.color = theme.status.danger)}
+            onMouseLeave={e => (e.currentTarget.style.color = theme.text.disabled)}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
               <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -1204,10 +1206,10 @@ export function TileChrome({
               position: 'absolute',
               top: 34, right: 4,
               width: 300, maxHeight: 280,
-              background: '#1a1a1a',
-              border: '1px solid #333',
+              background: theme.surface.panelElevated,
+              border: `1px solid ${theme.border.default}`,
               borderRadius: 8,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+              boxShadow: theme.shadow.panel,
               zIndex: 20,
               overflow: 'hidden',
               display: 'flex', flexDirection: 'column',
@@ -1215,15 +1217,15 @@ export function TileChrome({
           >
             <div style={{
               padding: '6px 10px',
-              borderBottom: '1px solid #2d2d2d',
-              fontSize: 11, fontWeight: 600, color: '#888',
+              borderBottom: `1px solid ${theme.border.default}`,
+              fontSize: 11, fontWeight: 600, color: theme.text.muted,
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
               <span>Events</span>
               <button
                 onClick={e => { e.stopPropagation(); onBusPopupToggle?.() }}
                 style={{
-                  background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: 12
+                  background: 'none', border: 'none', color: theme.text.disabled, cursor: 'pointer', fontSize: 12
                 }}
               >
                 ✕
@@ -1231,31 +1233,31 @@ export function TileChrome({
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
               {busEvents.length === 0 ? (
-                <div style={{ padding: '12px', textAlign: 'center', color: '#555', fontSize: 11 }}>
+                <div style={{ padding: '12px', textAlign: 'center', color: theme.text.disabled, fontSize: 11 }}>
                   No events yet
                 </div>
               ) : (
                 busEvents.slice(-30).reverse().map(evt => (
                   <div key={evt.id} style={{
                     padding: '4px 10px',
-                    borderBottom: '1px solid #1f1f1f',
+                    borderBottom: `1px solid ${theme.border.subtle}`,
                     fontSize: 11,
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
                       <span style={{
-                        color: evt.type === 'notification' ? '#ffb432' :
-                               evt.type === 'progress' ? '#4a9eff' :
-                               evt.type === 'task' ? '#66bb6a' :
-                               '#888',
+                        color: evt.type === 'notification' ? theme.status.warning :
+                               evt.type === 'progress' ? theme.accent.base :
+                               evt.type === 'task' ? theme.status.success :
+                               theme.text.muted,
                         fontWeight: 500,
                       }}>
                         {evt.type}
                       </span>
-                      <span style={{ color: '#555', fontSize: 10 }}>
+                      <span style={{ color: theme.text.disabled, fontSize: 10 }}>
                         {new Date(evt.timestamp).toLocaleTimeString()}
                       </span>
                     </div>
-                    <div style={{ color: '#aaa' }}>
+                    <div style={{ color: theme.text.secondary }}>
                       {(evt.payload as any).message ?? (evt.payload as any).status ?? (evt.payload as any).title ?? JSON.stringify(evt.payload).slice(0, 80)}
                     </div>
                   </div>

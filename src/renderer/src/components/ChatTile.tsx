@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import type { AppSettings } from '../../../shared/types'
 import { basename, getDroppedPaths, isImagePath } from '../utils/dnd'
 import {
-  Paperclip, ShieldCheck, Mic, Activity, ChevronDown,
+  ShieldCheck, ChevronDown,
   Check, ArrowUp, Square, MessageSquare, Bot,
   Brain, ChevronRight, Clock, DollarSign,
-  Trash2
+  FileText, Trash2
 } from 'lucide-react'
 import { useMCPServers, type MCPServerEntry } from '../hooks/useMCPServers'
+import { useTheme } from '../ThemeContext'
 
 // --- Custom provider SVG icons (matching Paseo) ----------------------------------
 
@@ -261,12 +262,13 @@ function ShimmerText({ children, style, baseColor = '#888' }: {
 
 // --- Working dots ----------------------------------------------------------------
 
-function WorkingDots({ color = '#58a6ff', size = 5 }: { color?: string; size?: number }): JSX.Element {
+function WorkingDots({ color, size = 5 }: { color?: string; size?: number }): JSX.Element {
+  const theme = useTheme()
   return (
     <span style={{ display: 'inline-flex', gap: 3, padding: '2px 0' }}>
       {[0, 1, 2].map(i => (
         <span key={i} style={{
-          width: size, height: size, borderRadius: '50%', background: color,
+          width: size, height: size, borderRadius: '50%', background: color ?? theme.accent.base,
           animation: `chat-dot-bounce 1.2s ease-in-out ${i * 0.15}s infinite`,
         }} />
       ))}
@@ -277,6 +279,7 @@ function WorkingDots({ color = '#58a6ff', size = 5 }: { color?: string; size?: n
 // --- Component -------------------------------------------------------------------
 
 export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, width: _width, height: _height, settings }: Props): JSX.Element {
+  const theme = useTheme()
   const fontSans = settings?.primaryFont?.family ?? FONT_SANS
   const fontMono = settings?.monoFont?.family ?? FONT_MONO
   const fontSize = settings?.primaryFont?.size ?? FONT_SIZE_DEFAULT
@@ -866,7 +869,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       style={{
         width: '100%', height: '100%',
         display: 'flex', flexDirection: 'column',
-        background: '#0d0d0d', color: '#d4d4d4',
+        background: theme.chat.background, color: theme.chat.text,
         fontFamily: fontSans, fontSize,
         position: 'relative',
       }}
@@ -877,12 +880,12 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
         <div style={{
           flexShrink: 0, display: 'flex', alignItems: 'center',
           padding: '4px 14px', gap: 6,
-          borderBottom: '1px solid #1a1a1a', fontSize: monoSize - 3,
-          color: '#555', fontFamily: fontMono,
+          borderBottom: `1px solid ${theme.chat.divider}`, fontSize: monoSize - 3,
+          color: theme.chat.muted, fontFamily: fontMono,
         }}>
           <span style={{
             width: 5, height: 5, borderRadius: '50%',
-            background: '#3fb950', flexShrink: 0,
+            background: theme.status.success, flexShrink: 0,
           }} />
           <span>Session {sessionId.slice(0, 8)}</span>
           <span style={{ flex: 1 }} />
@@ -891,7 +894,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
             disabled={isStreaming}
             style={{
               background: 'none', border: 'none', cursor: isStreaming ? 'default' : 'pointer',
-              color: '#444', padding: 2, display: 'flex', alignItems: 'center',
+              color: theme.chat.subtle, padding: 2, display: 'flex', alignItems: 'center',
               opacity: isStreaming ? 0.3 : 0.6,
             }}
             title="Clear conversation"
@@ -913,9 +916,9 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           <div style={{
             flex: 1, display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center', gap: 8,
-            color: '#444', fontSize: 12,
+            color: theme.chat.subtle, fontSize: 12,
           }}>
-            <MessageSquare size={24} color="#444" strokeWidth={1.5} style={{ opacity: 0.4 }} />
+            <MessageSquare size={24} color={theme.chat.subtle} strokeWidth={1.5} style={{ opacity: 0.4 }} />
             <span>Start a conversation</span>
           </div>
         )}
@@ -941,20 +944,20 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
             {/* Main text bubble — only show when we have content (Thinking block handles the empty streaming state) */}
             {msg.content && (
               <div style={{
-                background: msg.role === 'user' ? '#1a3a5c' : '#1a1a1a',
-                border: msg.role === 'user' ? '1px solid #244a6c' : '1px solid #252525',
+                background: msg.role === 'user' ? theme.chat.userBubble : theme.chat.assistantBubble,
+                border: msg.role === 'user' ? `1px solid ${theme.chat.userBubbleBorder}` : `1px solid ${theme.chat.assistantBubbleBorder}`,
                 borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
                 padding: '8px 12px',
                 fontSize, lineHeight: 1.55,
                 whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                color: '#d4d4d4', position: 'relative',
+                color: theme.chat.text, position: 'relative',
               }}>
                 {msg.content}
                 {msg.isStreaming && msg.content.length > 0 && (
                   <span style={{
                     display: 'inline-block', width: 6, height: 14,
                     marginLeft: 2, verticalAlign: 'text-bottom',
-                    background: 'linear-gradient(90deg, #58a6ff 0%, #388bfd 50%, #58a6ff 100%)',
+                    background: `linear-gradient(90deg, ${theme.accent.hover} 0%, ${theme.accent.base} 50%, ${theme.accent.hover} 100%)`,
                     backgroundSize: '200% 100%',
                     animation: 'chat-shimmer 1.2s ease-in-out infinite',
                     borderRadius: 1,
@@ -971,7 +974,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
             {!msg.isStreaming && msg.cost != null && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 8,
-                fontSize: monoSize - 3, color: '#555', fontFamily: fontMono,
+                fontSize: monoSize - 3, color: theme.chat.muted, fontFamily: fontMono,
                 padding: '0 4px',
               }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
@@ -987,7 +990,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
             {msg.isStreaming && (
               <div style={{
                 height: 2, marginTop: 1, width: '60%', borderRadius: 1,
-                background: 'linear-gradient(90deg, transparent 0%, #58a6ff44 30%, #388bfd88 50%, #58a6ff44 70%, transparent 100%)',
+                background: `linear-gradient(90deg, transparent 0%, ${theme.accent.soft} 30%, ${theme.accent.base}88 50%, ${theme.accent.soft} 70%, transparent 100%)`,
                 backgroundSize: '200% 100%',
                 animation: 'chat-shimmer 1.5s ease-in-out infinite',
                 alignSelf: 'flex-start',
@@ -1000,10 +1003,10 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       {/* Input bar */}
       <div style={{
         flexShrink: 0, margin: '0 10px 10px 10px',
-        border: isDropTarget ? '1px solid rgba(88,166,255,0.85)' : '1px solid #333', borderRadius: 14,
-        background: isDropTarget ? 'rgba(20, 34, 51, 0.92)' : '#161616',
+        border: isDropTarget ? `1px solid ${theme.accent.base}` : `1px solid ${theme.chat.inputBorder}`, borderRadius: 14,
+        background: isDropTarget ? theme.surface.accentSoft : theme.chat.inputBackground,
         position: 'relative',
-        boxShadow: isDropTarget ? '0 0 0 1px rgba(88,166,255,0.28), 0 0 22px rgba(56,139,253,0.12)' : 'none',
+        boxShadow: isDropTarget ? `0 0 0 1px ${theme.border.accent}, 0 0 22px ${theme.accent.soft}` : 'none',
         transition: 'border-color 120ms ease, background 120ms ease, box-shadow 120ms ease',
       }}>
         {/* Autocomplete popup */}
@@ -1013,16 +1016,16 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
             style={{
               position: 'absolute', bottom: '100%', left: 0, right: 0,
               marginBottom: 4,
-              background: '#1c1c1c', border: '1px solid #2a2a2a',
+              background: theme.chat.dropdownBackground, border: `1px solid ${theme.chat.dropdownBorder}`,
               borderRadius: 8, padding: 4,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+              boxShadow: theme.shadow.panel,
               zIndex: 9999,
               maxHeight: 6 * 36, overflowY: 'auto',
             }}
           >
             {acType === 'mention' && !acQuery && (
               <div style={{
-                padding: '6px 10px', fontSize: 11, color: '#555',
+                padding: '6px 10px', fontSize: 11, color: theme.chat.muted,
                 fontFamily: fontMono,
               }}>
                 Type to search files...
@@ -1036,18 +1039,18 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                 style={{
                   padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', gap: 8,
-                  background: i === acIndex ? '#252525' : 'transparent',
+                  background: i === acIndex ? theme.surface.hover : 'transparent',
                   transition: 'background 0.1s',
                 }}
               >
                 <span style={{
-                  fontSize: 12, color: i === acIndex ? '#58a6ff' : '#ccc',
+                  fontSize: 12, color: i === acIndex ? theme.accent.base : theme.chat.text,
                   fontFamily: fontMono, fontWeight: 500,
                 }}>
                   {item.value}
                 </span>
                 <span style={{
-                  fontSize: 11, color: '#555', fontFamily: fontSans,
+                  fontSize: 11, color: theme.chat.muted, fontFamily: fontSans,
                   marginLeft: 'auto',
                 }}>
                   {item.description}
@@ -1061,14 +1064,14 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
         {isDictating && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 6,
-            padding: '4px 14px 0 14px', fontSize: 11, color: '#e54d2e',
+            padding: '4px 14px 0 14px', fontSize: 11, color: theme.status.danger,
           }}>
             <span style={{
-              width: 6, height: 6, borderRadius: '50%', background: '#e54d2e',
+              width: 6, height: 6, borderRadius: '50%', background: theme.status.danger,
               animation: 'chat-pulse 1s ease-in-out infinite',
             }} />
             <span>Recording{dictationText ? ': ' : ''}</span>
-            {dictationText && <span style={{ color: '#888', fontStyle: 'italic' }}>{dictationText}</span>}
+            {dictationText && <span style={{ color: theme.chat.muted, fontStyle: 'italic' }}>{dictationText}</span>}
           </div>
         )}
 
@@ -1086,8 +1089,8 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                   maxWidth: item.kind === 'image' ? 140 : 180,
                   height: 54,
                   borderRadius: 12,
-                  border: '1px solid #2a2a2a',
-                  background: '#121212',
+                  border: `1px solid ${theme.chat.dropdownBorder}`,
+                  background: theme.surface.panelElevated,
                   overflow: 'hidden',
                   position: 'relative',
                   display: 'flex',
@@ -1098,15 +1101,15 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                   <img
                     src={item.path}
                     alt={basename(item.path)}
-                    style={{ width: 54, height: 54, objectFit: 'cover', display: 'block', background: '#0d0d0d', flexShrink: 0 }}
+                    style={{ width: 54, height: 54, objectFit: 'cover', display: 'block', background: theme.chat.background, flexShrink: 0 }}
                   />
                 ) : (
                   <div style={{
                     width: 36, flexShrink: 0,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: '#7f8ea3', borderRight: '1px solid #1f1f1f', fontSize: 15,
+                    color: theme.chat.muted, borderRight: `1px solid ${theme.border.subtle}`, fontSize: 15,
                   }}>
-                    <Paperclip size={14} />
+                    <FileText size={13} />
                   </div>
                 )}
                 <div style={{
@@ -1114,16 +1117,16 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                   padding: '8px 26px 8px 10px',
                   display: 'flex', flexDirection: 'column', justifyContent: 'center',
                 }}>
-                  <div style={{ fontSize: 11, color: '#d4d4d4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{basename(item.path)}</div>
-                  <div style={{ fontSize: 9, color: '#666', fontFamily: fontMono, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.kind === 'image' ? 'image' : 'file'}</div>
+                  <div style={{ fontSize: 11, color: theme.chat.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{basename(item.path)}</div>
+                  <div style={{ fontSize: 9, color: theme.chat.muted, fontFamily: fontMono, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.kind === 'image' ? 'image' : 'file'}</div>
                 </div>
                 <button
                   onClick={() => removeAttachment(item.path)}
                   style={{
                     position: 'absolute', top: 6, right: 6,
                     width: 16, height: 16, borderRadius: 8,
-                    border: '1px solid #2d2d2d', background: 'rgba(10,10,10,0.85)',
-                    color: '#aaa', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    border: `1px solid ${theme.border.default}`, background: theme.surface.overlay,
+                    color: theme.chat.textSecondary, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
                     padding: 0,
                   }}
                   title="Remove attachment"
@@ -1144,7 +1147,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           rows={1}
           style={{
             width: '100%', boxSizing: 'border-box',
-            background: 'transparent', color: '#d4d4d4',
+            background: 'transparent', color: theme.chat.text,
             border: 'none', padding: '12px 14px 6px 14px',
             fontSize, fontFamily: fontSans, lineHeight: 1.5,
             resize: 'none', outline: 'none', overflow: 'hidden',
@@ -1157,9 +1160,6 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           display: 'flex', alignItems: 'center',
           padding: '4px 8px 8px 8px', gap: 1,
         }}>
-          {/* Attach */}
-          <ToolbarBtn icon={<Paperclip size={14} />} tooltip="Attach files" onClick={() => {}} />
-
           {/* Safety / Mode — icon only, label in dropdown */}
           <div ref={modeMenuRef} style={{ position: 'relative' }}>
             {(() => {
@@ -1197,7 +1197,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
               <ToolbarBtn
                 icon={<ThinkingIcon level={thinking} />}
                 tooltip={`Thinking: ${THINKING_OPTIONS.find(t => t.id === thinking)?.label ?? 'Adaptive'}`}
-                color={thinking === 'none' ? undefined : '#e0e0e0'}
+                color={thinking === 'none' ? undefined : theme.chat.text}
                 onClick={() => toggleMenu('thinking')}
               />
               {showThinkingMenu && (
@@ -1268,7 +1268,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           <ToolbarBtn
             icon={<Bot size={14} />}
             tooltip={agentMode ? 'Agent mode (on)' : 'Agent mode (off)'}
-            color={agentMode ? '#e0e0e0' : undefined}
+            color={agentMode ? theme.chat.text : undefined}
             onClick={() => setAgentMode(p => !p)}
           />
 
@@ -1277,7 +1277,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
             <ToolbarBtn
               icon={<MCPIcon size={14} />}
               tooltip={`MCP Tools: ${mcpEnabled ? 'On' : 'Off'}`}
-              color={mcpEnabled ? '#e0e0e0' : undefined}
+              color={mcpEnabled ? theme.chat.text : undefined}
               onClick={() => toggleMenu('mcp')}
             />
             {showMcpMenu && (
@@ -1291,7 +1291,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                 />
                 {mcpEnabled && mcpServers.length > 0 && (
                   <>
-                    <div style={{ height: 1, background: '#2a2a2a', margin: '4px 0' }} />
+                    <div style={{ height: 1, background: theme.chat.dropdownBorder, margin: '4px 0' }} />
                     {mcpServers.map(s => {
                       const enabled = !disabledServers.has(s.name)
                       return (
@@ -1312,7 +1312,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                   </>
                 )}
                 {mcpEnabled && mcpServers.length === 0 && (
-                  <div style={{ padding: '6px 10px', fontSize: 11, color: '#555', fontStyle: 'italic' }}>
+                  <div style={{ padding: '6px 10px', fontSize: 11, color: theme.chat.muted, fontStyle: 'italic' }}>
                     No MCP servers configured
                   </div>
                 )}
@@ -1322,17 +1322,6 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
 
           <div style={{ flex: 1 }} />
 
-          {/* Voice */}
-          <ToolbarBtn
-            icon={<Mic size={14} />}
-            tooltip={isDictating ? 'Stop dictation' : 'Voice input'}
-            color={isDictating ? '#e54d2e' : undefined}
-            onClick={toggleDictation}
-          />
-
-          {/* Activity */}
-          <ToolbarBtn icon={<Activity size={14} />} tooltip="Activity" onClick={() => {}} />
-
           {/* Stop / Send */}
           {isStreaming ? (
             <button
@@ -1340,13 +1329,13 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
               onMouseDown={e => e.preventDefault()}
               style={{
                 width: 28, height: 28, minWidth: 28, borderRadius: '50%',
-                background: '#e54d2e', border: 'none',
+                background: theme.status.danger, border: 'none',
                 cursor: 'pointer', display: 'flex',
                 alignItems: 'center', justifyContent: 'center',
                 padding: 0, transition: 'background 0.15s', flexShrink: 0,
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#ff6b4a')}
-              onMouseLeave={e => (e.currentTarget.style.background = '#e54d2e')}
+              onMouseEnter={e => (e.currentTarget.style.background = theme.status.dangerHover)}
+              onMouseLeave={e => (e.currentTarget.style.background = theme.status.danger)}
               title="Stop generation"
             >
               <Square size={10} fill="#fff" color="#fff" />
@@ -1358,14 +1347,14 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
               disabled={!input.trim() && attachments.length === 0}
               style={{
                 width: 28, height: 28, minWidth: 28, borderRadius: '50%',
-                background: input.trim() || attachments.length > 0 ? '#4a9eff' : '#252525',
+                background: input.trim() || attachments.length > 0 ? theme.accent.base : theme.surface.panelMuted,
                 border: 'none',
                 cursor: input.trim() || attachments.length > 0 ? 'pointer' : 'default',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 padding: 0, transition: 'background 0.15s', flexShrink: 0,
               }}
-              onMouseEnter={e => { if (input.trim() || attachments.length > 0) e.currentTarget.style.background = '#58a6ff' }}
-              onMouseLeave={e => { if (input.trim() || attachments.length > 0) e.currentTarget.style.background = '#4a9eff' }}
+              onMouseEnter={e => { if (input.trim() || attachments.length > 0) e.currentTarget.style.background = theme.accent.hover }}
+              onMouseLeave={e => { if (input.trim() || attachments.length > 0) e.currentTarget.style.background = theme.accent.base }}
               title="Send message"
             >
               <ArrowUp size={16} color="#fff" strokeWidth={2.5} style={{ opacity: input.trim() || attachments.length > 0 ? 1 : 0.3 }} />
@@ -1382,6 +1371,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
 
 function ThinkingBlockView({ thinking }: { thinking: ThinkingBlock }): JSX.Element {
   const fonts = useFonts()
+  const theme = useTheme()
   const [expanded, setExpanded] = useState(false)
   const isActive = !thinking.done
   const hasContent = thinking.content.length > 0
@@ -1406,11 +1396,11 @@ function ThinkingBlockView({ thinking }: { thinking: ThinkingBlock }): JSX.Eleme
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 6,
           padding: '5px 10px 5px 8px',
-          background: expanded ? 'rgba(74,158,255,0.08)' : 'transparent',
-          border: expanded ? '1px solid rgba(74,158,255,0.15)' : '1px solid transparent',
+          background: expanded ? theme.surface.selection : 'transparent',
+          border: expanded ? `1px solid ${theme.surface.selectionBorder}` : '1px solid transparent',
           borderBottom: expanded ? '1px solid transparent' : '1px solid transparent',
           cursor: hasContent ? 'pointer' : 'default',
-          color: isActive ? '#8ab4f8' : '#6a7a90',
+          color: isActive ? theme.accent.hover : theme.chat.muted,
           fontSize: 12, fontFamily: fonts.sans, fontWeight: 500,
           borderRadius: expanded ? '8px 8px 0 0' : 8,
           lineHeight: 1,
@@ -1419,14 +1409,14 @@ function ThinkingBlockView({ thinking }: { thinking: ThinkingBlock }): JSX.Eleme
       >
         <Brain size={11} style={{ opacity: isActive ? 0.8 : 0.4, flexShrink: 0 }} />
         {isActive ? (
-          <ShimmerText baseColor="#8ab4f8" style={{ fontSize: 12, fontWeight: 500 }}>
+          <ShimmerText baseColor={theme.accent.hover} style={{ fontSize: 12, fontWeight: 500 }}>
             Thinking
           </ShimmerText>
         ) : (
           <span style={{ opacity: 0.6, fontSize: 12, fontWeight: 500 }}>Thought</span>
         )}
         {isActive && !hasContent && (
-          <WorkingDots color="#8ab4f8" size={3} />
+          <WorkingDots color={theme.accent.hover} size={3} />
         )}
         {hasContent && (
           <ChevronRight size={10} style={{
@@ -1441,11 +1431,11 @@ function ThinkingBlockView({ thinking }: { thinking: ThinkingBlock }): JSX.Eleme
       {expanded && hasContent && (
         <div style={{
           padding: '8px 12px 10px 12px',
-          fontSize: 12, lineHeight: 1.6, color: '#8ab4f8',
+          fontSize: 12, lineHeight: 1.6, color: theme.accent.hover,
           whiteSpace: 'pre-wrap', wordBreak: 'break-word',
           fontFamily: fonts.sans, maxHeight: 200, overflowY: 'auto',
-          background: 'rgba(74,158,255,0.06)',
-          border: '1px solid rgba(74,158,255,0.15)',
+          background: theme.surface.selection,
+          border: `1px solid ${theme.surface.selectionBorder}`,
           borderTop: 'none',
           borderRadius: '0 0 8px 8px',
           backdropFilter: 'blur(8px)',
@@ -1456,7 +1446,7 @@ function ThinkingBlockView({ thinking }: { thinking: ThinkingBlock }): JSX.Eleme
             <span style={{
               display: 'inline-block', width: 5, height: 12,
               marginLeft: 2, verticalAlign: 'text-bottom',
-              background: '#8ab4f8', borderRadius: 1,
+              background: theme.accent.hover, borderRadius: 1,
               animation: 'chat-pulse 1s ease-in-out infinite',
             }} />
           )}
@@ -1468,12 +1458,13 @@ function ThinkingBlockView({ thinking }: { thinking: ThinkingBlock }): JSX.Eleme
 
 function ToolBlockView({ block }: { block: ToolBlock }): JSX.Element {
   const fonts = useFonts()
+  const theme = useTheme()
   const [expanded, setExpanded] = useState(false)
   const isRunning = block.status === 'running'
 
   return (
     <div style={{
-      background: '#111418', border: '1px solid #252a30',
+      background: theme.chat.assistantBubble, border: `1px solid ${theme.chat.assistantBubbleBorder}`,
       borderRadius: 10, overflow: 'hidden', width: '100%',
     }}>
       <button
@@ -1481,7 +1472,7 @@ function ToolBlockView({ block }: { block: ToolBlock }): JSX.Element {
         style={{
           width: '100%', display: 'flex', alignItems: 'center', gap: 6,
           padding: '5px 10px', background: 'none', border: 'none',
-          cursor: 'pointer', color: isRunning ? '#8b949e' : '#7c8a98',
+          cursor: 'pointer', color: isRunning ? theme.chat.textSecondary : theme.chat.muted,
           fontSize: 12, fontFamily: fonts.sans, lineHeight: 1,
         }}
       >
@@ -1490,11 +1481,11 @@ function ToolBlockView({ block }: { block: ToolBlock }): JSX.Element {
         {/* Tool name + secondary label with shimmer when running */}
         {isRunning ? (
           <>
-            <ShimmerText baseColor="#7c8a98" style={{ fontSize: 13, fontFamily: fonts.sans, fontWeight: 500 }}>
+            <ShimmerText baseColor={theme.chat.textSecondary} style={{ fontSize: 13, fontFamily: fonts.sans, fontWeight: 500 }}>
               {block.name}
             </ShimmerText>
             {block.summary && (
-              <ShimmerText baseColor="#556" style={{
+              <ShimmerText baseColor={theme.chat.muted} style={{
                 fontSize: 13, fontFamily: fonts.sans, fontWeight: 400,
                 marginLeft: 4, flex: 1,
                 overflow: 'hidden', textOverflow: 'ellipsis',
@@ -1508,7 +1499,7 @@ function ToolBlockView({ block }: { block: ToolBlock }): JSX.Element {
             <span style={{ fontWeight: 500, fontSize: 13 }}>{block.name}</span>
             {block.summary && (
               <span style={{
-                fontSize: 13, color: '#555', fontWeight: 400,
+                fontSize: 13, color: theme.chat.muted, fontWeight: 400,
                 marginLeft: 4, flex: 1,
                 overflow: 'hidden', textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
@@ -1523,14 +1514,14 @@ function ToolBlockView({ block }: { block: ToolBlock }): JSX.Element {
 
         {block.elapsed != null && (
           <span style={{
-            fontSize: 10, color: '#555', display: 'flex', alignItems: 'center', gap: 3,
+            fontSize: 10, color: theme.chat.muted, display: 'flex', alignItems: 'center', gap: 3,
             fontFamily: fonts.mono, flexShrink: 0,
           }}>
             <Clock size={9} /> {block.elapsed.toFixed(1)}s
           </span>
         )}
         {!isRunning && !block.elapsed && (
-          <Check size={11} color="#3fb950" style={{ flexShrink: 0 }} />
+          <Check size={11} color={theme.status.success} style={{ flexShrink: 0 }} />
         )}
         <ChevronRight size={12} style={{
           transform: expanded ? 'rotate(90deg)' : 'none',
@@ -1543,11 +1534,11 @@ function ToolBlockView({ block }: { block: ToolBlock }): JSX.Element {
       {expanded && block.input && (
         <div style={{
           padding: '4px 10px 8px 10px',
-          borderTop: '1px solid #252a30',
+          borderTop: `1px solid ${theme.chat.assistantBubbleBorder}`,
         }}>
           <pre style={{
             margin: 0, padding: 8, borderRadius: 6,
-            background: '#0a0c10', color: '#8b949e',
+            background: theme.surface.panelMuted, color: theme.chat.textSecondary,
             fontSize: 10, lineHeight: 1.4, fontFamily: fonts.mono,
             whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             maxHeight: 200, overflowY: 'auto',
@@ -1557,7 +1548,7 @@ function ToolBlockView({ block }: { block: ToolBlock }): JSX.Element {
           {block.summary && (
             <div style={{
               marginTop: 6, padding: '4px 0',
-              fontSize: 11, color: '#7c8a98', fontFamily: fonts.mono,
+              fontSize: 11, color: theme.chat.muted, fontFamily: fonts.mono,
             }}>
               {block.summary}
             </div>
@@ -1569,7 +1560,7 @@ function ToolBlockView({ block }: { block: ToolBlock }): JSX.Element {
       {isRunning && (
         <div style={{
           height: 2, width: '100%',
-          background: 'linear-gradient(90deg, transparent 0%, #58a6ff44 30%, #388bfd88 50%, #58a6ff44 70%, transparent 100%)',
+          background: `linear-gradient(90deg, transparent 0%, ${theme.accent.soft} 30%, ${theme.accent.base}88 50%, ${theme.accent.soft} 70%, transparent 100%)`,
           backgroundSize: '200% 100%',
           animation: 'chat-shimmer 1.5s ease-in-out infinite',
         }} />
@@ -1591,16 +1582,17 @@ function formatToolInput(input: string): string {
 function ToolbarBtn({ icon, tooltip, color, onClick }: {
   icon: React.ReactNode; tooltip: string; color?: string; onClick: () => void
 }): JSX.Element {
+  const theme = useTheme()
   const [h, setH] = useState(false)
   return (
     <button
       onClick={onClick}
       title={tooltip}
       style={{
-        background: h ? '#1e1e1e' : 'none',
+        background: h ? theme.surface.hover : 'none',
         border: 'none', cursor: 'pointer',
         padding: '4px 6px', borderRadius: 6,
-        color: color ?? (h ? '#ddd' : '#999'),
+        color: color ?? (h ? theme.chat.text : theme.chat.muted),
         transition: 'color 0.1s, background 0.1s',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
@@ -1616,17 +1608,18 @@ function ToolbarPill({ prefix, label, color, active, onClick }: {
   prefix?: React.ReactNode; label: string; color?: string; active: boolean; onClick: () => void
 }): JSX.Element {
   const fonts = useFonts()
+  const theme = useTheme()
   const [h, setH] = useState(false)
   return (
     <button
       onClick={onClick}
       style={{
         display: 'flex', alignItems: 'center', gap: 4,
-        background: active ? '#1e1e1e' : (h ? '#1a1a1a' : 'transparent'),
+        background: active ? theme.surface.hover : (h ? theme.surface.panelMuted : 'transparent'),
         border: 'none',
         borderRadius: 6, padding: '3px 8px', cursor: 'pointer',
         fontSize: 11, fontFamily: fonts.sans,
-        color: color ?? (h ? '#eee' : '#ccc'),
+        color: color ?? (h ? theme.chat.text : theme.chat.textSecondary),
         transition: 'color 0.1s, background 0.1s',
         whiteSpace: 'nowrap',
         maxWidth: 180,
@@ -1643,13 +1636,14 @@ function ToolbarPill({ prefix, label, color, active, onClick }: {
 }
 
 function Dropdown({ children }: { children: React.ReactNode }): JSX.Element {
+  const theme = useTheme()
   return (
     <div style={{
       position: 'absolute', bottom: '100%', left: 0,
       marginBottom: 4, minWidth: 160,
-      background: '#1c1c1c', border: '1px solid #2a2a2a',
+      background: theme.chat.dropdownBackground, border: `1px solid ${theme.chat.dropdownBorder}`,
       borderRadius: 8, padding: 4,
-      boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+      boxShadow: theme.shadow.panel,
       zIndex: 9999,
     }}>
       {children}
@@ -1661,6 +1655,7 @@ function DropdownItem({ icon, label, sublabel, active, onClick }: {
   icon?: React.ReactNode; label: string; sublabel?: string; active: boolean; onClick: () => void
 }): JSX.Element {
   const fonts = useFonts()
+  const theme = useTheme()
   const [h, setH] = useState(false)
   return (
     <div
@@ -1668,22 +1663,22 @@ function DropdownItem({ icon, label, sublabel, active, onClick }: {
       style={{
         padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
         display: 'flex', alignItems: 'center', gap: 8,
-        background: active ? '#252525' : (h ? '#1e1e1e' : 'transparent'),
+        background: active ? theme.surface.selection : (h ? theme.surface.hover : 'transparent'),
         transition: 'background 0.1s',
       }}
       onMouseEnter={() => setH(true)}
       onMouseLeave={() => setH(false)}
     >
-      {icon && <span style={{ display: 'flex', color: active ? '#58a6ff' : '#888' }}>{icon}</span>}
+      {icon && <span style={{ display: 'flex', color: active ? theme.accent.base : theme.chat.muted }}>{icon}</span>}
       <span style={{
-        fontSize: 12, color: active ? '#58a6ff' : '#ccc',
+        fontSize: 12, color: active ? theme.accent.base : theme.chat.text,
         fontFamily: fonts.sans,
       }}>
         {label}
       </span>
-      {active && <Check size={12} color="#58a6ff" style={{ marginLeft: 'auto' }} />}
+      {active && <Check size={12} color={theme.accent.base} style={{ marginLeft: 'auto' }} />}
       {sublabel && !active && (
-        <span style={{ fontSize: 9, color: '#444', fontFamily: fonts.mono }}>{sublabel}</span>
+        <span style={{ fontSize: 9, color: theme.chat.subtle, fontFamily: fonts.mono }}>{sublabel}</span>
       )}
     </div>
   )

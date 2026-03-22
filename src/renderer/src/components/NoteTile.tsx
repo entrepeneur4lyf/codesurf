@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import Editor from '@monaco-editor/react'
 import { useAppFonts } from '../FontContext'
+import { useTheme } from '../ThemeContext'
 
 interface Props {
   filePath?: string
@@ -52,6 +53,7 @@ export function NoteTile({ filePath, initialContent = '' }: Props): JSX.Element 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const loaded = useRef(false)
   const fonts = useAppFonts()
+  const theme = useTheme()
 
   useEffect(() => {
     loaded.current = false
@@ -82,7 +84,7 @@ export function NoteTile({ filePath, initialContent = '' }: Props): JSX.Element 
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current) }, [])
 
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#1e1e1e', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: theme.editor.background, position: 'relative' }}>
       {/* Mode toggle icons — float top-right over content */}
       <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, display: 'flex', gap: 2 }}>
         <button
@@ -91,11 +93,11 @@ export function NoteTile({ filePath, initialContent = '' }: Props): JSX.Element 
           style={{
             width: 24, height: 24, borderRadius: 4, border: 'none', cursor: 'pointer', padding: 0,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: mode === 'edit' ? 'rgba(74,158,255,0.18)' : 'rgba(30,30,30,0.75)',
-            color: mode === 'edit' ? '#4a9eff' : '#555',
+            background: mode === 'edit' ? theme.accent.soft : theme.surface.panelMuted,
+            color: mode === 'edit' ? theme.accent.base : theme.text.disabled,
           }}
-          onMouseEnter={e => { if (mode !== 'edit') { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#aaa' } }}
-          onMouseLeave={e => { if (mode !== 'edit') { e.currentTarget.style.background = 'rgba(30,30,30,0.75)'; e.currentTarget.style.color = '#555' } }}
+          onMouseEnter={e => { if (mode !== 'edit') { e.currentTarget.style.background = theme.surface.hover; e.currentTarget.style.color = theme.text.muted } }}
+          onMouseLeave={e => { if (mode !== 'edit') { e.currentTarget.style.background = theme.surface.panelMuted; e.currentTarget.style.color = theme.text.disabled } }}
         >
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
             <path d="M9 1.5L11.5 4L4.5 11H2V8.5L9 1.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
@@ -107,11 +109,11 @@ export function NoteTile({ filePath, initialContent = '' }: Props): JSX.Element 
           style={{
             width: 24, height: 24, borderRadius: 4, border: 'none', cursor: 'pointer', padding: 0,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: mode === 'preview' ? 'rgba(74,158,255,0.18)' : 'rgba(30,30,30,0.75)',
-            color: mode === 'preview' ? '#4a9eff' : '#555',
+            background: mode === 'preview' ? theme.accent.soft : theme.surface.panelMuted,
+            color: mode === 'preview' ? theme.accent.base : theme.text.disabled,
           }}
-          onMouseEnter={e => { if (mode !== 'preview') { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#aaa' } }}
-          onMouseLeave={e => { if (mode !== 'preview') { e.currentTarget.style.background = 'rgba(30,30,30,0.75)'; e.currentTarget.style.color = '#555' } }}
+          onMouseEnter={e => { if (mode !== 'preview') { e.currentTarget.style.background = theme.surface.hover; e.currentTarget.style.color = theme.text.muted } }}
+          onMouseLeave={e => { if (mode !== 'preview') { e.currentTarget.style.background = theme.surface.panelMuted; e.currentTarget.style.color = theme.text.disabled } }}
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M1 7C1 7 3 3 7 3C11 3 13 7 13 7C13 7 11 11 7 11C3 11 1 7 1 7Z" stroke="currentColor" strokeWidth="1.3"/>
@@ -128,8 +130,8 @@ export function NoteTile({ filePath, initialContent = '' }: Props): JSX.Element 
             language="markdown"
             value={content}
             onChange={handleChange}
-            theme="vs-dark"
-            loading={<div style={{ height: '100%', background: '#1e1e1e' }} />}
+            theme={theme.editor.monacoBase}
+            loading={<div style={{ height: '100%', background: theme.editor.background }} />}
             options={{
               minimap: { enabled: false },
               fontSize: 13,
@@ -157,20 +159,20 @@ export function NoteTile({ filePath, initialContent = '' }: Props): JSX.Element 
 
       {/* Preview styles injected inline */}
       <style>{`
-        .note-preview h1 { font-size: 1.6em; font-weight: 700; color: #e0e0e0; margin: 0 0 12px; }
-        .note-preview h2 { font-size: 1.3em; font-weight: 600; color: #d0d0d0; margin: 16px 0 8px; }
-        .note-preview h3 { font-size: 1.1em; font-weight: 600; color: #c0c0c0; margin: 12px 0 6px; }
-        .note-preview p  { color: #cccccc; line-height: 1.7; margin: 0 0 10px; }
-        .note-preview code { background: #2a2a2a; color: #ce9178; padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: "JetBrains Mono", monospace; }
-        .note-preview pre { background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 12px; overflow-x: auto; margin: 10px 0; }
+        .note-preview h1 { font-size: 1.6em; font-weight: 700; color: ${theme.text.primary}; margin: 0 0 12px; }
+        .note-preview h2 { font-size: 1.3em; font-weight: 600; color: ${theme.text.secondary}; margin: 16px 0 8px; }
+        .note-preview h3 { font-size: 1.1em; font-weight: 600; color: ${theme.text.secondary}; margin: 12px 0 6px; }
+        .note-preview p  { color: ${theme.text.secondary}; line-height: 1.7; margin: 0 0 10px; }
+        .note-preview code { background: ${theme.surface.panelMuted}; color: ${theme.accent.base}; padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: "JetBrains Mono", monospace; }
+        .note-preview pre { background: ${theme.surface.panelMuted}; border: 1px solid ${theme.border.default}; border-radius: 4px; padding: 12px; overflow-x: auto; margin: 10px 0; }
         .note-preview pre code { background: none; padding: 0; }
-        .note-preview ul, .note-preview ol { color: #cccccc; padding-left: 20px; margin: 6px 0; }
+        .note-preview ul, .note-preview ol { color: ${theme.text.secondary}; padding-left: 20px; margin: 6px 0; }
         .note-preview li { line-height: 1.7; }
-        .note-preview a { color: #4a9eff; text-decoration: none; }
+        .note-preview a { color: ${theme.accent.base}; text-decoration: none; }
         .note-preview a:hover { text-decoration: underline; }
-        .note-preview blockquote { border-left: 3px solid #444; padding-left: 12px; color: #888; margin: 8px 0; }
-        .note-preview hr { border: none; border-top: 1px solid #333; margin: 16px 0; }
-        .note-preview strong { color: #e0e0e0; }
+        .note-preview blockquote { border-left: 3px solid ${theme.border.strong}; padding-left: 12px; color: ${theme.text.muted}; margin: 8px 0; }
+        .note-preview hr { border: none; border-top: 1px solid ${theme.border.default}; margin: 16px 0; }
+        .note-preview strong { color: ${theme.text.primary}; }
       `}</style>
     </div>
   )

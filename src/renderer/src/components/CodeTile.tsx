@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import { useAppFonts } from '../FontContext'
+import { useTheme } from '../ThemeContext'
 
 interface Props {
   filePath?: string
@@ -27,6 +28,7 @@ export function CodeTile({ filePath, initialContent = '' }: Props): JSX.Element 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isLoaded = useRef(false)
   const fonts = useAppFonts()
+  const theme = useTheme()
 
   useEffect(() => {
     isLoaded.current = false
@@ -65,11 +67,11 @@ export function CodeTile({ filePath, initialContent = '' }: Props): JSX.Element 
         language={getLang(filePath)}
         value={content}
         onChange={handleChange}
-        theme="vs-dark"
+        theme={theme.editor.monacoBase}
         loading={
           <div style={{
             height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: '#1e1e1e', color: '#555', fontSize: 12
+            background: theme.editor.background, color: theme.text.muted, fontSize: 12
           }}>
             Loading…
           </div>

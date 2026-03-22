@@ -3,6 +3,7 @@ import { KanbanCard, KanbanCardData } from './KanbanCard'
 import { buildAgentBrief } from '../utils/agentBrief'
 import { ActivityFeed, ActivityEvent } from './ActivityFeed'
 import type { ActivityRecord } from '../../../shared/types'
+import { useTheme } from '../ThemeContext'
 
 interface KanbanColumn { id: string; title: string }
 
@@ -67,6 +68,7 @@ function AgentOverview({ workspaceId, onFocusTile }: {
   workspaceId: string
   onFocusTile?: (tileId: string) => void
 }): JSX.Element {
+  const theme = useTheme()
   const [groups, setGroups] = useState<Record<string, ActivityRecord[]>>({})
   const [loading, setLoading] = useState(true)
   const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -94,18 +96,18 @@ function AgentOverview({ workspaceId, onFocusTile }: {
   })
 
   if (loading) {
-    return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#444', fontSize: 12 }}>Loading activity...</div>
+    return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.disabled, fontSize: 12 }}>Loading activity...</div>
   }
 
   if (agentKeys.length === 0) {
     return (
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#555' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, color: theme.text.muted }}>
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
           <rect x="3" y="3" width="18" height="18" rx="4" />
           <path d="M9 12h6M12 9v6" strokeLinecap="round" />
         </svg>
         <span style={{ fontSize: 12 }}>No activity yet</span>
-        <span style={{ fontSize: 10, color: '#444', maxWidth: 200, textAlign: 'center', lineHeight: 1.4 }}>
+        <span style={{ fontSize: 10, color: theme.text.disabled, maxWidth: 200, textAlign: 'center', lineHeight: 1.4 }}>
           Activity from terminals and chats will appear here automatically, grouped by agent
         </span>
       </div>
@@ -263,6 +265,7 @@ function ActivityRecordRow({ record, onFocusTile }: {
 // ─── Main KanbanTile ────────────────────────────────────────────────────────
 
 export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, onFocusTile }: Props): JSX.Element {
+  const theme = useTheme()
   const [mode, setMode] = useState<KanbanMode>('board')
   const [columns, setColumns] = useState<KanbanColumn[]>(DEFAULT_COLUMNS)
   const [cards, setCards] = useState<KanbanCardData[]>([])
@@ -609,10 +612,10 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
   }, [dragging, tileId])
 
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#13151a', overflow: 'hidden' }}>
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: theme.surface.panelMuted, overflow: 'hidden' }}>
 
       {/* Header */}
-      <div style={{ height: HEADER, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', borderBottom: '1px solid #21262d' }}>
+      <div style={{ height: HEADER, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', borderBottom: `1px solid ${theme.border.subtle}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {/* Mode toggle */}
           <div style={{ display: 'flex', gap: 4 }}>
@@ -627,11 +630,11 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
                     fontSize: 11,
                     fontWeight: isActive ? 700 : 500,
                     padding: '0 11px',
-                    border: `1px solid ${isActive ? '#30363d' : 'transparent'}`,
+                    border: `1px solid ${isActive ? theme.border.default : 'transparent'}`,
                     borderRadius: 7,
                     cursor: 'pointer',
-                    background: isActive ? '#21262d' : 'transparent',
-                    color: isActive ? '#58a6ff' : '#6f7782',
+                    background: isActive ? theme.surface.selection : 'transparent',
+                    color: isActive ? theme.accent.base : theme.text.muted,
                     fontFamily: 'inherit',
                     textTransform: 'uppercase',
                     letterSpacing: 0.3,
@@ -639,15 +642,15 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
                   }}
                   onMouseEnter={e => {
                     if (!isActive) {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
-                      e.currentTarget.style.color = '#aeb8c4'
-                      e.currentTarget.style.borderColor = '#2a2f38'
+                      e.currentTarget.style.background = theme.surface.hover
+                      e.currentTarget.style.color = theme.text.secondary
+                      e.currentTarget.style.borderColor = theme.border.default
                     }
                   }}
                   onMouseLeave={e => {
                     if (!isActive) {
                       e.currentTarget.style.background = 'transparent'
-                      e.currentTarget.style.color = '#6f7782'
+                      e.currentTarget.style.color = theme.text.muted
                       e.currentTarget.style.borderColor = 'transparent'
                     }
                   }}
@@ -660,7 +663,7 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
 
           {mode === 'board' && (
             <>
-              <span style={{ fontSize: 10, color: '#444', background: '#1c2128', border: '1px solid #30363d', borderRadius: 10, padding: '1px 7px' }}>
+              <span style={{ fontSize: 10, color: theme.text.disabled, background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`, borderRadius: 10, padding: '1px 7px' }}>
                 {cards.length} card{cards.length !== 1 ? 's' : ''}
               </span>
               {Object.keys(activeTerminals).filter(id => isActive(id)).length > 0 && (
@@ -675,9 +678,9 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
         {mode === 'board' && (
           <button
             onClick={() => setColumns(prev => [...prev, { id: `col-${Date.now()}`, title: 'New List' }])}
-            style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, background: '#21262d', color: '#8b949e', border: '1px solid #30363d', cursor: 'pointer', fontFamily: 'inherit' }}
-            onMouseEnter={e => { e.currentTarget.style.color = '#58a6ff'; e.currentTarget.style.background = '#2d333b' }}
-            onMouseLeave={e => { e.currentTarget.style.color = '#8b949e'; e.currentTarget.style.background = '#21262d' }}
+            style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, background: theme.surface.panelElevated, color: theme.text.muted, border: `1px solid ${theme.border.default}`, cursor: 'pointer', fontFamily: 'inherit' }}
+            onMouseEnter={e => { e.currentTarget.style.color = theme.accent.base; e.currentTarget.style.background = theme.surface.hover }}
+            onMouseLeave={e => { e.currentTarget.style.color = theme.text.muted; e.currentTarget.style.background = theme.surface.panelElevated }}
           >+ List</button>
         )}
       </div>
@@ -689,8 +692,8 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
 
       {/* Board mode — terminal task activity */}
       {mode === 'board' && terminalTaskCards.length > 0 && (
-        <div style={{ borderBottom: '1px solid #21262d', background: '#0b1017', padding: '4px 8px' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: '#58a6ff', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 4 }}>Task Activity</div>
+        <div style={{ borderBottom: `1px solid ${theme.border.subtle}`, background: theme.surface.panel, padding: '4px 8px' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: theme.accent.base, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 4 }}>Task Activity</div>
           <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
             {terminalTaskCards.map(card => {
               const ev = terminalEventByCard[card.id]
@@ -739,8 +742,8 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
                 minWidth: MIN_COL_W,
                 width: 0,
                 display: 'flex', flexDirection: 'column',
-                borderRight: ci < columns.length - 1 ? '1px solid #21262d' : 'none',
-                background: isOver ? '#161b22' : 'transparent',
+                borderRight: ci < columns.length - 1 ? `1px solid ${theme.border.subtle}` : 'none',
+                background: isOver ? theme.surface.hover : 'transparent',
                 transition: 'background 0.1s'
               }}
               onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDragOver(col.id) }}

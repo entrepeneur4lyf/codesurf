@@ -226,6 +226,8 @@ export interface AppSettings {
   primaryFont: FontToken
   secondaryFont: FontToken
   monoFont: FontToken
+  // Theme
+  themeId: string
   // Canvas
   canvasBackground: string
   gridColorSmall: string
@@ -256,9 +258,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   primaryFont: { family: SANS_STACK, size: 14, lineHeight: 1.5 },
   secondaryFont: { family: '"SF Pro Display", "Segoe UI", "Helvetica Neue", sans-serif', size: 12, lineHeight: 1.4 },
   monoFont: { family: MONO_STACK, size: 13, lineHeight: 1.5 },
-  canvasBackground: '#1e1e1e',
-  gridColorSmall: '#333333',
-  gridColorLarge: '#4a4a4a',
+  themeId: 'default-dark',
+  canvasBackground: '#15171a',
+  gridColorSmall: '#2a2e35',
+  gridColorLarge: '#3a3f48',
   gridSpacingSmall: 20,
   gridSpacingLarge: 100,
   snapToGrid: true,

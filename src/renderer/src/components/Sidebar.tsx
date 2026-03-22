@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Workspace } from '../../../shared/types'
 import { ContextMenu, MenuItem } from './ContextMenu'
 import { useAppFonts } from '../FontContext'
+import { useTheme } from '../ThemeContext'
 
 interface FsEntry {
   name: string
@@ -343,6 +344,7 @@ function CreateInline({
   onCancel: () => void
 }): JSX.Element {
   const fonts = useAppFonts()
+  const theme = useTheme()
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 6,
@@ -362,8 +364,8 @@ function CreateInline({
         placeholder={type === 'file' ? 'filename.ts' : 'folder-name'}
         style={{
           flex: 1, padding: '4px 8px', fontSize: fonts.size, borderRadius: 4,
-          background: '#161616', color: '#ccc',
-          border: '1px solid #4a9eff', outline: 'none',
+          background: theme.surface.input, color: theme.text.secondary,
+          border: `1px solid ${theme.accent.base}`, outline: 'none',
           boxSizing: 'border-box', fontFamily: 'inherit'
         }}
       />
@@ -383,6 +385,7 @@ function RenameInput({
   onCancel: () => void
 }): JSX.Element {
   const fonts = useAppFonts()
+  const theme = useTheme()
   return (
     <input
       autoFocus
@@ -397,8 +400,8 @@ function RenameInput({
       onClick={e => e.stopPropagation()}
       style={{
         flex: 1, padding: '1px 4px', fontSize: fonts.size, borderRadius: 3,
-        background: '#1a1a2a', color: '#d4d4d4',
-        border: '1px solid #4a9eff', outline: 'none',
+        background: theme.surface.input, color: theme.text.primary,
+        border: `1px solid ${theme.accent.base}`, outline: 'none',
         fontFamily: 'inherit'
       }}
     />
@@ -456,6 +459,7 @@ function TreeNode({
   onRenameCancel: () => void
 }): JSX.Element {
   const fonts = useAppFonts()
+  const theme = useTheme()
   const expanded = entry.isDir && expandedPaths.has(entry.path)
   const [hovered, setHovered] = useState(false)
   const [renameVal, setRenameVal] = useState(entry.name)
@@ -475,9 +479,9 @@ function TreeNode({
           height: 26, paddingLeft: 8 + depth * 16, paddingRight: 12,
           cursor: 'pointer', userSelect: 'none',
           background: isSelected
-            ? 'rgba(74,158,255,0.08)'
-            : hovered ? 'rgba(255,255,255,0.04)' : 'transparent',
-          border: `1px solid ${isSelected ? 'rgba(90,170,255,0.18)' : 'transparent'}`,
+            ? theme.surface.selection
+            : hovered ? theme.surface.hover : 'transparent',
+          border: `1px solid ${isSelected ? theme.surface.selectionBorder : 'transparent'}`,
           boxShadow: 'none',
           backdropFilter: 'none',
           WebkitBackdropFilter: 'none',
@@ -503,7 +507,7 @@ function TreeNode({
           <div key={i} style={{
             position: 'absolute', left: 8 + i * 16 + 5,
             width: 1, top: 0, bottom: 0,
-            background: 'rgba(255,255,255,0.05)', pointerEvents: 'none'
+            background: theme.border.subtle, pointerEvents: 'none'
           }} />
         ))}
 
@@ -519,7 +523,7 @@ function TreeNode({
         ) : (
           <span style={{
             fontSize: fonts.size,
-            color: isSelected ? '#b7d9ff' : entry.isDir ? '#d4d4d4' : '#b8b8b8',
+            color: isSelected ? theme.accent.hover : entry.isDir ? theme.text.primary : theme.text.secondary,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             flex: 1
           }}>
@@ -531,7 +535,7 @@ function TreeNode({
             ) : (
               <>
                 <span style={{ fontWeight: 400 }}>{entry.name.replace(entry.ext, '')}</span>
-                <span style={{ color: '#4a4a4a' }}>{entry.ext}</span>
+                <span style={{ color: theme.text.disabled }}>{entry.ext}</span>
               </>
             )}
           </span>
@@ -558,7 +562,7 @@ function TreeNode({
           {entry.children.length === 0 && !isCreateTarget ? (
             <div style={{
               paddingLeft: 8 + (depth + 1) * 16 + 22,
-              height: 24, fontSize: fonts.size, color: '#3a3a3a',
+              height: 24, fontSize: fonts.size, color: theme.text.disabled,
               display: 'flex', alignItems: 'center', fontFamily: 'inherit'
             }}>
               empty
@@ -618,6 +622,7 @@ function FlatEntry({
   onRenameCancel: () => void
 }): JSX.Element {
   const fonts = useAppFonts()
+  const theme = useTheme()
   const [hovered, setHovered] = useState(false)
   const [renameVal, setRenameVal] = useState(entry.name)
   const isRenaming = renamingPath === entry.path
@@ -634,9 +639,9 @@ function FlatEntry({
         height: 26, paddingLeft: 10, paddingRight: 12,
         cursor: 'pointer', userSelect: 'none',
         background: isSelected
-          ? 'rgba(74,158,255,0.08)'
-          : hovered ? 'rgba(255,255,255,0.04)' : 'transparent',
-        border: `1px solid ${isSelected ? 'rgba(90,170,255,0.18)' : 'transparent'}`,
+          ? theme.surface.selection
+          : hovered ? theme.surface.hover : 'transparent',
+        border: `1px solid ${isSelected ? theme.surface.selectionBorder : 'transparent'}`,
         boxShadow: 'none',
         backdropFilter: 'none',
         WebkitBackdropFilter: 'none',
@@ -664,14 +669,14 @@ function FlatEntry({
         <>
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
             <span style={{
-              fontSize: fonts.size, fontFamily: 'inherit', color: isSelected ? '#b7d9ff' : '#b8b8b8',
+              fontSize: fonts.size, fontFamily: 'inherit', color: isSelected ? theme.accent.hover : theme.text.secondary,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
             }}>
               <span style={{ fontWeight: 400 }}>{entry.name.replace(entry.ext, '')}</span>
               <span style={{ color: '#4a4a4a' }}>{entry.ext}</span>
             </span>
             <span style={{
-              fontSize: fonts.size - 1, fontFamily: 'inherit', color: '#575757',
+              fontSize: fonts.size - 1, fontFamily: 'inherit', color: theme.text.disabled,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
             }}>
               {relativePath(rootPath, entry.path)}
@@ -692,6 +697,7 @@ export function Sidebar({
   collapsed, width, onWidthChange, onResizeStateChange, onToggleCollapse: _onToggleCollapse
 }: Props): JSX.Element {
   const fonts = useAppFonts()
+  const theme = useTheme()
   const [treeEntries, setTreeEntries] = useState<TreeEntry[]>([])
   const [sortMode, setSortMode] = useState<SortMode>('name')
   const [viewMode, setViewMode] = useState<ViewMode>('tree')
@@ -1016,34 +1022,34 @@ export function Sidebar({
           style={{
             display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
             padding: '5px 10px', borderRadius: 8,
-            background: '#252525', border: '1px solid #2d2d2d'
+            background: theme.surface.panelMuted, border: `1px solid ${theme.border.default}`
           }}
           onClick={() => setWsDropdownOpen(p => !p)}
         >
           <span style={{
-            fontSize: fonts.size, color: '#d4d4d4', fontWeight: 500,
+            fontSize: fonts.size, color: theme.text.primary, fontWeight: 500,
             flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             fontFamily: 'inherit'
           }}>
             {workspace?.name ?? 'No workspace'}
           </span>
-          <span style={{ fontSize: 9, color: '#555' }}>{wsDropdownOpen ? '▴' : '▾'}</span>
+          <span style={{ fontSize: 9, color: theme.text.disabled }}>{wsDropdownOpen ? '▴' : '▾'}</span>
         </div>
 
         {wsDropdownOpen && (
-          <div style={{ marginTop: 4, background: '#222', border: '1px solid #333', borderRadius: 8, overflow: 'hidden' }}>
+          <div style={{ marginTop: 4, background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`, borderRadius: 8, overflow: 'hidden' }}>
             {workspaces.map(ws => (
               <div
                 key={ws.id}
-                style={{ padding: '7px 14px', fontSize: fonts.size, fontFamily: 'inherit', color: ws.id === workspace?.id ? '#4a9eff' : '#ccc', cursor: 'pointer' }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+                style={{ padding: '7px 14px', fontSize: fonts.size, fontFamily: 'inherit', color: ws.id === workspace?.id ? theme.accent.base : theme.text.secondary, cursor: 'pointer' }}
+                onMouseEnter={e => (e.currentTarget.style.background = theme.surface.hover)}
                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 onClick={() => { onSwitchWorkspace(ws.id); setWsDropdownOpen(false) }}
               >
                 {ws.name}
               </div>
             ))}
-            <div style={{ height: 1, background: '#2d2d2d', margin: '2px 0' }} />
+            <div style={{ height: 1, background: theme.border.default, margin: '2px 0' }} />
             {newWsInput ? (
               <div style={{ padding: '4px 8px' }}>
                 <input
@@ -1063,22 +1069,22 @@ export function Sidebar({
                     }
                   }}
                   placeholder="Workspace name…"
-                  style={{ width: '100%', padding: '4px 8px', fontSize: fonts.size, borderRadius: 4, background: '#1a1a1a', color: '#ccc', border: '1px solid #4a9eff', outline: 'none', fontFamily: 'inherit' }}
+                  style={{ width: '100%', padding: '4px 8px', fontSize: fonts.size, borderRadius: 4, background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.accent.base}`, outline: 'none', fontFamily: 'inherit' }}
                 />
               </div>
             ) : (
               <>
                 <div
-                  style={{ padding: '7px 14px', fontSize: fonts.size, color: '#555', cursor: 'pointer', fontFamily: 'inherit' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+                  style={{ padding: '7px 14px', fontSize: fonts.size, color: theme.text.disabled, cursor: 'pointer', fontFamily: 'inherit' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = theme.surface.hover)}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                   onClick={() => { onOpenFolder(); setWsDropdownOpen(false) }}
                 >
                   Open Folder…
                 </div>
                 <div
-                  style={{ padding: '7px 14px', fontSize: fonts.size, color: '#555', cursor: 'pointer', fontFamily: 'inherit' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+                  style={{ padding: '7px 14px', fontSize: fonts.size, color: theme.text.disabled, cursor: 'pointer', fontFamily: 'inherit' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = theme.surface.hover)}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                   onClick={() => setNewWsInput(true)}
                 >
@@ -1091,15 +1097,15 @@ export function Sidebar({
       </div>
 
       {/* Compact toolbar: [ Search ] [Sort] [Menu] */}
-      <div style={{ padding: '4px 10px 6px', borderBottom: '1px solid #1f1f1f', display: 'flex', gap: 4, alignItems: 'center' }}>
+      <div style={{ padding: '4px 10px 6px', borderBottom: `1px solid ${theme.border.subtle}`, display: 'flex', gap: 4, alignItems: 'center' }}>
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search files"
           style={{
             flex: 1, padding: '4px 10px', fontSize: fonts.size,
-            background: '#222', color: '#ccc',
-            border: '1px solid #2d2d2d', borderRadius: 6,
+            background: theme.surface.input, color: theme.text.secondary,
+            border: `1px solid ${theme.border.default}`, borderRadius: 6,
             outline: 'none', fontFamily: 'inherit', minWidth: 0
           }}
         />
@@ -1109,11 +1115,11 @@ export function Sidebar({
           style={{
             background: 'transparent', border: 'none',
             cursor: 'pointer', padding: '4px 5px', borderRadius: 4,
-            color: '#8f96a0', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: theme.text.muted, display: 'flex', alignItems: 'center', justifyContent: 'center',
             flexShrink: 0
           }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#d9dee4' }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#8f96a0' }}
+          onMouseEnter={e => { e.currentTarget.style.color = theme.text.primary }}
+          onMouseLeave={e => { e.currentTarget.style.color = theme.text.muted }}
         >
           <SortIcon mode={sortMode} />
         </button>
@@ -1122,12 +1128,12 @@ export function Sidebar({
             onClick={() => setShowFileMenu(p => !p)}
             title="File actions"
             style={{
-              background: showFileMenu ? '#252525' : 'transparent', border: 'none',
+              background: showFileMenu ? theme.surface.panelMuted : 'transparent', border: 'none',
               cursor: 'pointer', padding: '4px 5px', borderRadius: 4,
-              color: showFileMenu ? '#e1e6ec' : '#8f96a0', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: showFileMenu ? theme.text.primary : theme.text.muted, display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
-            onMouseEnter={e => { if (!showFileMenu) e.currentTarget.style.color = '#d9dee4' }}
-            onMouseLeave={e => { if (!showFileMenu) e.currentTarget.style.color = '#8f96a0' }}
+            onMouseEnter={e => { if (!showFileMenu) e.currentTarget.style.color = theme.text.primary }}
+            onMouseLeave={e => { if (!showFileMenu) e.currentTarget.style.color = theme.text.muted }}
           >
             {/* Hamburger / list icon */}
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -1138,9 +1144,9 @@ export function Sidebar({
             <div style={{
               position: 'absolute', top: '100%', right: 0,
               marginTop: 4, minWidth: 150,
-              background: '#1c1c1c', border: '1px solid #2a2a2a',
+              background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`,
               borderRadius: 8, padding: 4,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+              boxShadow: theme.shadow.panel,
               zIndex: 9999,
             }}>
               {([
@@ -1154,9 +1160,9 @@ export function Sidebar({
                   onClick={item.action}
                   style={{
                     padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
-                    fontSize: fonts.size, color: '#ccc', fontFamily: 'inherit',
+                    fontSize: fonts.size, color: theme.text.secondary, fontFamily: 'inherit',
                   }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#252525')}
+                  onMouseEnter={e => (e.currentTarget.style.background = theme.surface.hover)}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >
                   {item.label}
@@ -1169,12 +1175,12 @@ export function Sidebar({
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0', position: 'relative' }} onContextMenu={handleBgCtxMenu}>
         {!workspace ? (
-          <div style={{ padding: '16px', fontSize: fonts.size, color: '#444', fontFamily: 'inherit' }}>No workspace open</div>
+          <div style={{ padding: '16px', fontSize: fonts.size, color: theme.text.disabled, fontFamily: 'inherit' }}>No workspace open</div>
         ) : loadingTree && treeEntries.length === 0 ? (
-          <div style={{ padding: '16px', fontSize: fonts.size, color: '#666', fontFamily: 'inherit' }}>Loading files…</div>
+          <div style={{ padding: '16px', fontSize: fonts.size, color: theme.text.muted, fontFamily: 'inherit' }}>Loading files…</div>
         ) : viewMode === 'list' ? (
           filteredFlat.length === 0 ? (
-            <div style={{ padding: '16px', fontSize: fonts.size, color: '#444', fontFamily: 'inherit' }}>{search ? 'No matches' : 'Empty'}</div>
+            <div style={{ padding: '16px', fontSize: fonts.size, color: theme.text.disabled, fontFamily: 'inherit' }}>{search ? 'No matches' : 'Empty'}</div>
           ) : (
             filteredFlat.map(entry => (
               <FlatEntry
@@ -1206,7 +1212,7 @@ export function Sidebar({
             )}
 
             {filteredTree.length === 0 ? (
-              <div style={{ padding: '16px', fontSize: fonts.size, color: '#444', fontFamily: 'inherit' }}>{search ? 'No matches' : 'Empty'}</div>
+              <div style={{ padding: '16px', fontSize: fonts.size, color: theme.text.disabled, fontFamily: 'inherit' }}>{search ? 'No matches' : 'Empty'}</div>
             ) : (
               filteredTree.map(entry => (
                 <TreeNode
@@ -1236,7 +1242,7 @@ export function Sidebar({
         )}
       </div>
 
-      <div style={{ borderTop: '1px solid #252525', padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+      <div style={{ borderTop: `1px solid ${theme.border.default}`, padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <div
             title="Beta build"
@@ -1288,12 +1294,12 @@ export function Sidebar({
               title={btn.label}
               style={{
                 width: 28, height: 28, borderRadius: 6,
-                border: '1px solid #2d2d2d', background: 'transparent',
-                color: '#8f96a0', cursor: 'pointer',
+                border: `1px solid ${theme.border.default}`, background: 'transparent',
+                color: theme.text.muted, cursor: 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}
-              onMouseEnter={e => { e.currentTarget.style.background = '#2a2a2a'; e.currentTarget.style.color = '#e1e6ec' }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#8f96a0' }}
+              onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted; e.currentTarget.style.color = theme.text.primary }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = theme.text.muted }}
               onClick={btn.action}
             >
               {btn.icon}
@@ -1307,12 +1313,12 @@ export function Sidebar({
                 title="Extensions"
                 style={{
                   width: 28, height: 28, borderRadius: 6,
-                  border: '1px solid #2d2d2d', background: showExtMenu ? '#2a2a2a' : 'transparent',
-                  color: showExtMenu ? '#e1e6ec' : '#8f96a0', cursor: 'pointer',
+                  border: `1px solid ${theme.border.default}`, background: showExtMenu ? theme.surface.panelMuted : 'transparent',
+                  color: showExtMenu ? theme.text.primary : theme.text.muted, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = '#2a2a2a'; e.currentTarget.style.color = '#e1e6ec' }}
-                onMouseLeave={e => { if (!showExtMenu) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#8f96a0' } }}
+                onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted; e.currentTarget.style.color = theme.text.primary }}
+                onMouseLeave={e => { if (!showExtMenu) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = theme.text.muted } }}
                 onClick={() => setShowExtMenu(p => !p)}
               >
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -1325,8 +1331,8 @@ export function Sidebar({
               {showExtMenu && (
                 <div style={{
                   position: 'absolute', bottom: 32, right: 0, minWidth: 160,
-                  background: '#1a1a1a', border: '1px solid #333', borderRadius: 8,
-                  padding: 4, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', zIndex: 1000,
+                  background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`, borderRadius: 8,
+                  padding: 4, boxShadow: theme.shadow.panel, zIndex: 1000,
                 }}>
                   {extensionTiles.map(ext => (
                     <button
@@ -1336,11 +1342,11 @@ export function Sidebar({
                         display: 'flex', alignItems: 'center', gap: 8,
                         width: '100%', padding: '6px 10px', borderRadius: 6,
                         border: 'none', background: 'transparent',
-                        color: '#ccc', fontSize: 12, cursor: 'pointer',
+                        color: theme.text.secondary, fontSize: 12, cursor: 'pointer',
                         textAlign: 'left',
                       }}
-                      onMouseEnter={e => { e.currentTarget.style.background = '#2a2a2a'; e.currentTarget.style.color = '#fff' }}
-                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#ccc' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted; e.currentTarget.style.color = theme.text.primary }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = theme.text.secondary }}
                     >
                       <span>{ext.label}</span>
                     </button>
@@ -1361,7 +1367,7 @@ export function Sidebar({
           onResizeStateChange?.(true)
           e.preventDefault()
         }}
-        onMouseEnter={e => (e.currentTarget.style.background = '#4a9eff44')}
+        onMouseEnter={e => (e.currentTarget.style.background = theme.accent.soft)}
         onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
       />
 
