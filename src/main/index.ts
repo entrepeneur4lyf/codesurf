@@ -292,11 +292,11 @@ app.whenReady().then(async () => {
         mergedAt: new Date().toISOString()
       }
 
-      // Also write a merged file the workspace dir so agents can reference it
-      const wsDir = pjoin(CONTEX_HOME, 'workspaces', workspaceId)
-      await fsP.mkdir(wsDir, { recursive: true })
+      // Also write a merged file inside .contex so it doesn't pollute the workspace root
+      const wsContex = pjoin(CONTEX_HOME, 'workspaces', workspaceId, '.contex')
+      await fsP.mkdir(wsContex, { recursive: true })
       await fsP.writeFile(
-        pjoin(wsDir, 'mcp-merged.json'),
+        pjoin(wsContex, 'mcp-merged.json'),
         JSON.stringify(merged, null, 2)
       )
 

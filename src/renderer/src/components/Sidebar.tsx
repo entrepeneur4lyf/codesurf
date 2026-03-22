@@ -39,7 +39,7 @@ const GIT_LABELS: Record<GitStatus, string> = {
 
 const SORT_MODES: SortMode[] = ['name', 'type', 'ext']
 const SORT_LABELS: Record<SortMode, string> = { name: 'Name', type: 'Type', ext: 'Ext' }
-const IGNORED = new Set(['.git', '.contex', '.mcp.json', 'mcp-merged.json', 'node_modules', '.next', 'dist', 'dist-electron', '.DS_Store', '__pycache__', '.cache', 'out'])
+const IGNORED = new Set(['.git', 'node_modules', '.next', 'dist', 'dist-electron', '.DS_Store', '__pycache__', '.cache', 'out'])
 
 interface ExtTileEntry { type: string; label: string; icon?: string }
 

@@ -723,7 +723,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
               {[
                 { label: 'Global config', path: '~/.contex/mcp-server.json' },
                 { label: 'Workspace servers', path: '~/.contex/workspaces/<id>/mcp-servers.json' },
-                { label: 'Merged config (point agents here)', path: '~/.contex/workspaces/<id>/mcp-merged.json', highlight: true },
+                { label: 'Merged config (point agents here)', path: '~/.contex/workspaces/<id>/.contex/mcp-merged.json', highlight: true },
               ].map(row => (
                 <div key={row.label}>
                   <div style={{ fontSize: 10, color: '#444', marginBottom: 3, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{row.label}</div>
@@ -1110,7 +1110,7 @@ function DisplaySettingsEditor({
       <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #1a1a1a', paddingBottom: 8 }}>
         {[
           { id: 'display' as const, label: 'Display', icon: <FormInput size={14} /> },
-          { id: 'json' as const, label: '<>', icon: <Code2 size={14} /> },
+          { id: 'json' as const, label: 'JSON', icon: <Code2 size={14} /> },
         ].map(tab => {
           const isActive = view === tab.id
           return (

@@ -1798,19 +1798,16 @@ function App(): JSX.Element {
             if (!rect) return
             const x = e.clientX - rect.left
             const y = e.clientY - rect.top
-            // Scale glow radius and intensity with zoom — smaller/dimmer when zoomed out
-            const glowRadius = Math.round(120 * Math.min(1, Math.max(0.3, viewport.zoom)))
-            const glowOpacity = Math.min(1, Math.max(0.15, viewport.zoom))
-            const mask = `radial-gradient(circle ${glowRadius}px at ${x}px ${y}px, rgba(0,0,0,1) 0%, rgba(0,0,0,0.6) 30%, rgba(0,0,0,0) 100%)`
+            const mask = `radial-gradient(circle 120px at ${x}px ${y}px, rgba(0,0,0,1) 0%, rgba(0,0,0,0.6) 30%, rgba(0,0,0,0) 100%)`
             if (dotGlowSmallRef.current) {
               dotGlowSmallRef.current.style.maskImage = mask
               dotGlowSmallRef.current.style.webkitMaskImage = mask
-              dotGlowSmallRef.current.style.opacity = String(glowOpacity)
+              dotGlowSmallRef.current.style.opacity = '1'
             }
             if (dotGlowLargeRef.current) {
               dotGlowLargeRef.current.style.maskImage = mask
               dotGlowLargeRef.current.style.webkitMaskImage = mask
-              dotGlowLargeRef.current.style.opacity = String(glowOpacity)
+              dotGlowLargeRef.current.style.opacity = '1'
             }
           }}
           onMouseLeave={() => {
@@ -1862,62 +1859,48 @@ function App(): JSX.Element {
             pointerEvents: panelLayout ? 'none' : 'auto',
           }}>
           {/* Dot grid - small */}
-          {(() => {
-            // Scale dot radius with zoom — thinner when zoomed out, normal at 1x
-            const z = viewport.zoom
-            const dotSmall = Math.max(0.4, Math.min(1, z)) // 0.4px–1px
-            const dotLarge = Math.max(0.6, Math.min(2, z * 2)) // 0.6px–2px
-            const dotSmallGlow = dotSmall
-            const dotLargeGlow = dotLarge
-            const glowAlphaSmall = Math.min(0.7, Math.max(0.2, z * 0.7))
-            const glowAlphaLarge = Math.min(0.8, Math.max(0.25, z * 0.8))
-            return (
-              <>
-                <div
-                  className="absolute inset-0 pointer-events-none"
-                  style={{
-                    backgroundImage: `radial-gradient(circle, ${settings.gridColorSmall} ${dotSmall}px, transparent ${dotSmall}px)`,
-                    backgroundSize: `${settings.gridSpacingSmall * z}px ${settings.gridSpacingSmall * z}px`,
-                    backgroundPosition: `${viewport.tx % (settings.gridSpacingSmall * z)}px ${viewport.ty % (settings.gridSpacingSmall * z)}px`
-                  }}
-                />
-                {/* Dot grid - large */}
-                <div
-                  className="absolute inset-0 pointer-events-none"
-                  style={{
-                    backgroundImage: `radial-gradient(circle, ${settings.gridColorLarge} ${dotLarge}px, transparent ${dotLarge}px)`,
-                    backgroundSize: `${settings.gridSpacingLarge * z}px ${settings.gridSpacingLarge * z}px`,
-                    backgroundPosition: `${viewport.tx % (settings.gridSpacingLarge * z)}px ${viewport.ty % (settings.gridSpacingLarge * z)}px`
-                  }}
-                />
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundImage: `radial-gradient(circle, ${settings.gridColorSmall} 1px, transparent 1px)`,
+              backgroundSize: `${settings.gridSpacingSmall * viewport.zoom}px ${settings.gridSpacingSmall * viewport.zoom}px`,
+              backgroundPosition: `${viewport.tx % (settings.gridSpacingSmall * viewport.zoom)}px ${viewport.ty % (settings.gridSpacingSmall * viewport.zoom)}px`
+            }}
+          />
+          {/* Dot grid - large */}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundImage: `radial-gradient(circle, ${settings.gridColorLarge} 2px, transparent 2px)`,
+              backgroundSize: `${settings.gridSpacingLarge * viewport.zoom}px ${settings.gridSpacingLarge * viewport.zoom}px`,
+              backgroundPosition: `${viewport.tx % (settings.gridSpacingLarge * viewport.zoom)}px ${viewport.ty % (settings.gridSpacingLarge * viewport.zoom)}px`
+            }}
+          />
 
-                {/* Dot grid glow - small (cursor proximity light) */}
-                <div
-                  ref={dotGlowSmallRef}
-                  className="absolute inset-0 pointer-events-none"
-                  style={{
-                    backgroundImage: `radial-gradient(circle, rgba(255,255,255,${glowAlphaSmall}) ${dotSmallGlow}px, transparent ${dotSmallGlow}px)`,
-                    backgroundSize: `${settings.gridSpacingSmall * z}px ${settings.gridSpacingSmall * z}px`,
-                    backgroundPosition: `${viewport.tx % (settings.gridSpacingSmall * z)}px ${viewport.ty % (settings.gridSpacingSmall * z)}px`,
-                    opacity: 0,
-                    transition: 'opacity 0.3s ease-out',
-                  }}
-                />
-                {/* Dot grid glow - large (cursor proximity light) */}
-                <div
-                  ref={dotGlowLargeRef}
-                  className="absolute inset-0 pointer-events-none"
-                  style={{
-                    backgroundImage: `radial-gradient(circle, rgba(255,255,255,${glowAlphaLarge}) ${dotLargeGlow}px, transparent ${dotLargeGlow}px)`,
-                    backgroundSize: `${settings.gridSpacingLarge * z}px ${settings.gridSpacingLarge * z}px`,
-                    backgroundPosition: `${viewport.tx % (settings.gridSpacingLarge * z)}px ${viewport.ty % (settings.gridSpacingLarge * z)}px`,
-                    opacity: 0,
-                    transition: 'opacity 0.3s ease-out',
-                  }}
-                />
-              </>
-            )
-          })()}
+          {/* Dot grid glow - small (cursor proximity light) */}
+          <div
+            ref={dotGlowSmallRef}
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundImage: `radial-gradient(circle, rgba(255,255,255,0.7) 1px, transparent 1px)`,
+              backgroundSize: `${settings.gridSpacingSmall * viewport.zoom}px ${settings.gridSpacingSmall * viewport.zoom}px`,
+              backgroundPosition: `${viewport.tx % (settings.gridSpacingSmall * viewport.zoom)}px ${viewport.ty % (settings.gridSpacingSmall * viewport.zoom)}px`,
+              opacity: 0,
+              transition: 'opacity 0.3s ease-out',
+            }}
+          />
+          {/* Dot grid glow - large (cursor proximity light) */}
+          <div
+            ref={dotGlowLargeRef}
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundImage: `radial-gradient(circle, rgba(255,255,255,0.8) 2px, transparent 2px)`,
+              backgroundSize: `${settings.gridSpacingLarge * viewport.zoom}px ${settings.gridSpacingLarge * viewport.zoom}px`,
+              backgroundPosition: `${viewport.tx % (settings.gridSpacingLarge * viewport.zoom)}px ${viewport.ty % (settings.gridSpacingLarge * viewport.zoom)}px`,
+              opacity: 0,
+              transition: 'opacity 0.3s ease-out',
+            }}
+          />
 
           {/* World container */}
           <div

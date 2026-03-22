@@ -21,6 +21,7 @@ async function migrateToContexDir(workspaceId: string): Promise<void> {
     const migratable = entries.filter(name =>
       name === 'canvas-state.json' ||
       name === 'activity.json' ||
+      name === 'mcp-merged.json' ||
       name.startsWith('tile-state-') ||
       name.startsWith('kanban-')
     )

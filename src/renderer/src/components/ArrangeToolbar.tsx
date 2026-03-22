@@ -25,9 +25,7 @@ function getArrangeWidth(tile: TileState): number {
   return tile.width + reserve
 }
 
-// ─── ELK-based layout ────────────────────────────────────────────────────────
-
-// ─── Pure-math layouts (no elkjs dependency) ─────────────────────────────────
+// ─── Pure-math layouts ───────────────────────────────────────────────────────
 
 function arrangeTiles(
   tiles: TileState[],
@@ -55,23 +53,26 @@ function arrangeTiles(
     })
   }
 
-  // Grid: uniform cells, ~1.6 aspect ratio
-  const uniformW = Math.max(...tiles.map(t => getArrangeWidth(t)))
-  const uniformH = Math.max(...tiles.map(t => t.height))
+  // Grid: keep each tile's natural size, pack into rows
   const cols = Math.max(1, Math.round(Math.sqrt(tiles.length * 1.6)))
+  // Use a uniform column width so tiles align, but keep individual heights
+  const colW = Math.max(...tiles.map(t => t.width))
 
-  return tiles.map((t, i) => {
-    const col = i % cols
-    const row = Math.floor(i / cols)
-    const reserve = t.type === 'terminal' || t.type === 'chat' ? SLIDEOUT_RESERVE_WIDTH : 0
-    return {
-      ...t,
-      x: col * (uniformW + GAP),
-      y: row * (uniformH + GAP),
-      width: uniformW - reserve,
-      height: uniformH,
+  const result: TileState[] = []
+  let y = 0
+  for (let row = 0; row * cols < tiles.length; row++) {
+    const rowTiles = tiles.slice(row * cols, (row + 1) * cols)
+    const rowH = Math.max(...rowTiles.map(t => t.height))
+    for (let col = 0; col < rowTiles.length; col++) {
+      result.push({
+        ...rowTiles[col],
+        x: col * (colW + GAP),
+        y,
+      })
     }
-  })
+    y += rowH + GAP
+  }
+  return result
 }
 
 // ─── Button ──────────────────────────────────────────────────────────────────
