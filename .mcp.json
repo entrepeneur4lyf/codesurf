@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "contex": {
+      "type": "http",
+      "url": "http://127.0.0.1:62768/mcp",
+      "token": "2d029950-04bc-4b18-8baf-9b88f23408d5"
+    }
+  }
+}

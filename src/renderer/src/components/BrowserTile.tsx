@@ -35,11 +35,17 @@ function createManagedWebview(tileId: string, src: string): Electron.WebviewTag 
 function getOrCreateManagedWebview(tileId: string, src: string): { webview: Electron.WebviewTag; reused: boolean } {
   const existing = webviewRegistry.get(tileId)
   if (existing) {
-    if (existing.disposeTimer !== null) {
-      clearTimeout(existing.disposeTimer)
-      existing.disposeTimer = null
+    if (existing.disposeTimer !== null) clearTimeout(existing.disposeTimer)
+    existing.disposeTimer = null
+
+    // Reusing a detached webview is unstable: Electron may have already torn
+    // down its guest instance, which shows up later as Invalid guestInstanceId.
+    if (existing.webview.isConnected || existing.webview.parentElement) {
+      return { webview: existing.webview, reused: true }
     }
-    return { webview: existing.webview, reused: true }
+
+    try { existing.webview.remove() } catch { /* ignore */ }
+    webviewRegistry.delete(tileId)
   }
 
   const webview = createManagedWebview(tileId, src)
@@ -60,6 +66,17 @@ function scheduleManagedWebviewDisposal(tileId: string, webview: Electron.Webvie
     try { webview.remove() } catch { /* ignore */ }
     webviewRegistry.delete(tileId)
   }, WEBVIEW_DISPOSE_DELAY_MS)
+}
+
+function safeLoadURL(webview: Electron.WebviewTag, url: string): void {
+  try {
+    void webview.loadURL(url).catch((err: { code?: string }) => {
+      if (err?.code === 'ERR_ABORTED') return
+      console.warn('[BrowserTile] loadURL failed:', err)
+    })
+  } catch (err) {
+    console.warn('[BrowserTile] loadURL threw:', err)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +382,9 @@ type BrowserMode = 'desktop' | 'mobile'
 // ---------------------------------------------------------------------------
 export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zIndex: _zIndex, isInteracting }: Props): React.JSX.Element {
   const theme = useTheme()
+  const browserBackground = theme.surface.panel
+  const browserToolbarBackground = theme.surface.titlebar
+  const browserBorder = theme.border.default
   const wvContainerRef = useRef<HTMLDivElement>(null)
   const wvRef = useRef<Electron.WebviewTag | null>(null)
   const wvReadyRef = useRef(false)
@@ -410,7 +430,7 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
         initialSrc.current = saved.currentUrl
         prevInitialUrl.current = saved.currentUrl
         if (wvRef.current) {
-          try { wvRef.current.loadURL(saved.currentUrl) } catch { /* ignore */ }
+          safeLoadURL(wvRef.current, saved.currentUrl)
         }
       }
       if (typeof saved.canGoBack === 'boolean') setCanGoBack(saved.canGoBack)
@@ -659,7 +679,7 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
       setAddressBar(next)
       setCurrentUrl(next)
       if (wvReadyRef.current && wvRef.current) {
-        wvRef.current.loadURL(next)
+        safeLoadURL(wvRef.current, next)
       }
     }
   }, [initialUrl])
@@ -669,8 +689,8 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
   useEffect(() => {
     const webview = wvRef.current
     if (!webview) return
-    webview.style.pointerEvents = (isToolbarHovered || isAddressFocused) ? 'none' : 'auto'
-  }, [isToolbarHovered, isAddressFocused])
+    webview.style.pointerEvents = (isToolbarHovered || isAddressFocused || isInteracting) ? 'none' : 'auto'
+  }, [isToolbarHovered, isAddressFocused, isInteracting])
 
   // ---- navigation actions -----------------------------------------------
   const navigate = useCallback((rawUrl: string) => {
@@ -678,7 +698,7 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
     setAddressBar(next)
     setCurrentUrl(next)
     setIsLoading(true)
-    if (wvReadyRef.current && wvRef.current) wvRef.current.loadURL(next)
+    if (wvReadyRef.current && wvRef.current) safeLoadURL(wvRef.current, next)
   }, [])
 
   const goBack = useCallback(() => {
@@ -892,12 +912,12 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
 
   // ---- render -----------------------------------------------------------
   return (
-    <div style={{ position: 'absolute', inset: 0, background: theme.browser.background }}>
+    <div style={{ position: 'absolute', inset: 0, background: browserBackground }}>
       {/* Toolbar — explicit top/height so compositor knows exact rect; zIndex above webview */}
       <div style={{
         position: 'absolute', top: 0, left: 0, right: 0, height: 34,
         display: 'flex', alignItems: 'center', padding: '0 6px',
-        background: theme.browser.toolbar, borderBottom: `1px solid ${theme.browser.border}`,
+        background: browserToolbarBackground, borderBottom: `1px solid ${browserBorder}`,
         zIndex: 2,
       }}>
         {toolbar}

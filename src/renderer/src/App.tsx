@@ -1463,7 +1463,8 @@ function App(): JSX.Element {
   }, [viewport, nextZIndex, saveCanvas, sidebarCollapsed, sidebarWidth])
 
   // ─── Render tile body ─────────────────────────────────────────────────────
-  const renderTileBody = (tile: TileState): React.ReactNode => {
+  const renderTileBody = (tile: TileState, options?: { isInteracting?: boolean }): React.ReactNode => {
+    const isTileInteracting = dragState.type !== null || Boolean(options?.isInteracting)
     switch (tile.type) {
       case 'terminal':
         return (
@@ -1484,7 +1485,7 @@ function App(): JSX.Element {
         return tile.filePath ? <LazyImageTile filePath={tile.filePath} /> : null
       case 'browser':
         return (
-          <LazyBrowserTile tileId={tile.id} workspaceId={workspace?.id ?? ''} initialUrl={tile.filePath ?? ''} width={tile.width} height={tile.height} zIndex={tile.zIndex} isInteracting={dragState.type !== null} />
+          <LazyBrowserTile tileId={tile.id} workspaceId={workspace?.id ?? ''} initialUrl={tile.filePath ?? ''} width={tile.width} height={tile.height} zIndex={tile.zIndex} isInteracting={isTileInteracting} />
         )
       case 'kanban':
         return (
@@ -1580,6 +1581,7 @@ function App(): JSX.Element {
         top: 0,
         left: 0,
         bottom: 0,
+        marginTop: 36,
         padding: '8px 0 8px 8px',
         flexShrink: 0,
         display: 'flex',
@@ -1684,9 +1686,7 @@ function App(): JSX.Element {
             height: 38,
             // @ts-ignore
             WebkitAppRegion: 'drag',
-            paddingLeft: panelLayout
-              ? (sidebarCollapsed ? 84 : openSidebarToolbarPadding)
-              : (sidebarCollapsed ? 90 : openSidebarToolbarPadding),
+            paddingLeft: 90,
             transition: 'padding-left 0.15s ease',
             position: 'relative',
             zIndex: 90,

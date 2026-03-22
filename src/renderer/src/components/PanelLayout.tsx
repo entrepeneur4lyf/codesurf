@@ -197,10 +197,11 @@ function DockOverlay({ zone }: { zone: DockZone | null }): JSX.Element | null {
 
 // ─── Resize Handle ────────────────────────────────────────────────────────────
 
-function ResizeHandle({ direction, onResize }: { direction: 'horizontal' | 'vertical'; onResize: (delta: number) => void }): JSX.Element {
+function ResizeHandle({ direction, onResize, onInteractionChange }: { direction: 'horizontal' | 'vertical'; onResize: (delta: number) => void; onInteractionChange?: (active: boolean) => void }): JSX.Element {
   const theme = useTheme()
   const dragging = useRef(false)
   const lastPos = useRef(0)
+  const isHorizontal = direction === 'horizontal'
   // Ref so the mousemove closure always calls the latest onResize,
   // even after re-renders invalidate the original closure.
   const onResizeRef = useRef(onResize)
@@ -209,6 +210,7 @@ function ResizeHandle({ direction, onResize }: { direction: 'horizontal' | 'vert
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     dragging.current = true
+    onInteractionChange?.(true)
     lastPos.current = direction === 'horizontal' ? e.clientX : e.clientY
     const onMove = (ev: MouseEvent) => {
       if (!dragging.current) return
@@ -218,6 +220,7 @@ function ResizeHandle({ direction, onResize }: { direction: 'horizontal' | 'vert
     }
     const onUp = () => {
       dragging.current = false
+      onInteractionChange?.(false)
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
       document.body.style.cursor = ''
@@ -227,12 +230,21 @@ function ResizeHandle({ direction, onResize }: { direction: 'horizontal' | 'vert
     document.addEventListener('mouseup', onUp)
     document.body.style.cursor = direction === 'horizontal' ? 'col-resize' : 'row-resize'
     document.body.style.userSelect = 'none'
-  }, [direction])
+  }, [direction, onInteractionChange])
 
   return (
     <div
       onMouseDown={onMouseDown}
-      style={{ flexShrink: 0, [direction === 'horizontal' ? 'width' : 'height']: 4, cursor: direction === 'horizontal' ? 'col-resize' : 'row-resize', background: 'transparent', position: 'relative', zIndex: 5 }}
+      style={{
+        flexShrink: 0,
+        [isHorizontal ? 'width' : 'height']: 6,
+        cursor: isHorizontal ? 'col-resize' : 'row-resize',
+        background: 'transparent',
+        position: 'relative',
+        zIndex: 5,
+        [isHorizontal ? 'marginLeft' : 'marginTop']: -3,
+        [isHorizontal ? 'marginRight' : 'marginBottom']: -3,
+      }}
       onMouseEnter={e => (e.currentTarget.style.background = theme.accent.soft)}
       onMouseLeave={e => { if (!dragging.current) e.currentTarget.style.background = 'transparent' }}
     />
@@ -447,7 +459,8 @@ function EmptyPanel({ onAddTile }: { onAddTile: (type: string) => void }): JSX.E
 interface LeafPanelProps {
   leaf: PanelLeaf
   getTileLabel: (tileId: string) => string
-  renderTile: (tileId: string) => React.ReactNode
+  renderTile: (tileId: string, options?: { isInteracting?: boolean }) => React.ReactNode
+  isInteracting: boolean
   onActivate: (panelId: string, tileId: string) => void
   onCloseTab: (tileId: string) => void
   onTabMouseDown: (tileId: string, panelId: string, label: string, e: React.MouseEvent) => void
@@ -461,7 +474,7 @@ interface LeafPanelProps {
   onCloseToRight: (panelId: string, tileId: string) => void
 }
 
-function LeafPanel({ leaf, getTileLabel, renderTile, onActivate, onCloseTab, onTabMouseDown, onPanelFocus, onAddTile, dragTarget, onExit, getTileType, onSplitNew, onCloseOthers, onCloseToRight }: LeafPanelProps): JSX.Element {
+function LeafPanel({ leaf, getTileLabel, renderTile, isInteracting, onActivate, onCloseTab, onTabMouseDown, onPanelFocus, onAddTile, dragTarget, onExit, getTileType, onSplitNew, onCloseOthers, onCloseToRight }: LeafPanelProps): JSX.Element {
   const panelRef = useRef<HTMLDivElement>(null)
   const tabs = leaf.tabs.map(id => ({ id, label: getTileLabel(id) }))
   const isEmpty = tabs.length === 0
@@ -508,7 +521,7 @@ function LeafPanel({ leaf, getTileLabel, renderTile, onActivate, onCloseTab, onT
                 pointerEvents: tileId === leaf.activeTab ? 'auto' : 'none',
               }}
             >
-              {renderTile(tileId)}
+              {renderTile(tileId, { isInteracting })}
             </div>
           ))
         )}
@@ -523,7 +536,7 @@ function LeafPanel({ leaf, getTileLabel, renderTile, onActivate, onCloseTab, onT
 export interface PanelLayoutProps {
   root: PanelNode
   getTileLabel: (tileId: string) => string
-  renderTile: (tileId: string) => React.ReactNode
+  renderTile: (tileId: string, options?: { isInteracting?: boolean }) => React.ReactNode
   onLayoutChange: (newRoot: PanelNode) => void
   onCloseTab: (tileId: string) => void
   onAddTile: (type: string) => void
@@ -540,6 +553,7 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
   const theme = useTheme()
   const [dragTarget, setDragTarget] = useState<{ panelId: string; zone: DockZone } | null>(null)
   const [ghost, setGhost] = useState<{ x: number; y: number; label: string } | null>(null)
+  const [panelInteractionActive, setPanelInteractionActive] = useState(false)
   const handleDockRef = useRef<(tileId: string, fromPanelId: string, targetPanelId: string, zone: DockZone) => void>(() => {})
 
   const handleActivate = useCallback((panelId: string, tileId: string) => {
@@ -571,6 +585,7 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
       const dy = ev.clientY - startY
       if (!dragging && Math.sqrt(dx * dx + dy * dy) > 5) {
         dragging = true
+        setPanelInteractionActive(true)
         document.body.style.cursor = 'grabbing'
         document.body.style.userSelect = 'none'
       }
@@ -593,6 +608,7 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
       document.body.style.userSelect = ''
       setGhost(null)
       setDragTarget(null)
+      setPanelInteractionActive(false)
 
       if (!dragging) return
 
@@ -641,6 +657,7 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
           leaf={node}
           getTileLabel={getTileLabel}
           renderTile={renderTile}
+          isInteracting={panelInteractionActive}
           onActivate={handleActivate}
           onCloseTab={onCloseTab}
           onTabMouseDown={handleTabMouseDown}
@@ -676,6 +693,7 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
             {i < node.children.length - 1 && (
               <ResizeHandle
                 direction={node.direction}
+                onInteractionChange={setPanelInteractionActive}
                 onResize={delta => {
                   const el = document.querySelector(`[data-split-id="${node.id}"]`) as HTMLElement
                   const totalPx = el ? (node.direction === 'horizontal' ? el.clientWidth : el.clientHeight) : 800

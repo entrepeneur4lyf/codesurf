@@ -50,8 +50,8 @@ function ThinkingIcon({ level }: { level: string }): JSX.Element {
   const bars = THINKING_LEVELS[level] ?? 3
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-      <Brain size={12} />
-      <svg width="10" height="12" viewBox="0 0 10 12">
+      <Brain size={14} />
+      <svg width="12" height="14" viewBox="0 0 10 12">
         {[0, 1, 2, 3, 4].map(i => (
           <rect
             key={i}
@@ -117,6 +117,16 @@ const FONT_SANS = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Rob
 const FONT_MONO = "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace"
 const FONT_SIZE_DEFAULT = 13
 const MONO_SIZE_DEFAULT = 13
+const DARK_COMPOSER_BACKGROUND = '#232327'
+const DARK_COMPOSER_BORDER = '#383840'
+const DARK_DROPDOWN_BACKGROUND = '#17171b'
+const DARK_DROPDOWN_BORDER = '#2f2f37'
+const DARK_DROPDOWN_ACTIVE_BACKGROUND = '#26262c'
+const DARK_DROPDOWN_HOVER_BACKGROUND = '#202026'
+const TOOLBAR_ICON_SIZE = 16
+const TOOLBAR_PILL_ICON_SIZE = 14
+const TOOLBAR_TEXT_SIZE = 13
+const TOOLBAR_CHEVRON_SIZE = 12
 
 // Font context so sub-components can read settings-derived fonts without prop drilling
 const FontCtx = React.createContext({ sans: FONT_SANS, mono: FONT_MONO, size: FONT_SIZE_DEFAULT, monoSize: MONO_SIZE_DEFAULT })
@@ -192,9 +202,9 @@ const THINKING_OPTIONS: ThinkingOption[] = [
 ]
 
 const PROVIDER_ICON: Record<Provider, React.ReactNode> = {
-  claude: <ClaudeIcon size={12} />,
-  codex: <CodexIcon size={12} />,
-  opencode: <Bot size={12} />,
+  claude: <ClaudeIcon size={TOOLBAR_PILL_ICON_SIZE} />,
+  codex: <CodexIcon size={TOOLBAR_PILL_ICON_SIZE} />,
+  opencode: <Bot size={TOOLBAR_PILL_ICON_SIZE} />,
 }
 
 const PROVIDER_LABELS: Record<Provider, string> = {
@@ -280,6 +290,12 @@ function WorkingDots({ color, size = 5 }: { color?: string; size?: number }): JS
 
 export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, width: _width, height: _height, settings }: Props): JSX.Element {
   const theme = useTheme()
+  const composerBackground = theme.mode === 'light' ? theme.chat.input : DARK_COMPOSER_BACKGROUND
+  const composerBorder = theme.mode === 'light' ? theme.chat.inputBorder : DARK_COMPOSER_BORDER
+  const dropdownBackground = theme.mode === 'light' ? theme.surface.panel : DARK_DROPDOWN_BACKGROUND
+  const dropdownBorder = theme.mode === 'light' ? theme.border.default : DARK_DROPDOWN_BORDER
+  const dropdownActiveBackground = theme.mode === 'light' ? theme.surface.panelElevated : DARK_DROPDOWN_ACTIVE_BACKGROUND
+  const dropdownHoverBackground = theme.mode === 'light' ? theme.surface.hover : DARK_DROPDOWN_HOVER_BACKGROUND
   const fontSans = settings?.primaryFont?.family ?? FONT_SANS
   const fontMono = settings?.monoFont?.family ?? FONT_MONO
   const fontSize = settings?.primaryFont?.size ?? FONT_SIZE_DEFAULT
@@ -1003,8 +1019,8 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       {/* Input bar */}
       <div style={{
         flexShrink: 0, margin: '0 10px 10px 10px',
-        border: isDropTarget ? `1px solid ${theme.accent.base}` : `1px solid ${theme.chat.inputBorder}`, borderRadius: 14,
-        background: isDropTarget ? theme.surface.accentSoft : theme.chat.inputBackground,
+        border: isDropTarget ? `1px solid ${theme.accent.base}` : `1px solid ${composerBorder}`, borderRadius: 14,
+        background: isDropTarget ? theme.surface.accentSoft : composerBackground,
         position: 'relative',
         boxShadow: isDropTarget ? `0 0 0 1px ${theme.border.accent}, 0 0 22px ${theme.accent.soft}` : 'none',
         transition: 'border-color 120ms ease, background 120ms ease, box-shadow 120ms ease',
@@ -1016,7 +1032,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
             style={{
               position: 'absolute', bottom: '100%', left: 0, right: 0,
               marginBottom: 4,
-              background: theme.chat.dropdownBackground, border: `1px solid ${theme.chat.dropdownBorder}`,
+              background: dropdownBackground, border: `1px solid ${dropdownBorder}`,
               borderRadius: 8, padding: 4,
               boxShadow: theme.shadow.panel,
               zIndex: 9999,
@@ -1039,7 +1055,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                 style={{
                   padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', gap: 8,
-                  background: i === acIndex ? theme.surface.hover : 'transparent',
+                  background: i === acIndex ? dropdownActiveBackground : 'transparent',
                   transition: 'background 0.1s',
                 }}
               >
@@ -1089,7 +1105,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                   maxWidth: item.kind === 'image' ? 140 : 180,
                   height: 54,
                   borderRadius: 12,
-                  border: `1px solid ${theme.chat.dropdownBorder}`,
+                  border: `1px solid ${dropdownBorder}`,
                   background: theme.surface.panelElevated,
                   overflow: 'hidden',
                   position: 'relative',
@@ -1158,7 +1174,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
         {/* Toolbar */}
         <div style={{
           display: 'flex', alignItems: 'center',
-          padding: '4px 8px 8px 8px', gap: 1,
+          padding: '4px 8px 8px 8px', gap: 2,
         }}>
           {/* Safety / Mode — icon only, label in dropdown */}
           <div ref={modeMenuRef} style={{ position: 'relative' }}>
@@ -1167,7 +1183,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
               return (
                 <>
                   <ToolbarBtn
-                    icon={<ShieldCheck size={14} />}
+                    icon={<ShieldCheck size={TOOLBAR_ICON_SIZE} />}
                     tooltip={`Permissions: ${currentMode.label}`}
                     color={currentMode.color}
                     onClick={() => toggleMenu('mode')}
@@ -1266,7 +1282,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
 
           {/* Agent Mode */}
           <ToolbarBtn
-            icon={<Bot size={14} />}
+            icon={<Bot size={TOOLBAR_ICON_SIZE} />}
             tooltip={agentMode ? 'Agent mode (on)' : 'Agent mode (off)'}
             color={agentMode ? theme.chat.text : undefined}
             onClick={() => setAgentMode(p => !p)}
@@ -1275,7 +1291,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           {/* MCP — server list with toggles */}
           <div ref={mcpMenuRef} style={{ position: 'relative' }}>
             <ToolbarBtn
-              icon={<MCPIcon size={14} />}
+              icon={<MCPIcon size={TOOLBAR_ICON_SIZE} />}
               tooltip={`MCP Tools: ${mcpEnabled ? 'On' : 'Off'}`}
               color={mcpEnabled ? theme.chat.text : undefined}
               onClick={() => toggleMenu('mcp')}
@@ -1291,7 +1307,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                 />
                 {mcpEnabled && mcpServers.length > 0 && (
                   <>
-                    <div style={{ height: 1, background: theme.chat.dropdownBorder, margin: '4px 0' }} />
+                    <div style={{ height: 1, background: dropdownBorder, margin: '4px 0' }} />
                     {mcpServers.map(s => {
                       const enabled = !disabledServers.has(s.name)
                       return (
@@ -1591,7 +1607,7 @@ function ToolbarBtn({ icon, tooltip, color, onClick }: {
       style={{
         background: h ? theme.surface.hover : 'none',
         border: 'none', cursor: 'pointer',
-        padding: '4px 6px', borderRadius: 6,
+        padding: '5px 7px', borderRadius: 6,
         color: color ?? (h ? theme.chat.text : theme.chat.muted),
         transition: 'color 0.1s, background 0.1s',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1617,8 +1633,8 @@ function ToolbarPill({ prefix, label, color, active, onClick }: {
         display: 'flex', alignItems: 'center', gap: 4,
         background: active ? theme.surface.hover : (h ? theme.surface.panelMuted : 'transparent'),
         border: 'none',
-        borderRadius: 6, padding: '3px 8px', cursor: 'pointer',
-        fontSize: 11, fontFamily: fonts.sans,
+        borderRadius: 6, padding: '4px 9px', cursor: 'pointer',
+        fontSize: TOOLBAR_TEXT_SIZE, fontFamily: fonts.sans,
         color: color ?? (h ? theme.chat.text : theme.chat.textSecondary),
         transition: 'color 0.1s, background 0.1s',
         whiteSpace: 'nowrap',
@@ -1630,18 +1646,20 @@ function ToolbarPill({ prefix, label, color, active, onClick }: {
     >
       {prefix && <span style={{ display: 'flex', opacity: 0.8 }}>{prefix}</span>}
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
-      <ChevronDown size={10} style={{ marginLeft: 1, opacity: 0.4, flexShrink: 0 }} />
+      <ChevronDown size={TOOLBAR_CHEVRON_SIZE} style={{ marginLeft: 1, opacity: 0.4, flexShrink: 0 }} />
     </button>
   )
 }
 
 function Dropdown({ children }: { children: React.ReactNode }): JSX.Element {
   const theme = useTheme()
+  const dropdownBackground = theme.mode === 'light' ? theme.surface.panel : DARK_DROPDOWN_BACKGROUND
+  const dropdownBorder = theme.mode === 'light' ? theme.border.default : DARK_DROPDOWN_BORDER
   return (
     <div style={{
       position: 'absolute', bottom: '100%', left: 0,
       marginBottom: 4, minWidth: 160,
-      background: theme.chat.dropdownBackground, border: `1px solid ${theme.chat.dropdownBorder}`,
+      background: dropdownBackground, border: `1px solid ${dropdownBorder}`,
       borderRadius: 8, padding: 4,
       boxShadow: theme.shadow.panel,
       zIndex: 9999,
@@ -1657,13 +1675,15 @@ function DropdownItem({ icon, label, sublabel, active, onClick }: {
   const fonts = useFonts()
   const theme = useTheme()
   const [h, setH] = useState(false)
+  const dropdownActiveBackground = theme.mode === 'light' ? theme.surface.panelElevated : DARK_DROPDOWN_ACTIVE_BACKGROUND
+  const dropdownHoverBackground = theme.mode === 'light' ? theme.surface.hover : DARK_DROPDOWN_HOVER_BACKGROUND
   return (
     <div
       onClick={onClick}
       style={{
         padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
         display: 'flex', alignItems: 'center', gap: 8,
-        background: active ? theme.surface.selection : (h ? theme.surface.hover : 'transparent'),
+        background: active ? dropdownActiveBackground : (h ? dropdownHoverBackground : 'transparent'),
         transition: 'background 0.1s',
       }}
       onMouseEnter={() => setH(true)}
