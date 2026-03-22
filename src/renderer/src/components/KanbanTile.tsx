@@ -4,6 +4,7 @@ import { buildAgentBrief } from '../utils/agentBrief'
 import { ActivityFeed, ActivityEvent } from './ActivityFeed'
 import type { ActivityRecord } from '../../../shared/types'
 import { useTheme } from '../ThemeContext'
+import { useAppFonts } from '../FontContext'
 
 interface KanbanColumn { id: string; title: string }
 
@@ -21,7 +22,16 @@ interface Props {
   onFocusTile?: (tileId: string) => void
 }
 
-const COLORS = ['#0d2137','#0d2a1a','#2a0d1a','#1a1a0d','#1a0d2a','#0d1a2a','#2a1a0d','#0d2a2a']
+const COLORS = [
+  'rgba(88, 166, 255, 0.16)',
+  'rgba(52, 211, 153, 0.16)',
+  'rgba(192, 132, 252, 0.16)',
+  'rgba(251, 191, 36, 0.16)',
+  'rgba(244, 114, 182, 0.16)',
+  'rgba(96, 165, 250, 0.14)',
+  'rgba(45, 212, 191, 0.15)',
+  'rgba(248, 113, 113, 0.15)',
+]
 const ACTIVE_TTL = 4000
 
 const TERMINAL_POLL_MS = 450
@@ -80,6 +90,7 @@ function AgentOverview({ workspaceId, onFocusTile }: {
   onFocusTile?: (tileId: string) => void
 }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const [groups, setGroups] = useState<Record<string, ActivityRecord[]>>({})
   const [loading, setLoading] = useState(true)
   const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -107,7 +118,7 @@ function AgentOverview({ workspaceId, onFocusTile }: {
   })
 
   if (loading) {
-    return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.disabled, fontSize: 12 }}>Loading activity...</div>
+    return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.disabled, fontSize: fonts.secondarySize }}>Loading activity...</div>
   }
 
   if (agentKeys.length === 0) {
@@ -117,7 +128,7 @@ function AgentOverview({ workspaceId, onFocusTile }: {
           <rect x="3" y="3" width="18" height="18" rx="4" />
           <path d="M9 12h6M12 9v6" strokeLinecap="round" />
         </svg>
-        <span style={{ fontSize: 12 }}>No activity yet</span>
+        <span style={{ fontSize: fonts.secondarySize }}>No activity yet</span>
         <span style={{ fontSize: 10, color: theme.text.disabled, maxWidth: 200, textAlign: 'center', lineHeight: 1.4 }}>
           Activity from terminals and chats will appear here automatically, grouped by agent
         </span>
@@ -164,7 +175,7 @@ function AgentOverview({ workspaceId, onFocusTile }: {
                 }} />
               )}
               <span style={{
-                flex: 1, fontSize: 11, fontWeight: 700,
+                flex: 1, fontSize: fonts.secondarySize, fontWeight: 700,
                 color: isAgent ? theme.accent.base : theme.text.muted,
                 textTransform: 'uppercase', letterSpacing: 0.5,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -197,6 +208,7 @@ function AgentOverview({ workspaceId, onFocusTile }: {
 
 function StatusPill({ count, color }: { count: number; color: string }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   return (
     <span style={{
       fontSize: 9, fontWeight: 700, color,
@@ -214,6 +226,7 @@ function ActivityRecordRow({ record, onFocusTile }: {
   onFocusTile?: (tileId: string) => void
 }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const [hovered, setHovered] = useState(false)
   const statusColor = getStatusColor(theme, record.status)
   const typeIcon = TYPE_ICONS[record.type] ?? '?'
@@ -253,7 +266,7 @@ function ActivityRecordRow({ record, onFocusTile }: {
       {/* Content */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
-          fontSize: 11, color: theme.text.secondary,
+          fontSize: fonts.secondarySize, color: theme.text.secondary,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>
           {record.title}
@@ -280,6 +293,7 @@ function ActivityRecordRow({ record, onFocusTile }: {
 
 export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, onFocusTile }: Props): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const [mode, setMode] = useState<KanbanMode>('board')
   const [columns, setColumns] = useState<KanbanColumn[]>(DEFAULT_COLUMNS)
   const [cards, setCards] = useState<KanbanCardData[]>([])
@@ -288,6 +302,7 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [addingTo, setAddingTo] = useState<string | null>(null)
   const [addTitle, setAddTitle] = useState('')
+  const [addInstructions, setAddInstructions] = useState('')
   const [renamingCol, setRenamingCol] = useState<string | null>(null)
   const [renameVal, setRenameVal] = useState('')
   const [activeTerminals, setActiveTerminals] = useState<Record<string, number>>({})
@@ -416,6 +431,8 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
   }
 
   const handleKanbanEvent = useCallback((event: string, data: any) => {
+    if (data?.boardTileId && data.boardTileId !== tileId) return
+
     if (event === 'card_complete') {
       logActivity('complete', data.cardId, data.summary ?? 'Task complete')
       setCards(prev => {
@@ -451,13 +468,46 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
         const lastCol = columns[columns.length - 1]
         const note = { id: `c-${Date.now()}`, text: `Error: ${data.reason}`, ts: Date.now() }
         return prev.map(c => c.id === data.cardId
-          ? { ...c, columnId: lastCol.id, color: '#2a0d0d', comments: [...c.comments, note] }
+          ? { ...c, columnId: lastCol.id, color: theme.mode === 'light' ? 'rgba(239,68,68,0.18)' : 'rgba(248,113,113,0.15)', comments: [...c.comments, note] }
           : c)
       })
     }
 
     if (event === 'canvas_event') {
       logActivity('custom', data.cardId, `${data.event}: ${JSON.stringify(data.data ?? {})}`)
+    }
+
+    if (event === 'kanban_card_created') {
+      setCards(prev => prev.some(c => c.id === data.card?.id) ? prev : [...prev, data.card])
+    }
+
+    if (event === 'kanban_card_updated') {
+      setCards(prev => prev.map(c => c.id === data.cardId ? { ...c, ...(data.patch ?? {}) } : c))
+    }
+
+    if (event === 'kanban_card_moved') {
+      setCards(prev => prev.map(c => c.id === data.cardId ? { ...c, columnId: data.columnId } : c))
+    }
+
+    if (event === 'kanban_card_paused') {
+      setCards(prev => prev.map(c => c.id === data.cardId ? { ...c, launched: false, columnId: c.columnId === 'running' ? 'backlog' : c.columnId } : c))
+    }
+
+    if (event === 'kanban_card_deleted') {
+      setCards(prev => prev.filter(c => c.id !== data.cardId))
+    }
+
+    if (event === 'kanban_column_created') {
+      setColumns(prev => prev.some(c => c.id === data.column?.id) ? prev : [...prev, data.column])
+    }
+
+    if (event === 'kanban_column_renamed') {
+      setColumns(prev => prev.map(c => c.id === data.columnId ? { ...c, title: data.title } : c))
+    }
+
+    if (event === 'kanban_column_deleted') {
+      setColumns(prev => prev.filter(c => c.id !== data.columnId))
+      setCards(prev => prev.filter(c => c.columnId !== data.columnId))
     }
 
     if (event === 'input_requested') {
@@ -475,7 +525,7 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
         answered: false
       }])
     }
-  }, [columns, logActivity, cards])
+  }, [columns, logActivity, cards, tileId])
 
   // Subscribe to SSE stream from MCP server
   useEffect(() => {
@@ -504,6 +554,98 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
     return cleanup
   }, [handleKanbanEvent])
 
+  // Listen for peer MCP commands from connected chat/tiles
+  useEffect(() => {
+    if (!tileId || !window.electron?.bus) return
+    const channel = `tile:${tileId}`
+    const subscriberId = `kanban:${tileId}:mcp`
+    const unsubscribe = window.electron.bus.subscribe(channel, subscriberId, (evt: any) => {
+      if (!evt?.type?.startsWith('mcp_') && !String(evt.source || '').startsWith('mcp:')) return
+      const payload = (evt.payload as Record<string, unknown>) || {}
+      const command = typeof payload.command === 'string' ? payload.command : ''
+      if (!command) return
+
+      if (command === 'kanban_set_status' && typeof payload.content === 'string') {
+        logActivity('update', String(payload.card_id ?? tileId), payload.content)
+        return
+      }
+
+      if (command === 'kanban_create_card' && typeof payload.title === 'string') {
+        const now = Date.now()
+        const fallbackColumn = columns[0]?.id ?? 'backlog'
+        setCards(prev => [...prev, {
+          id: `card-${tileId}-${now}`,
+          title: String(payload.title),
+          description: typeof payload.description === 'string' ? payload.description : '',
+          instructions: typeof payload.instructions === 'string' ? payload.instructions : '',
+          agent: typeof payload.agent === 'string' ? payload.agent : 'claude',
+          model: typeof payload.model === 'string' ? payload.model : undefined,
+          tools: Array.isArray(payload.tools) ? payload.tools.filter((v): v is string => typeof v === 'string') : ['all'],
+          skillsAndCommands: [],
+          fileRefs: Array.isArray(payload.file_refs) ? payload.file_refs.filter((v): v is string => typeof v === 'string') : [],
+          cardRefs: Array.isArray(payload.card_refs) ? payload.card_refs.filter((v): v is string => typeof v === 'string') : [],
+          mcpServers: [],
+          hooks: [],
+          columnId: typeof payload.column_id === 'string' ? payload.column_id : fallbackColumn,
+          color: typeof payload.color === 'string' ? payload.color : COLORS[prev.length % COLORS.length],
+          launched: false,
+          comments: [],
+          attachments: [],
+        }])
+        return
+      }
+
+      if (command === 'kanban_update_card' && typeof payload.card_id === 'string') {
+        const patch: Partial<KanbanCardData> = {}
+        if (typeof payload.title === 'string') patch.title = payload.title
+        if (typeof payload.description === 'string') patch.description = payload.description
+        if (typeof payload.instructions === 'string') patch.instructions = payload.instructions
+        if (typeof payload.column_id === 'string') patch.columnId = payload.column_id
+        if (typeof payload.agent === 'string') patch.agent = payload.agent
+        if (typeof payload.model === 'string') patch.model = payload.model
+        if (typeof payload.color === 'string') patch.color = payload.color
+        if (typeof payload.launched === 'boolean') patch.launched = payload.launched
+        if (Array.isArray(payload.tools)) patch.tools = payload.tools.filter((v): v is string => typeof v === 'string')
+        if (Array.isArray(payload.file_refs)) patch.fileRefs = payload.file_refs.filter((v): v is string => typeof v === 'string')
+        if (Array.isArray(payload.card_refs)) patch.cardRefs = payload.card_refs.filter((v): v is string => typeof v === 'string')
+        setCards(prev => prev.map(c => c.id === payload.card_id ? { ...c, ...patch } : c))
+        return
+      }
+
+      if (command === 'kanban_move_card' && typeof payload.card_id === 'string' && typeof payload.column_id === 'string') {
+        setCards(prev => prev.map(c => c.id === payload.card_id ? { ...c, columnId: payload.column_id } : c))
+        return
+      }
+
+      if (command === 'kanban_pause_card' && typeof payload.card_id === 'string') {
+        setCards(prev => prev.map(c => c.id === payload.card_id ? { ...c, launched: false, columnId: c.columnId === 'running' ? 'backlog' : c.columnId } : c))
+        return
+      }
+
+      if (command === 'kanban_delete_card' && typeof payload.card_id === 'string') {
+        setCards(prev => prev.filter(c => c.id !== payload.card_id))
+        return
+      }
+
+      if (command === 'kanban_create_column' && typeof payload.title === 'string') {
+        const column = { id: typeof payload.column_id === 'string' ? payload.column_id : `col-${Date.now()}`, title: payload.title }
+        setColumns(prev => prev.some(c => c.id === column.id) ? prev : [...prev, column])
+        return
+      }
+
+      if (command === 'kanban_rename_column' && typeof payload.column_id === 'string' && typeof payload.title === 'string') {
+        setColumns(prev => prev.map(c => c.id === payload.column_id ? { ...c, title: payload.title as string } : c))
+        return
+      }
+
+      if (command === 'kanban_delete_column' && typeof payload.column_id === 'string') {
+        setColumns(prev => prev.filter(c => c.id !== payload.column_id))
+        setCards(prev => prev.filter(c => c.columnId !== payload.column_id))
+      }
+    })
+    return () => unsubscribe?.()
+  }, [tileId, columns, logActivity])
+
   // Streaming handled by pty/xterm — no separate stream listener needed
 
   const isActive = (id?: string) => !!id && Date.now() - (activeTerminals[id] ?? 0) < ACTIVE_TTL
@@ -512,18 +654,28 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
     if (!addTitle.trim()) return
     setCards(prev => [...prev, {
       id: `card-${tileId}-${Date.now()}`,
-      title: addTitle.trim(), description: '', instructions: '',
-      agent: 'claude', tools: [], skillsAndCommands: [],
+      title: addTitle.trim(), description: '', instructions: addInstructions.trim(),
+      agent: 'claude', tools: ['all'], skillsAndCommands: [],
       fileRefs: [], cardRefs: [], mcpServers: [], hooks: [],
       columnId: colId, color: COLORS[prev.length % COLORS.length],
       launched: false, comments: [], attachments: []
     }])
-    setAddTitle(''); setAddingTo(null)
-  }, [tileId, addTitle])
+    setAddTitle(''); setAddInstructions(''); setAddingTo(null)
+  }, [tileId, addTitle, addInstructions])
 
   const launchCard = useCallback(async (cardId: string) => {
     const card = cards.find(c => c.id === cardId)
     if (!card || card.launched) return
+
+    const unresolvedDeps = card.cardRefs
+      .map(ref => cards.find(c => c.id === ref || c.title === ref))
+      .filter((c): c is KanbanCardData => !!c)
+      .filter(c => c.columnId !== 'done')
+
+    if (unresolvedDeps.length > 0) {
+      window.alert(`This card can only start after: ${unresolvedDeps.map(c => c.title).join(', ')}`)
+      return
+    }
 
     // Write the agent brief to disk
     const briefMd = buildAgentBrief(card, cards)
@@ -539,6 +691,20 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
       c.id === cardId ? { ...c, launched: true, columnId: targetCol.id, briefPath } : c
     ))
   }, [cards, columns])
+
+  const pauseCard = useCallback((cardId: string) => {
+    setCards(prev => prev.map(c =>
+      c.id === cardId
+        ? { ...c, launched: false, columnId: c.columnId === 'running' ? 'backlog' : c.columnId }
+        : c,
+    ))
+  }, [])
+
+  const saveCard = useCallback(async () => {
+    if (!workspaceId) return
+    const state: KanbanSavedState = { columns, cards }
+    await window.electron?.kanban?.save(workspaceId, tileId, state)
+  }, [workspaceId, tileId, columns, cards])
 
   const updateCard = useCallback((id: string, patch: Partial<KanbanCardData>) => {
     setCards(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c))
@@ -571,9 +737,9 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
       setCards(prev => [...prev, {
         id: cardId,
         title: groupLabel || 'Group',
-        description: `Group with ${tileIds.length} tile${tileIds.length !== 1 ? 's' : ''} (${typeSummary})`,
+        description: `Group with ${tileIds.length} block${tileIds.length !== 1 ? 's' : ''} (${typeSummary})`,
         instructions: '', agent: 'claude',
-        tools: [], skillsAndCommands: [], fileRefs: [], cardRefs: [],
+        tools: ['all'], skillsAndCommands: [], fileRefs: [], cardRefs: [],
         mcpServers: [], hooks: [],
         columnId: colId, color: COLORS[prev.length % COLORS.length],
         linkedGroupId,
@@ -596,7 +762,7 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
         id: tileCardId,
         title: linkedTileLabel || linkedTileType,
         description: '', instructions: '', agent: 'claude',
-        tools: [], skillsAndCommands: [], fileRefs: [], cardRefs: [],
+        tools: ['all'], skillsAndCommands: [], fileRefs: [], cardRefs: [],
         mcpServers: [], hooks: [],
         columnId: colId, color: COLORS[prev.length % COLORS.length],
         linkedTileId, linkedTileType,
@@ -616,7 +782,7 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
         id: `card-${tileId}-${Date.now()}`,
         title: name, description: filePath,
         instructions: '', agent: 'claude',
-        tools: [], skillsAndCommands: [], fileRefs: [filePath], cardRefs: [],
+        tools: ['all'], skillsAndCommands: [], fileRefs: [filePath], cardRefs: [],
         mcpServers: [], hooks: [],
         columnId: colId, color: COLORS[prev.length % COLORS.length],
         launched: false, comments: [],
@@ -626,78 +792,16 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
   }, [dragging, tileId])
 
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: theme.surface.panelMuted, overflow: 'hidden' }}>
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: theme.surface.panelMuted, overflow: 'hidden', position: 'relative' }}>
 
-      {/* Header */}
-      <div style={{ height: HEADER, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', borderBottom: `1px solid ${theme.border.subtle}` }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Mode toggle */}
-          <div style={{ display: 'flex', gap: 4 }}>
-            {(['board', 'overview'] as const).map(m => {
-              const isActive = mode === m
-              return (
-                <button
-                  key={m}
-                  onClick={() => setMode(m)}
-                  style={{
-                    height: 28,
-                    fontSize: 11,
-                    fontWeight: isActive ? 700 : 500,
-                    padding: '0 11px',
-                    border: `1px solid ${isActive ? theme.border.default : 'transparent'}`,
-                    borderRadius: 7,
-                    cursor: 'pointer',
-                    background: isActive ? theme.surface.selection : 'transparent',
-                    color: isActive ? theme.accent.base : theme.text.muted,
-                    fontFamily: 'inherit',
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.3,
-                    transition: 'color 0.15s, background 0.15s, border-color 0.15s',
-                  }}
-                  onMouseEnter={e => {
-                    if (!isActive) {
-                      e.currentTarget.style.background = theme.surface.hover
-                      e.currentTarget.style.color = theme.text.secondary
-                      e.currentTarget.style.borderColor = theme.border.default
-                    }
-                  }}
-                  onMouseLeave={e => {
-                    if (!isActive) {
-                      e.currentTarget.style.background = 'transparent'
-                      e.currentTarget.style.color = theme.text.muted
-                      e.currentTarget.style.borderColor = 'transparent'
-                    }
-                  }}
-                >
-                  {m === 'overview' ? 'Activity' : 'Board'}
-                </button>
-              )
-            })}
-          </div>
-
-          {mode === 'board' && (
-            <>
-              <span style={{ fontSize: 10, color: theme.text.disabled, background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`, borderRadius: 10, padding: '1px 7px' }}>
-                {cards.length} card{cards.length !== 1 ? 's' : ''}
-              </span>
-              {Object.keys(activeTerminals).filter(id => isActive(id)).length > 0 && (
-                <span style={{ fontSize: 10, color: theme.status.success, display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.status.success, boxShadow: `0 0 6px ${theme.status.success}`, display: 'inline-block' }} />
-                  {Object.keys(activeTerminals).filter(id => isActive(id)).length} active
-                </span>
-              )}
-            </>
-          )}
-        </div>
-        {mode === 'board' && (
-          <button
-            onClick={() => setColumns(prev => [...prev, { id: `col-${Date.now()}`, title: 'New List' }])}
-            style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, background: theme.surface.panelElevated, color: theme.text.muted, border: `1px solid ${theme.border.default}`, cursor: 'pointer', fontFamily: 'inherit' }}
-            onMouseEnter={e => { e.currentTarget.style.color = theme.accent.base; e.currentTarget.style.background = theme.surface.hover }}
-            onMouseLeave={e => { e.currentTarget.style.color = theme.text.muted; e.currentTarget.style.background = theme.surface.panelElevated }}
-          >+ List</button>
-        )}
-      </div>
+      {mode === 'board' && (
+        <button
+          onClick={() => setColumns(prev => [...prev, { id: `col-${Date.now()}`, title: 'New List' }])}
+          style={{ position: 'absolute', top: 8, right: 12, zIndex: 10, fontSize: fonts.secondarySize, padding: '3px 10px', borderRadius: 5, background: theme.surface.panelElevated, color: theme.text.primary, border: `1px solid ${theme.border.default}`, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
+          onMouseEnter={e => { e.currentTarget.style.opacity = '0.75' }}
+          onMouseLeave={e => { e.currentTarget.style.opacity = '1' }}
+        >+ List</button>
+      )}
 
       {/* Overview mode */}
       {mode === 'overview' && (
@@ -729,7 +833,7 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
                   onMouseEnter={e => { e.currentTarget.style.borderColor = `${theme.accent.base}66` }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = isLive ? `${theme.status.success}55` : theme.border.default }}
                 >
-                  <span style={{ fontSize: 11, color: theme.accent.base, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.title}</span>
+                  <span style={{ fontSize: fonts.secondarySize, color: theme.accent.base, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.title}</span>
                   <span style={{ fontSize: 10, color: hasAny ? theme.text.muted : theme.text.disabled, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ width: 6, height: 6, borderRadius: '50%', background: isLive ? theme.status.success : theme.border.default, boxShadow: isLive ? `0 0 6px ${theme.status.success}` : 'none', display: 'inline-block' }} />
                     {hasAny ? ev.message : 'No terminal output yet'}
@@ -765,24 +869,32 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
               onDrop={e => { e.stopPropagation(); dropOnCol(col.id, e) }}
             >
               {/* Column header */}
-              <div style={{ padding: '8px 10px 4px', display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+              <div style={{ padding: '8px 10px 6px', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                 {renamingCol === col.id ? (
                   <input autoFocus value={renameVal} onChange={e => setRenameVal(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') { setColumns(p => p.map(c => c.id === col.id ? { ...c, title: renameVal } : c)); setRenamingCol(null) } if (e.key === 'Escape') setRenamingCol(null) }}
                     onBlur={() => { setColumns(p => p.map(c => c.id === col.id ? { ...c, title: renameVal } : c)); setRenamingCol(null) }}
-                    style={{ flex: 1, fontSize: 11, fontWeight: 700, background: 'transparent', color: theme.accent.base, border: 'none', borderBottom: `1px solid ${theme.accent.base}`, outline: 'none', textTransform: 'uppercase', letterSpacing: 0.5 }}
+                    style={{ flex: 1, fontSize: fonts.secondarySize, fontWeight: 700, background: 'transparent', color: theme.text.primary, border: 'none', borderBottom: `1px solid ${theme.text.primary}`, outline: 'none', textTransform: 'uppercase', letterSpacing: 0.5 }}
                   />
                 ) : (
-                  <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: theme.text.muted, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'text' }}
+                  <span style={{ flex: 1, fontSize: fonts.secondarySize, fontWeight: 700, color: theme.text.primary, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'text' }}
                     onDoubleClick={() => { setRenamingCol(col.id); setRenameVal(col.title) }}>
                     {col.title}
                   </span>
                 )}
-                <span style={{ fontSize: 10, color: theme.text.disabled, background: theme.surface.panelElevated, borderRadius: 8, padding: '1px 5px', border: `1px solid ${theme.border.subtle}` }}>{colCards.length}</span>
+                <button
+                  onClick={() => { setAddingTo(col.id); setAddTitle(''); setAddInstructions('') }}
+                  style={{ fontSize: 20, lineHeight: 1, color: theme.text.primary, background: 'none', border: 'none', cursor: 'pointer', padding: '0 4px', fontFamily: 'inherit', fontWeight: 800 }}
+                  onMouseEnter={e => { e.currentTarget.style.opacity = '0.75' }}
+                  onMouseLeave={e => { e.currentTarget.style.opacity = '1' }}
+                  title="Add card"
+                >+
+                </button>
+                <span style={{ fontSize: fonts.size, color: theme.text.primary, background: theme.surface.panelElevated, borderRadius: 10, minWidth: 24, height: 24, padding: '0 8px', border: `1px solid ${theme.border.default}`, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{colCards.length}</span>
                 <button onClick={() => { cards.filter(c => c.columnId === col.id).forEach(c => c.linkedTileId && window.electron?.terminal?.destroy?.(c.linkedTileId)); setCards(p => p.filter(c => c.columnId !== col.id)); setColumns(p => p.filter(c => c.id !== col.id)) }}
-                  style={{ fontSize: 10, color: theme.text.disabled, background: 'none', border: 'none', cursor: 'pointer', padding: '0 1px' }}
-                  onMouseEnter={e => (e.currentTarget.style.color = theme.status.danger)}
-                  onMouseLeave={e => (e.currentTarget.style.color = theme.text.disabled)}
+                  style={{ fontSize: fonts.size, lineHeight: 1, color: theme.text.primary, background: 'none', border: 'none', cursor: 'pointer', padding: '0 3px', fontWeight: 800, fontFamily: 'inherit' }}
+                  onMouseEnter={e => (e.currentTarget.style.opacity = '0.72')}
+                  onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
                 >✕</button>
               </div>
 
@@ -800,6 +912,8 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
                       onUpdate={updateCard}
                       onRemove={removeCard}
                       onLaunch={launchCard}
+                      onPause={pauseCard}
+                      onSave={saveCard}
                       onFocus={card.linkedTileId ? () => onFocusTile?.(card.linkedTileId!) : undefined}
                       onDragStart={() => setDragging(card.id)}
                       onDragEnd={() => { setDragging(null); setDragOver(null) }}
@@ -811,37 +925,21 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
                 {addingTo === col.id ? (
                   <div style={{ background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`, borderRadius: 6, padding: 8, flexShrink: 0 }}>
                     <input autoFocus value={addTitle} onChange={e => setAddTitle(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') addCard(col.id); if (e.key === 'Escape') { setAddingTo(null); setAddTitle('') } }}
-                      placeholder="Card title…"
-                      style={{ width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 4, background: theme.surface.input, color: theme.text.primary, border: `1px solid ${theme.accent.base}`, outline: 'none', fontFamily: 'inherit', marginBottom: 6 }}
+                      onKeyDown={e => { if (e.key === 'Escape') { setAddingTo(null); setAddTitle(''); setAddInstructions('') } }}
+                      placeholder="Title…"
+                      style={{ width: '100%', fontSize: fonts.secondarySize, padding: '5px 8px', borderRadius: 4, background: theme.surface.input, color: theme.text.primary, border: `1px solid ${theme.accent.base}`, outline: 'none', fontFamily: 'inherit', marginBottom: 6 }}
+                    />
+                    <textarea value={addInstructions} onChange={e => setAddInstructions(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) addCard(col.id); if (e.key === 'Escape') { setAddingTo(null); setAddTitle(''); setAddInstructions('') } }}
+                      placeholder="Instructions…"
+                      style={{ width: '100%', minHeight: 68, fontSize: fonts.secondarySize, padding: '6px 8px', borderRadius: 4, resize: 'vertical', background: theme.surface.input, color: theme.text.primary, border: `1px solid ${theme.border.default}`, outline: 'none', fontFamily: 'inherit', marginBottom: 6, lineHeight: 1.5 }}
                     />
                     <div style={{ display: 'flex', gap: 5 }}>
-                      <button onClick={() => addCard(col.id)} style={{ flex: 1, padding: '4px 0', borderRadius: 4, background: theme.accent.base, color: theme.text.inverse, border: 'none', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>Add</button>
-                      <button onClick={() => { setAddingTo(null); setAddTitle('') }} style={{ padding: '4px 8px', borderRadius: 4, background: theme.surface.panel, color: theme.text.muted, border: `1px solid ${theme.border.default}`, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
+                      <button onClick={() => addCard(col.id)} style={{ flex: 1, padding: '4px 0', borderRadius: 4, background: theme.accent.base, color: theme.text.inverse, border: 'none', fontSize: fonts.secondarySize, cursor: 'pointer', fontFamily: 'inherit' }}>Add</button>
+                      <button onClick={() => { setAddingTo(null); setAddTitle(''); setAddInstructions('') }} style={{ padding: '4px 8px', borderRadius: 4, background: theme.surface.panel, color: theme.text.muted, border: `1px solid ${theme.border.default}`, fontSize: fonts.secondarySize, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
                     </div>
                   </div>
-                ) : (
-                  <button
-                    onClick={() => { setAddingTo(col.id); setAddTitle('') }}
-                    style={{
-                      width: '100%',
-                      padding: '4px 0 2px',
-                      fontSize: 11,
-                      color: theme.text.muted,
-                      background: 'transparent',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontFamily: 'inherit',
-                      flexShrink: 0,
-                      fontWeight: 500,
-                      textAlign: 'left',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.color = theme.text.primary }}
-                    onMouseLeave={e => { e.currentTarget.style.color = theme.text.muted }}
-                  >
-                    + Add card
-                  </button>
-                )}
+                ) : null}
               </div>
             </div>
           )

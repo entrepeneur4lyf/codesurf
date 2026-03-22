@@ -26,6 +26,8 @@ export interface AgentPathsConfig {
   claude: AgentPathEntry
   codex: AgentPathEntry
   opencode: AgentPathEntry
+  openclaw: AgentPathEntry
+  hermes: AgentPathEntry
   shellPath: string | null
   updatedAt: string
 }
@@ -148,6 +150,20 @@ const FALLBACK_PATHS: Record<string, string[]> = {
     `${homedir()}/go/bin/opencode`,
     `${homedir()}/.local/bin/opencode`,
   ],
+  openclaw: [
+    '/usr/local/bin/openclaw',
+    '/opt/homebrew/bin/openclaw',
+    `${homedir()}/.local/bin/openclaw`,
+    `${homedir()}/.cargo/bin/openclaw`,
+    `${homedir()}/.bun/bin/openclaw`,
+    `${homedir()}/.npm-global/bin/openclaw`,
+  ],
+  hermes: [
+    '/usr/local/bin/hermes',
+    `${homedir()}/.local/bin/hermes`,
+    `${homedir()}/.hermes/bin/hermes`,
+    `${homedir()}/Documents/GitHub/hermes-agent/hermes`,
+  ],
 }
 
 /** Detect a single agent binary */
@@ -201,10 +217,12 @@ export async function detectAllAgents(): Promise<AgentPathsConfig> {
   console.log('[AgentPaths] Detecting agent binaries...')
   const shellPath = getShellPath()
 
-  const [claude, codex, opencode] = await Promise.all([
+  const [claude, codex, opencode, openclaw, hermes] = await Promise.all([
     detectBinary('claude'),
     detectBinary('codex'),
     detectBinary('opencode'),
+    detectBinary('openclaw'),
+    detectBinary('hermes'),
   ])
 
   // Merge with any previously confirmed paths
@@ -221,12 +239,14 @@ export async function detectAllAgents(): Promise<AgentPathsConfig> {
     claude: merge(claude, saved?.claude),
     codex: merge(codex, saved?.codex),
     opencode: merge(opencode, saved?.opencode),
+    openclaw: merge(openclaw, saved?.openclaw),
+    hermes: merge(hermes, saved?.hermes),
     shellPath,
     updatedAt: new Date().toISOString(),
   }
 
   // Re-verify confirmed paths still exist
-  for (const key of ['claude', 'codex', 'opencode'] as const) {
+  for (const key of ['claude', 'codex', 'opencode', 'openclaw', 'hermes'] as const) {
     const entry = config[key]
     if (entry.path && entry.confirmed) {
       if (!(await isExecutable(entry.path))) {
@@ -242,6 +262,8 @@ export async function detectAllAgents(): Promise<AgentPathsConfig> {
     config.claude.path ? `claude=${config.claude.path}` : null,
     config.codex.path ? `codex=${config.codex.path}` : null,
     config.opencode.path ? `opencode=${config.opencode.path}` : null,
+    config.openclaw.path ? `openclaw=${config.openclaw.path}` : null,
+    config.hermes.path ? `hermes=${config.hermes.path}` : null,
   ].filter(Boolean).join(', ')
   console.log(`[AgentPaths] Detection complete: ${found || 'none found'}`)
 
@@ -249,7 +271,7 @@ export async function detectAllAgents(): Promise<AgentPathsConfig> {
 }
 
 /** Get the resolved path for an agent, or null */
-export function getAgentPath(agentId: 'claude' | 'codex' | 'opencode'): string | null {
+export function getAgentPath(agentId: 'claude' | 'codex' | 'opencode' | 'openclaw' | 'hermes'): string | null {
   return cachedPaths?.[agentId]?.path ?? null
 }
 
@@ -271,7 +293,7 @@ export function registerAgentPathsIPC(): void {
 
   ipcMain.handle('agentPaths:set', async (_, agentId: string, path: string | null) => {
     if (!cachedPaths) return null
-    const key = agentId as 'claude' | 'codex' | 'opencode'
+    const key = agentId as 'claude' | 'codex' | 'opencode' | 'openclaw' | 'hermes'
     if (!(key in cachedPaths)) return null
 
     let version: string | null = null
@@ -295,13 +317,13 @@ export function registerAgentPathsIPC(): void {
 
   ipcMain.handle('agentPaths:needsSetup', () => {
     if (!cachedPaths) return true
-    const { claude, codex, opencode } = cachedPaths
-    return !claude.confirmed && !codex.confirmed && !opencode.confirmed
+    const { claude, codex, opencode, openclaw, hermes } = cachedPaths
+    return !claude.confirmed && !codex.confirmed && !opencode.confirmed && !openclaw.confirmed && !hermes.confirmed
   })
 
   ipcMain.handle('agentPaths:confirmAll', async () => {
     if (!cachedPaths) return null
-    for (const key of ['claude', 'codex', 'opencode'] as const) {
+    for (const key of ['claude', 'codex', 'opencode', 'openclaw', 'hermes'] as const) {
       cachedPaths[key].confirmed = true
     }
     cachedPaths.updatedAt = new Date().toISOString()

@@ -72,7 +72,7 @@ export default defineConfig({
           },
           optimizeDeps: {
             noDiscovery: true,
-            include: ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'elkjs/lib/elk.bundled.js'],
+            include: ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'elkjs/lib/elk.bundled.js', 'streamdown', '@streamdown/code', 'style-to-js', 'style-to-object', 'hast-util-to-jsx-runtime'],
             exclude: ['@xterm/xterm', '@xterm/addon-fit', '@monaco-editor/react', 'monaco-editor'],
           }
         }

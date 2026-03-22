@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { homedir } from 'os'
 
 function channelMatches(pattern: string, channel: string): boolean {
   if (pattern === '*') return true
@@ -8,10 +9,22 @@ function channelMatches(pattern: string, channel: string): boolean {
 
 // Expose IPC bridges to the renderer
 contextBridge.exposeInMainWorld('electron', {
+  // OS dark/light (Electron nativeTheme) — used when appearance is "system"
+  appearance: {
+    shouldUseDark: () => ipcRenderer.invoke('appearance:shouldUseDark'),
+    setThemeSource: (mode: 'dark' | 'light' | 'system') => ipcRenderer.invoke('appearance:setThemeSource', mode),
+    onUpdated: (callback: (payload: { shouldUseDark: boolean }) => void) => {
+      const handler = (_: unknown, payload: { shouldUseDark: boolean }) => callback(payload)
+      ipcRenderer.on('appearance:updated', handler)
+      return () => { ipcRenderer.removeListener('appearance:updated', handler) }
+    },
+  },
+
   // Workspace operations
   workspace: {
     list: () => ipcRenderer.invoke('workspace:list'),
     create: (name: string) => ipcRenderer.invoke('workspace:create', name),
+    createWithPath: (name: string, projectPath: string) => ipcRenderer.invoke('workspace:createWithPath', name, projectPath),
     createFromFolder: (folderPath: string) => ipcRenderer.invoke('workspace:createFromFolder', folderPath),
     openFolder: () => ipcRenderer.invoke('workspace:openFolder'),
     delete: (id: string) => ipcRenderer.invoke('workspace:delete', id),
@@ -41,7 +54,31 @@ contextBridge.exposeInMainWorld('electron', {
     revealInFinder: (path: string) => ipcRenderer.invoke('fs:revealInFinder', path),
     writeBrief: (cardId: string, content: string) => ipcRenderer.invoke('fs:writeBrief', cardId, content),
     stat: (path: string) => ipcRenderer.invoke('fs:stat', path),
-    copyIntoDir: (sourcePath: string, destDir: string) => ipcRenderer.invoke('fs:copyIntoDir', sourcePath, destDir)
+    isProbablyTextFile: (path: string) => ipcRenderer.invoke('fs:isProbablyTextFile', path),
+    copyIntoDir: (sourcePath: string, destDir: string) => ipcRenderer.invoke('fs:copyIntoDir', sourcePath, destDir),
+    selectDir: () => ipcRenderer.invoke('workspace:openFolder'),
+  },
+
+  // Tile context (ctx: key-value store)
+  tileContext: {
+    get: (workspaceId: string, tileId: string, key?: string) => ipcRenderer.invoke('tileContext:get', workspaceId, tileId, key),
+    getAll: (workspaceId: string, tileId: string, tagPrefix?: string) => ipcRenderer.invoke('tileContext:getAll', workspaceId, tileId, tagPrefix),
+    set: (workspaceId: string, tileId: string, key: string, value: unknown) => ipcRenderer.invoke('tileContext:set', workspaceId, tileId, key, value),
+    delete: (workspaceId: string, tileId: string, key: string) => ipcRenderer.invoke('tileContext:delete', workspaceId, tileId, key),
+    onChanged: (tileId: string, callback: (data: { tileId: string; key: string; value: unknown }) => void) => {
+      const handler = (_: any, data: any) => { if (data.tileId === tileId) callback(data) }
+      ipcRenderer.on('tileContext:changed', handler)
+      return () => ipcRenderer.removeListener('tileContext:changed', handler)
+    },
+  },
+
+  // Extension action IPC
+  extActions: {
+    onAction: (callback: (data: { tileId: string; action: string; params: Record<string, unknown> }) => void) => {
+      const handler = (_: any, data: any) => callback(data)
+      ipcRenderer.on('ext:action', handler)
+      return () => ipcRenderer.removeListener('ext:action', handler)
+    },
   },
 
   // Canvas state persistence
@@ -51,7 +88,32 @@ contextBridge.exposeInMainWorld('electron', {
     loadTileState: (workspaceId: string, tileId: string) => ipcRenderer.invoke('canvas:loadTileState', workspaceId, tileId),
     saveTileState: (workspaceId: string, tileId: string, state: any) => ipcRenderer.invoke('canvas:saveTileState', workspaceId, tileId, state),
     clearTileState: (workspaceId: string, tileId: string) => ipcRenderer.invoke('canvas:clearTileState', workspaceId, tileId),
-    deleteTileArtifacts: (workspaceId: string, tileId: string) => ipcRenderer.invoke('canvas:deleteTileArtifacts', workspaceId, tileId)
+    deleteTileArtifacts: (workspaceId: string, tileId: string) => ipcRenderer.invoke('canvas:deleteTileArtifacts', workspaceId, tileId),
+    listSessions: (workspaceId: string) => ipcRenderer.invoke('canvas:listSessions', workspaceId) as Promise<Array<{
+      id: string
+      source: 'codesurf' | 'claude' | 'codex' | 'cursor' | 'openclaw' | 'opencode'
+      scope: 'workspace' | 'project' | 'user'
+      tileId: string | null
+      sessionId: string | null
+      provider: string
+      model: string
+      messageCount: number
+      lastMessage: string | null
+      updatedAt: number
+      filePath?: string
+      title: string
+      projectPath?: string | null
+      sourceLabel: string
+      sourceDetail?: string
+      canOpenInChat?: boolean
+      canOpenInApp?: boolean
+      resumeBin?: string
+      resumeArgs?: string[]
+      relatedGroupId?: string | null
+      nestingLevel?: number
+    }>>,
+    getSessionState: (workspaceId: string, sessionEntryId: string) => ipcRenderer.invoke('canvas:getSessionState', workspaceId, sessionEntryId),
+    deleteSession: (workspaceId: string, sessionEntryId: string) => ipcRenderer.invoke('canvas:deleteSession', workspaceId, sessionEntryId),
   },
 
   // Kanban board state persistence
@@ -64,8 +126,11 @@ contextBridge.exposeInMainWorld('electron', {
   terminal: {
     create: (tileId: string, workspaceDir: string, launchBin?: string, launchArgs?: string[]) => ipcRenderer.invoke('terminal:create', tileId, workspaceDir, launchBin, launchArgs),
     write: (tileId: string, data: string) => ipcRenderer.invoke('terminal:write', tileId, data),
+    cd: (tileId: string, dirPath: string) => ipcRenderer.invoke('terminal:cd', tileId, dirPath),
     resize: (tileId: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', tileId, cols, rows),
     destroy: (tileId: string) => ipcRenderer.invoke('terminal:destroy', tileId),
+    detach: (tileId: string) => ipcRenderer.invoke('terminal:detach', tileId),
+    updatePeers: (tileId: string, workspaceDir: string, peers: Array<{ peerId: string; peerType: string; tools: string[] }>) => ipcRenderer.invoke('terminal:update-peers', tileId, workspaceDir, peers),
     onData: (tileId: string, callback: (data: string) => void) => {
       const channel = `terminal:data:${tileId}`
       const handler = (_: any, data: string) => callback(data)
@@ -94,13 +159,20 @@ contextBridge.exposeInMainWorld('electron', {
     confirmAll: () => ipcRenderer.invoke('agentPaths:confirmAll'),
   },
 
-  // Chat — send messages to LLM providers (Claude, Codex, OpenCode)
+  // Chat — send messages to LLM providers (Claude, Codex, OpenCode, OpenClaw, Hermes)
   chat: {
-    send: (req: { cardId: string; provider: string; model: string; messages: { role: string; content: string }[] }) =>
+    send: (req: { cardId: string; provider: string; model: string; messages: { role: string; content: string }[]; negotiatedTools?: string[]; peers?: { peerId: string; peerType: string; tools: string[] }[] }) =>
       ipcRenderer.invoke('chat:send', req),
     stop: (cardId: string) => ipcRenderer.invoke('chat:stop', cardId),
     clearSession: (cardId: string) => ipcRenderer.invoke('chat:clearSession', cardId),
     opencodeModels: () => ipcRenderer.invoke('chat:opencodeModels'),
+    onOpencodeModelsUpdated: (cb: (payload: { models: Array<{ id: string; label: string; description?: string }>; source: string; error?: string }) => void) => {
+      const handler = (_: unknown, payload: { models: Array<{ id: string; label: string; description?: string }>; source: string; error?: string }) => cb(payload)
+      ipcRenderer.on('chat:opencodeModelsUpdated', handler)
+      return () => ipcRenderer.removeListener('chat:opencodeModelsUpdated', handler)
+    },
+    openclawAgents: () => ipcRenderer.invoke('chat:openclawAgents'),
+    selectFiles: () => ipcRenderer.invoke('chat:selectFiles') as Promise<string[]>,
   },
 
   // Agent streaming (SSE/NDJSON parsers for Claude, Codex, Pi)
@@ -129,10 +201,17 @@ contextBridge.exposeInMainWorld('electron', {
     setTitle: (title: string) => ipcRenderer.invoke('window:setTitle', title),
     focusById: (id: number) => ipcRenderer.invoke('window:focusById', id),
     closeById: (id: number) => ipcRenderer.invoke('window:closeById', id),
+    setSidebarCollapsed: (collapsed: boolean) => ipcRenderer.invoke('window:setSidebarCollapsed', collapsed),
     onListChanged: (cb: (list: { id: number; title: string; focused: boolean }[]) => void) => {
       const handler = (_: unknown, list: { id: number; title: string; focused: boolean }[]) => cb(list)
       ipcRenderer.on('window:list-changed', handler)
       return () => ipcRenderer.off('window:list-changed', handler)
+    },
+    isFresh: () => ipcRenderer.invoke('window:isFresh'),
+    onNewTab: (cb: () => void) => {
+      const handler = () => cb()
+      ipcRenderer.on('workspace:newTab', handler)
+      return () => ipcRenderer.removeListener('workspace:newTab', handler)
     },
   },
 
@@ -151,6 +230,27 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('browserTile:event', handler)
       return () => { ipcRenderer.removeListener('browserTile:event', handler) }
     }
+  },
+
+  // Chrome data sync
+  chromeSync: {
+    listProfiles: () => ipcRenderer.invoke('chromeSync:listProfiles'),
+    getStatus: (settings: { enabled: boolean; profileDir: string | null }) =>
+      ipcRenderer.invoke('chromeSync:getStatus', settings),
+    syncCookies: (profileDir: string, partition: string) =>
+      ipcRenderer.invoke('chromeSync:syncCookies', profileDir, partition),
+    getBookmarks: (profileDir: string) =>
+      ipcRenderer.invoke('chromeSync:getBookmarks', profileDir),
+    searchHistory: (profileDir: string, query: string, limit?: number) =>
+      ipcRenderer.invoke('chromeSync:searchHistory', profileDir, query, limit),
+  },
+
+  // Local API proxy (Anthropic→OpenAI-compat format transform, routes to Ollama/llama.cpp/LM Studio)
+  localProxy: {
+    start: () => ipcRenderer.invoke('localProxy:start'),
+    stop: () => ipcRenderer.invoke('localProxy:stop'),
+    getStatus: () => ipcRenderer.invoke('localProxy:getStatus'),
+    probeBackends: () => ipcRenderer.invoke('localProxy:probeBackends'),
   },
 
   // App settings
@@ -228,14 +328,52 @@ contextBridge.exposeInMainWorld('electron', {
     removeContext: (workspacePath: string, tileId: string, filename: string) => ipcRenderer.invoke('collab:removeContext', workspacePath, tileId, filename),
     listContext: (workspacePath: string, tileId: string) => ipcRenderer.invoke('collab:listContext', workspacePath, tileId),
     readContext: (workspacePath: string, tileId: string, filename: string) => ipcRenderer.invoke('collab:readContext', workspacePath, tileId, filename),
+    listMessages: (workspacePath: string, tileId: string, mailbox: 'inbox' | 'sent' | 'memory' | 'bin') => ipcRenderer.invoke('collab:listMessages', workspacePath, tileId, mailbox),
+    readMessage: (workspacePath: string, tileId: string, mailbox: 'inbox' | 'sent' | 'memory' | 'bin', filename: string) => ipcRenderer.invoke('collab:readMessage', workspacePath, tileId, mailbox, filename),
+    sendMessage: (workspacePath: string, fromTileId: string, draft: { toTileId: string; subject: string; body: string; type?: 'request' | 'reply' | 'note' | 'signal' | 'memory'; threadId?: string; replyToId?: string; data?: Record<string, unknown> }) => ipcRenderer.invoke('collab:sendMessage', workspacePath, fromTileId, draft),
+    updateMessageStatus: (workspacePath: string, tileId: string, mailbox: 'inbox' | 'sent' | 'memory' | 'bin', filename: string, status: 'unread' | 'read' | 'sent' | 'archived') => ipcRenderer.invoke('collab:updateMessageStatus', workspacePath, tileId, mailbox, filename, status),
+    moveMessage: (workspacePath: string, tileId: string, fromMailbox: 'inbox' | 'sent' | 'memory' | 'bin', toMailbox: 'inbox' | 'sent' | 'memory' | 'bin', filename: string) => ipcRenderer.invoke('collab:moveMessage', workspacePath, tileId, fromMailbox, toMailbox, filename),
     watchState: (workspacePath: string, tileId: string) => ipcRenderer.invoke('collab:watchState', workspacePath, tileId),
     unwatchState: (workspacePath: string, tileId: string) => ipcRenderer.invoke('collab:unwatchState', workspacePath, tileId),
+    watchMessages: (workspacePath: string, tileId: string) => ipcRenderer.invoke('collab:watchMessages', workspacePath, tileId),
+    unwatchMessages: (workspacePath: string, tileId: string) => ipcRenderer.invoke('collab:unwatchMessages', workspacePath, tileId),
     removeTileDir: (workspacePath: string, tileId: string) => ipcRenderer.invoke('collab:removeTileDir', workspacePath, tileId),
     pruneOrphanedTileDirs: (workspacePath: string, tileIds: string[]) => ipcRenderer.invoke('collab:pruneOrphanedTileDirs', workspacePath, tileIds),
     onStateChanged: (callback: (data: { workspacePath: string, tileId: string, state: any }) => void) => {
       const handler = (_: any, data: { workspacePath: string, tileId: string, state: any }) => callback(data)
       ipcRenderer.on('collab:stateChanged', handler)
       return () => { ipcRenderer.removeListener('collab:stateChanged', handler) }
+    },
+    onMessageChanged: (callback: (data: { workspacePath: string; tileId: string; mailbox: 'inbox' | 'sent' | 'memory' | 'bin'; filename: string; event: 'add' | 'change' | 'unlink'; message?: unknown }) => void) => {
+      const handler = (_: any, data: { workspacePath: string; tileId: string; mailbox: 'inbox' | 'sent' | 'memory' | 'bin'; filename: string; event: 'add' | 'change' | 'unlink'; message?: unknown }) => callback(data)
+      ipcRenderer.on('collab:messageChanged', handler)
+      return () => { ipcRenderer.removeListener('collab:messageChanged', handler) }
+    },
+  },
+
+  // ContexRelay mailbox IPC — handlers exist only while Relay Suite power extension is active
+  relay: {
+    init: (workspacePath: string) => ipcRenderer.invoke('relay:init', workspacePath),
+    syncWorkspace: (workspaceId: string, workspacePath: string, tiles: any[]) => ipcRenderer.invoke('relay:syncWorkspace', workspaceId, workspacePath, tiles),
+    listParticipants: (workspacePath: string) => ipcRenderer.invoke('relay:listParticipants', workspacePath),
+    listChannels: (workspacePath: string) => ipcRenderer.invoke('relay:listChannels', workspacePath),
+    listCentralFeed: (workspacePath: string, limit?: number) => ipcRenderer.invoke('relay:listCentralFeed', workspacePath, limit),
+    listMessages: (workspacePath: string, participantId: string, mailbox: 'inbox' | 'sent' | 'memory' | 'bin', limit?: number) => ipcRenderer.invoke('relay:listMessages', workspacePath, participantId, mailbox, limit),
+    readMessage: (workspacePath: string, participantId: string, mailbox: 'inbox' | 'sent' | 'memory' | 'bin', filename: string) => ipcRenderer.invoke('relay:readMessage', workspacePath, participantId, mailbox, filename),
+    sendDirectMessage: (workspacePath: string, from: string, draft: any) => ipcRenderer.invoke('relay:sendDirectMessage', workspacePath, from, draft),
+    sendChannelMessage: (workspacePath: string, from: string, draft: any) => ipcRenderer.invoke('relay:sendChannelMessage', workspacePath, from, draft),
+    updateMessageStatus: (workspacePath: string, participantId: string, mailbox: 'inbox' | 'sent' | 'memory' | 'bin', filename: string, status: 'unread' | 'read' | 'sent' | 'archived') => ipcRenderer.invoke('relay:updateMessageStatus', workspacePath, participantId, mailbox, filename, status),
+    moveMessage: (workspacePath: string, participantId: string, fromMailbox: 'inbox' | 'sent' | 'memory' | 'bin', toMailbox: 'inbox' | 'sent' | 'memory' | 'bin', filename: string) => ipcRenderer.invoke('relay:moveMessage', workspacePath, participantId, fromMailbox, toMailbox, filename),
+    setWorkContext: (workspacePath: string, participantId: string, work: any) => ipcRenderer.invoke('relay:setWorkContext', workspacePath, participantId, work),
+    analyzeRelationships: (workspacePath: string) => ipcRenderer.invoke('relay:analyzeRelationships', workspacePath),
+    spawnAgent: (workspacePath: string, request: any) => ipcRenderer.invoke('relay:spawnAgent', workspacePath, request),
+    stopAgent: (workspacePath: string, participantId: string) => ipcRenderer.invoke('relay:stopAgent', workspacePath, participantId),
+    waitForReady: (workspacePath: string, ids: string[], timeoutMs?: number) => ipcRenderer.invoke('relay:waitForReady', workspacePath, ids, timeoutMs),
+    waitForAny: (workspacePath: string, ids: string[], timeoutMs?: number) => ipcRenderer.invoke('relay:waitForAny', workspacePath, ids, timeoutMs),
+    onEvent: (callback: (data: { workspacePath: string; event: unknown }) => void) => {
+      const handler = (_: any, data: { workspacePath: string; event: unknown }) => callback(data)
+      ipcRenderer.on('relay:event', handler)
+      return () => { ipcRenderer.removeListener('relay:event', handler) }
     },
   },
 
@@ -247,6 +385,8 @@ contextBridge.exposeInMainWorld('electron', {
     getBridgeScript: (tileId: string, extId: string) => ipcRenderer.invoke('ext:get-bridge-script', tileId, extId),
     enable: (extId: string) => ipcRenderer.invoke('ext:enable', extId),
     disable: (extId: string) => ipcRenderer.invoke('ext:disable', extId),
+    refresh: (workspacePath?: string | null) => ipcRenderer.invoke('ext:refresh', workspacePath),
+    invoke: (extId: string, method: string, ...args: unknown[]) => ipcRenderer.invoke(`ext:${extId}:${method}`, ...args),
     getSettings: (extId: string) => ipcRenderer.invoke('ext:settings-get', extId),
     setSettings: (extId: string, settings: Record<string, unknown>) => ipcRenderer.invoke('ext:settings-set', extId, settings),
     contextMenuItems: () => ipcRenderer.invoke('ext:context-menu-items'),
@@ -277,5 +417,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('bus:event', handler)
       return () => ipcRenderer.removeListener('bus:event', handler)
     }
-  }
+  },
+
+  // OS utilities
+  homedir: homedir(),
 })

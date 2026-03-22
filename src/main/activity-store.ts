@@ -1,10 +1,10 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
 import { randomUUID } from 'node:crypto'
 import type { ActivityRecord, ActivityQuery, ActivityType, ActivityStatus } from '../shared/types'
+import { CONTEX_HOME } from './paths'
 
-const CONTEX_DIR = join(homedir(), '.contex')
+const CONTEX_DIR = CONTEX_HOME
 const SAVE_DEBOUNCE_MS = 1000
 
 interface StoreState {

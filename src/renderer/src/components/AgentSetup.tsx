@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react'
+import { useAppFonts } from '../FontContext'
 
 interface AgentPathEntry {
   path: string | null
@@ -16,6 +17,8 @@ interface AgentPathsConfig {
   claude: AgentPathEntry
   codex: AgentPathEntry
   opencode: AgentPathEntry
+  openclaw: AgentPathEntry
+  hermes: AgentPathEntry
   shellPath: string | null
   updatedAt: string
 }
@@ -47,10 +50,36 @@ function OpenCodeLogo({ size = 20 }: { size?: number }) {
   )
 }
 
+function HermesLogo({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2L9 7h6l-3-5z" />
+      <path d="M4 10c0-1 .5-2 2-2h12c1.5 0 2 1 2 2v2c0 1-.5 2-2 2H6c-1.5 0-2-1-2-2v-2z" />
+      <path d="M8 14v5M16 14v5" />
+      <path d="M6 19h4M14 19h4" />
+      <circle cx="12" cy="11" r="1" fill="#a78bfa" />
+    </svg>
+  )
+}
+
+function OpenClawLogo({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 8c0-2 1.5-4 3-4s2 1 3 1 1.5-1 3-1 3 2 3 4" />
+      <path d="M5 12c-1 0-2 .5-2 2s1.5 3 3 3h12c1.5 0 3-1 3-3s-1-2-2-2" />
+      <path d="M8 17v2M16 17v2M12 17v2" />
+      <circle cx="9" cy="11" r="1" fill="#f97316" />
+      <circle cx="15" cy="11" r="1" fill="#f97316" />
+    </svg>
+  )
+}
+
 const AGENTS = [
   { id: 'claude' as const, label: 'Claude Code', logo: <ClaudeLogo />, installHint: 'npm install -g @anthropic-ai/claude-code' },
   { id: 'codex' as const, label: 'Codex', logo: <CodexLogo />, installHint: 'npm install -g @openai/codex' },
   { id: 'opencode' as const, label: 'OpenCode', logo: <OpenCodeLogo />, installHint: 'go install github.com/opencodeco/opencode@latest' },
+  { id: 'openclaw' as const, label: 'OpenClaw', logo: <OpenClawLogo />, installHint: 'npm install -g openclaw' },
+  { id: 'hermes' as const, label: 'Hermes', logo: <HermesLogo />, installHint: 'pip install hermes-agent' },
 ]
 
 interface AgentSetupProps {
@@ -58,6 +87,7 @@ interface AgentSetupProps {
 }
 
 export function AgentSetup({ onComplete }: AgentSetupProps) {
+  const fonts = useAppFonts()
   const [config, setConfig] = useState<AgentPathsConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [detecting, setDetecting] = useState(false)
@@ -142,7 +172,7 @@ export function AgentSetup({ onComplete }: AgentSetupProps) {
         {/* Header */}
         <div style={{ marginBottom: 18 }}>
           <div style={{
-            fontSize: 11,
+            fontSize: fonts.secondarySize,
             fontWeight: 600,
             color: '#555',
             letterSpacing: '0.08em',
@@ -152,7 +182,7 @@ export function AgentSetup({ onComplete }: AgentSetupProps) {
             Setup
           </div>
           <div style={{
-            fontSize: 13,
+            fontSize: fonts.size,
             color: '#888',
             lineHeight: 1.4,
           }}>
@@ -168,7 +198,7 @@ export function AgentSetup({ onComplete }: AgentSetupProps) {
             borderRadius: 6,
             padding: '6px 10px',
             marginBottom: 12,
-            fontSize: 11,
+            fontSize: fonts.secondarySize,
             color: '#ff8080',
           }}>
             {error}
@@ -211,7 +241,7 @@ export function AgentSetup({ onComplete }: AgentSetupProps) {
                       gap: 8,
                     }}>
                       <span style={{
-                        fontSize: 13,
+                        fontSize: fonts.size,
                         fontWeight: 500,
                         color: '#e0e0e0',
                       }}>
@@ -270,7 +300,7 @@ export function AgentSetup({ onComplete }: AgentSetupProps) {
                         border: '1px solid #333',
                         borderRadius: 6,
                         color: '#888',
-                        fontSize: 11,
+                        fontSize: fonts.secondarySize,
                         padding: '3px 8px',
                         cursor: 'pointer',
                         flexShrink: 0,
@@ -301,7 +331,7 @@ export function AgentSetup({ onComplete }: AgentSetupProps) {
                           border: '1px solid #333',
                           borderRadius: 6,
                           color: '#e0e0e0',
-                          fontSize: 11,
+                          fontSize: fonts.secondarySize,
                           fontFamily: 'monospace',
                           padding: '5px 8px',
                           outline: 'none',
@@ -314,7 +344,7 @@ export function AgentSetup({ onComplete }: AgentSetupProps) {
                           border: '1px solid #333',
                           borderRadius: 6,
                           color: '#ccc',
-                          fontSize: 11,
+                          fontSize: fonts.secondarySize,
                           padding: '4px 10px',
                           cursor: 'pointer',
                         }}
@@ -328,7 +358,7 @@ export function AgentSetup({ onComplete }: AgentSetupProps) {
                           border: '1px solid #333',
                           borderRadius: 6,
                           color: '#888',
-                          fontSize: 11,
+                          fontSize: fonts.secondarySize,
                           padding: '4px 8px',
                           cursor: 'pointer',
                         }}
@@ -374,7 +404,7 @@ export function AgentSetup({ onComplete }: AgentSetupProps) {
               border: '1px solid #333',
               borderRadius: 6,
               color: '#888',
-              fontSize: 11,
+              fontSize: fonts.secondarySize,
               padding: '5px 12px',
               cursor: detecting ? 'wait' : 'pointer',
               opacity: detecting ? 0.5 : 1,
@@ -389,7 +419,7 @@ export function AgentSetup({ onComplete }: AgentSetupProps) {
               border: '1px solid #333',
               borderRadius: 6,
               color: '#e0e0e0',
-              fontSize: 12,
+              fontSize: fonts.secondarySize,
               fontWeight: 500,
               padding: '6px 18px',
               cursor: 'pointer',

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { useTheme } from '../ThemeContext'
+import { useAppFonts } from '../FontContext'
 
 // ─── Panel tree types ────────────────────────────────────────────────────────
 
@@ -56,7 +57,9 @@ function getZone(x: number, y: number, panelId: string): DockZone {
 
 function setWebviewsInteractionBlocked(blocked: boolean): void {
   if (typeof document === 'undefined') return
-  document.querySelectorAll('webview').forEach(el => {
+  // Block both webviews and iframes — both create independent pointer-event surfaces
+  // that swallow mousemove/mouseup from the parent document during drags.
+  document.querySelectorAll('webview, iframe').forEach(el => {
     ;(el as HTMLElement).style.pointerEvents = blocked ? 'none' : 'auto'
   })
 }
@@ -182,6 +185,7 @@ export function splitLeaf(node: PanelNode, targetPanelId: string, tileId: string
 
 function DockOverlay({ zone }: { zone: DockZone | null }): JSX.Element | null {
   const theme = useTheme()
+  const fonts = useAppFonts()
   if (!zone) return null
   const styles: Record<DockZone, React.CSSProperties> = {
     left:   { position: 'absolute', left: 0, top: 0, width: '50%', height: '100%' },
@@ -206,6 +210,7 @@ function DockOverlay({ zone }: { zone: DockZone | null }): JSX.Element | null {
 
 function ResizeHandle({ direction, onResize, onInteractionChange }: { direction: 'horizontal' | 'vertical'; onResize: (delta: number) => void; onInteractionChange?: (active: boolean) => void }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const dragging = useRef(false)
   const lastPos = useRef(0)
   const isHorizontal = direction === 'horizontal'
@@ -248,7 +253,7 @@ function ResizeHandle({ direction, onResize, onInteractionChange }: { direction:
       onMouseDown={onMouseDown}
       style={{
         flexShrink: 0,
-        [isHorizontal ? 'width' : 'height']: 8,
+        [isHorizontal ? 'width' : 'height']: 4,
         cursor: isHorizontal ? 'col-resize' : 'row-resize',
         background: 'transparent',
         position: 'relative',
@@ -280,6 +285,7 @@ interface CtxMenu { tileId: string; tileType: string; x: number; y: number }
 
 function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown, onExit, getTileType, onSplitNew, onCloseOthers, onCloseToRight }: TabBarProps): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -411,12 +417,13 @@ function TabBar({ tabs, activeTab, panelId, onActivate, onClose, onTabMouseDown,
 
 function CtxItem({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   return (
     <div
       onClick={disabled ? undefined : onClick}
       style={{
         padding: '5px 10px', borderRadius: 5, cursor: disabled ? 'default' : 'pointer',
-        fontSize: 12, color: disabled ? theme.text.disabled : theme.text.primary, userSelect: 'none',
+        fontSize: fonts.secondarySize, color: disabled ? theme.text.disabled : theme.text.primary, userSelect: 'none',
       }}
       onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = theme.surface.hover }}
       onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
@@ -428,38 +435,70 @@ function CtxItem({ label, onClick, disabled }: { label: string; onClick: () => v
 
 function CtxDivider(): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   return <div style={{ height: 1, background: theme.border.default, margin: '3px 0' }} />
 }
 
 // ─── Empty Panel ─────────────────────────────────────────────────────────────
 
-const QUICK_ACTIONS = [
-  { type: 'terminal', label: 'Terminal' },
-  { type: 'code',     label: 'Code' },
-  { type: 'note',     label: 'Note' },
-  { type: 'browser',  label: 'Browser' },
-  { type: 'chat',     label: 'Chat' },
+type QuickAction = { type: string; label: string; icon: JSX.Element }
+
+const CORE_ACTIONS: QuickAction[] = [
+  { type: 'terminal', label: 'Terminal', icon: <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M5 8l7 6-7 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M14 20h9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg> },
+  { type: 'code',     label: 'Code',     icon: <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M10 8L4 14l6 6M18 8l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg> },
+  { type: 'browser',  label: 'Browser',  icon: <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="3" y="5" width="22" height="18" rx="2.5" stroke="currentColor" strokeWidth="2" /><path d="M3 10h22" stroke="currentColor" strokeWidth="2" /><circle cx="6.5" cy="7.5" r="1" fill="currentColor" /><circle cx="9.5" cy="7.5" r="1" fill="currentColor" /></svg> },
+  { type: 'chat',     label: 'Chat',     icon: <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M4 5h20a2 2 0 012 2v11a2 2 0 01-2 2H10l-5 4V20H4a2 2 0 01-2-2V7a2 2 0 012-2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" /></svg> },
+  { type: 'files',    label: 'Files',    icon: <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M3 6.5C3 5.12 4.12 4 5.5 4h5L13 6.5h9.5C23.88 6.5 25 7.62 25 9v13c0 1.38-1.12 2.5-2.5 2.5h-17C4.12 24.5 3 23.38 3 22V6.5z" stroke="currentColor" strokeWidth="2" fill="none" /><path d="M9 13h10M9 17h7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" /></svg> },
 ]
 
-function EmptyPanel({ onAddTile }: { onAddTile: (type: string) => void }): JSX.Element {
-  const theme = useTheme()
+const EXTENSION_ACTIONS: QuickAction[] = [
+  { type: 'note',     label: 'Sticky Note', icon: <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="3" y="3" width="22" height="22" rx="2" stroke="currentColor" strokeWidth="2" /><path d="M18 25V20a2 2 0 012-2h5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M8 10h12M8 14h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" /></svg> },
+  { type: 'kanban',   label: 'Board',      icon: <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="3" y="3" width="9" height="9" rx="2" stroke="currentColor" strokeWidth="2" /><rect x="16" y="3" width="9" height="9" rx="2" stroke="currentColor" strokeWidth="2" /><rect x="3" y="16" width="9" height="9" rx="2" stroke="currentColor" strokeWidth="2" /><rect x="16" y="16" width="9" height="9" rx="2" stroke="currentColor" strokeWidth="2" /></svg> },
+  { type: 'note',     label: 'Markdown',   icon: <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="2" y="6" width="24" height="16" rx="2" stroke="currentColor" strokeWidth="2" /><path d="M6 18V10l4 5 4-5v8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /><path d="M20 14l3 3m0 0l-3-3m3 3v-7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg> },
+  { type: 'ext:pomodoro', label: 'Pomodoro', icon: <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="15" r="10" stroke="currentColor" strokeWidth="2" /><path d="M14 9v6l4 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M11 5h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg> },
+  { type: 'ext:system-monitor', label: 'System', icon: <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="3" y="5" width="22" height="16" rx="2" stroke="currentColor" strokeWidth="2" /><path d="M10 24h8M14 21v3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M7 15l3-4 3 2 4-5 4 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg> },
+]
+
+function TileButton({ action, theme, onAddTile }: { action: QuickAction; theme: ReturnType<typeof useTheme>; onAddTile: (type: string) => void }): JSX.Element {
   return (
-    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: theme.surface.panelMuted, gap: 16 }}>
-      <span style={{ fontSize: 13, color: theme.text.disabled, userSelect: 'none' }}>Open a tile or drag a tab here</span>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-        {QUICK_ACTIONS.map(action => (
-          <button
-            key={action.type}
-            onClick={() => onAddTile(action.type)}
-            style={{ background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`, borderRadius: 6, color: theme.text.muted, fontSize: 12, padding: '6px 14px', cursor: 'pointer' }}
-            onMouseEnter={e => { e.currentTarget.style.background = theme.surface.hover; e.currentTarget.style.borderColor = theme.border.accent; e.currentTarget.style.color = theme.text.primary }}
-            onMouseLeave={e => { e.currentTarget.style.background = theme.surface.panelElevated; e.currentTarget.style.borderColor = theme.border.default; e.currentTarget.style.color = theme.text.muted }}
-          >
-            {action.label}
-          </button>
-        ))}
-      </div>
-    </div>
+    <button
+      onClick={() => onAddTile(action.type)}
+      style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        gap: 8, width: 80, height: 80,
+        background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`,
+        borderRadius: 14, color: theme.text.muted, fontSize: 'inherit', fontWeight: 500,
+        cursor: 'pointer', transition: 'all 0.15s ease',
+        letterSpacing: 0.3,
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.background = theme.surface.hover
+        e.currentTarget.style.borderColor = theme.border.accent
+        e.currentTarget.style.color = theme.accent.base
+        e.currentTarget.style.transform = 'translateY(-2px)'
+        e.currentTarget.style.boxShadow = `0 4px 12px ${theme.mode === 'light' ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.3)'}`
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.background = theme.surface.panelElevated
+        e.currentTarget.style.borderColor = theme.border.default
+        e.currentTarget.style.color = theme.text.muted
+        e.currentTarget.style.transform = 'translateY(0)'
+        e.currentTarget.style.boxShadow = 'none'
+      }}
+    >
+      {action.icon}
+      {action.label}
+    </button>
+  )
+}
+
+const LazyLayoutBuilder = React.lazy(() => import('./LayoutBuilder').then(m => ({ default: m.LayoutBuilder })))
+
+function EmptyPanel({ onAddTile, onLaunchTemplate }: { onAddTile: (type: string) => void; onLaunchTemplate?: (template: import('../../../shared/types').LayoutTemplate) => void }): JSX.Element {
+  return (
+    <React.Suspense fallback={<div style={{ position: 'absolute', inset: 0 }} />}>
+      <LazyLayoutBuilder onAddTile={onAddTile} onLaunchTemplate={onLaunchTemplate} />
+    </React.Suspense>
   )
 }
 
@@ -481,10 +520,16 @@ interface LeafPanelProps {
   onSplitNew: (panelId: string, tileType: string, zone: DockZone) => void
   onCloseOthers: (panelId: string, tileId: string) => void
   onCloseToRight: (panelId: string, tileId: string) => void
+  onLaunchTemplate?: (template: import('../../../shared/types').LayoutTemplate) => void
 }
 
-function LeafPanel({ leaf, getTileLabel, renderTile, isInteracting, onActivate, onCloseTab, onTabMouseDown, onPanelFocus, onAddTile, dragTarget, onExit, getTileType, onSplitNew, onCloseOthers, onCloseToRight }: LeafPanelProps): JSX.Element {
+function LeafPanel({ leaf, getTileLabel, renderTile, isInteracting, onActivate, onCloseTab, onTabMouseDown, onPanelFocus, onAddTile, dragTarget, onExit, getTileType, onSplitNew, onCloseOthers, onCloseToRight, onLaunchTemplate }: LeafPanelProps): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
+  const keepMountedWhenInactive = useCallback((tileId: string) => {
+    const type = getTileType(tileId)
+    return type === 'terminal' || type === 'browser' || type.startsWith('ext:')
+  }, [getTileType])
   const panelRef = useRef<HTMLDivElement>(null)
   const tabs = leaf.tabs.map(id => ({ id, label: getTileLabel(id) }))
   const isEmpty = tabs.length === 0
@@ -530,21 +575,25 @@ function LeafPanel({ leaf, getTileLabel, renderTile, isInteracting, onActivate, 
       )}
       <div style={{ flex: 1, overflow: 'hidden', position: 'relative', minHeight: 0 }}>
         {isEmpty ? (
-          <EmptyPanel onAddTile={onAddTile} />
+          <EmptyPanel onAddTile={onAddTile} onLaunchTemplate={onLaunchTemplate} />
         ) : (
-          leaf.tabs.map(tileId => (
-            <div
-              key={tileId}
-              style={{
-                position: 'absolute',
-                inset: 0,
-                visibility: tileId === leaf.activeTab ? 'visible' : 'hidden',
-                pointerEvents: tileId === leaf.activeTab ? 'auto' : 'none',
-              }}
-            >
-              {renderTile(tileId, { isInteracting })}
-            </div>
-          ))
+          leaf.tabs.map(tileId => {
+            const isActive = tileId === leaf.activeTab
+            if (!isActive && !keepMountedWhenInactive(tileId)) return null
+            return (
+              <div
+                key={tileId}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  visibility: isActive ? 'visible' : 'hidden',
+                  pointerEvents: isActive ? 'auto' : 'none',
+                }}
+              >
+                {renderTile(tileId, { isInteracting })}
+              </div>
+            )
+          })
         )}
       </div>
       <DockOverlay zone={dockZone} />
@@ -568,10 +617,13 @@ export interface PanelLayoutProps {
   onSplitNew: (panelId: string, tileType: string, zone: DockZone) => void
   onCloseOthers: (panelId: string, tileId: string) => void
   onCloseToRight: (panelId: string, tileId: string) => void
+  insetBottom?: number
+  onLaunchTemplate?: (template: import('../../../shared/types').LayoutTemplate) => void
 }
 
-export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, onCloseTab, onAddTile, onExit, activePanelId: _activePanelId, onActivePanelChange, getTileType, onSplitNew, onCloseOthers, onCloseToRight }: PanelLayoutProps): JSX.Element {
+export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, onCloseTab, onAddTile, onExit, activePanelId: _activePanelId, onActivePanelChange, getTileType, onSplitNew, onCloseOthers, onCloseToRight, insetBottom = 4, onLaunchTemplate }: PanelLayoutProps): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const [dragTarget, setDragTarget] = useState<{ panelId: string; zone: DockZone } | null>(null)
   const [ghost, setGhost] = useState<{ x: number; y: number; label: string } | null>(null)
   const [panelInteractionActive, setPanelInteractionActive] = useState(false)
@@ -605,14 +657,16 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
     const startY = e.clientY
     let dragging = false
 
+    // Block iframes/webviews immediately — before the cursor can move over them.
+    // If we wait for the 5px threshold, Chromium may already have captured the
+    // pointer stream into the iframe surface and our document-level mouseup never fires.
+    setWebviewsInteractionBlocked(true)
+
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - startX
       const dy = ev.clientY - startY
       if (!dragging && Math.sqrt(dx * dx + dy * dy) > 5) {
         dragging = true
-        // Keep this synchronous. If we wait for React state/props to flow into
-        // BrowserTile, Chromium can already have captured the pointer stream.
-        setWebviewsInteractionBlocked(true)
         setPanelInteractionActive(true)
         document.body.style.cursor = 'grabbing'
         document.body.style.userSelect = 'none'
@@ -698,6 +752,7 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
           onSplitNew={onSplitNew}
           onCloseOthers={onCloseOthers}
           onCloseToRight={onCloseToRight}
+          onLaunchTemplate={onLaunchTemplate}
         />
       )
     }
@@ -738,7 +793,7 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
 
   return (
     <div
-      style={{ position: 'absolute', top: 0, right: 8, bottom: 8, left: 8, zIndex: 99990, background: theme.surface.app, display: 'flex', flexDirection: 'column', overflow: 'hidden', border: 'none' }}
+      style={{ position: 'absolute', top: 0, right: 6, bottom: insetBottom, left: 4, zIndex: 99990, background: 'transparent', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: 'none' }}
       onMouseDown={e => e.stopPropagation()}
       onWheel={e => e.stopPropagation()}
     >
@@ -752,7 +807,7 @@ export function PanelLayout({ root, getTileLabel, renderTile, onLayoutChange, on
         <div style={{
           position: 'fixed', left: ghost.x + 12, top: ghost.y - 10,
           background: theme.surface.panelElevated, border: `1px solid ${theme.border.accent}`,
-          borderRadius: 4, padding: '2px 10px', fontSize: 12, color: theme.text.primary,
+          borderRadius: 4, padding: '2px 10px', fontSize: fonts.secondarySize, color: theme.text.primary,
           pointerEvents: 'none', zIndex: 100000, userSelect: 'none',
         }}>
           {ghost.label}

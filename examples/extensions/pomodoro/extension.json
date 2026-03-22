@@ -5,6 +5,7 @@
   "description": "Pomodoro technique timer with work/break cycles. Includes MCP tools for agents to check status and control the timer.",
   "author": "contex",
   "tier": "power",
+  "ui": { "mode": "native" },
   "main": "main.js",
   "contributes": {
     "tiles": [

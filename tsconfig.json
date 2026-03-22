@@ -18,6 +18,6 @@
       "@/*": ["src/renderer/src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "packages/**/*.ts"],
   "exclude": ["node_modules", "dist", "out"]
 }

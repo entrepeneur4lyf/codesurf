@@ -1,712 +1,301 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Workspace } from '../../../shared/types'
-import { ContextMenu, MenuItem } from './ContextMenu'
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
+import type { Workspace, TileState } from '../../../shared/types'
 import { useAppFonts } from '../FontContext'
 import { useTheme } from '../ThemeContext'
-
-interface FsEntry {
-  name: string
-  path: string
-  isDir: boolean
-  ext: string
-  mtime?: number
-}
-
-interface TreeEntry extends FsEntry {
-  children: TreeEntry[]
-}
-
-type GitStatus = 'modified' | 'untracked' | 'added' | 'deleted' | 'renamed' | 'conflict'
-type SortMode = 'name' | 'ext' | 'type'
-type ViewMode = 'tree' | 'list'
-
-const GIT_COLORS: Record<GitStatus, string> = {
-  modified: '#e2c08d',
-  untracked: '#73c991',
-  added: '#73c991',
-  deleted: '#f44747',
-  renamed: '#e2c08d',
-  conflict: '#f44747',
-}
-
-const GIT_LABELS: Record<GitStatus, string> = {
-  modified: 'M',
-  untracked: 'U',
-  added: 'A',
-  deleted: 'D',
-  renamed: 'R',
-  conflict: '!',
-}
-
-const SORT_MODES: SortMode[] = ['name', 'type', 'ext']
-const SORT_LABELS: Record<SortMode, string> = { name: 'Name', type: 'Type', ext: 'Ext' }
-const IGNORED = new Set(['.git', 'node_modules', '.next', 'dist', 'dist-electron', '.DS_Store', '__pycache__', '.cache', 'out'])
+import { ContextMenu, type MenuItem } from './ContextMenu'
 
 interface ExtTileEntry { type: string; label: string; icon?: string }
 
 interface Props {
   workspace: Workspace | null
   workspaces: Workspace[]
+  tiles: TileState[]
   onSwitchWorkspace: (id: string) => void
+  onDeleteWorkspace: (id: string) => void
   onNewWorkspace: (name: string) => void
   onOpenFolder: () => void
   onOpenFile: (filePath: string) => void
-  selectedPath?: string | null
-  onSelectPath?: (path: string | null) => void
+  onFocusTile: (tileId: string) => void
+  onUpdateTile: (tileId: string, patch: Partial<TileState>) => void
+  onCloseTile: (tileId: string) => void
   onNewTerminal: () => void
   onNewKanban: () => void
   onNewBrowser: () => void
   onNewChat: () => void
+  onNewFiles: () => void
+  onOpenSettings: (tab: string) => void
+  onOpenSessionInChat: (session: SessionEntry) => void
+  onOpenSessionInApp: (session: SessionEntry) => void
   extensionTiles?: ExtTileEntry[]
   onAddExtensionTile?: (type: string) => void
+  pinnedExtensionIds?: string[]
   collapsed: boolean
   width: number
   onWidthChange: (width: number) => void
+  minWidth?: number
+  maxWidth?: number
   onResizeStateChange?: (resizing: boolean) => void
   onToggleCollapse: () => void
   showFooter?: boolean
 }
 
-interface CtxState { x: number; y: number; entry: FsEntry }
-interface CreateState { dir: string; type: 'file' | 'folder' }
+// ─── Section header ──────────────────────────────────────────────────────────
 
-function sortEntries(entries: FsEntry[], mode: SortMode): FsEntry[] {
-  const dirs = [...entries.filter(e => e.isDir)].sort((a, b) => a.name.localeCompare(b.name))
-  const files = [...entries.filter(e => !e.isDir)]
-
-  if (mode === 'ext') {
-    files.sort((a, b) => {
-      const byExt = a.ext.localeCompare(b.ext)
-      return byExt !== 0 ? byExt : a.name.localeCompare(b.name)
-    })
-  } else {
-    files.sort((a, b) => a.name.localeCompare(b.name))
-  }
-
-  return [...dirs, ...files]
-}
-
-function isIgnored(name: string): boolean {
-  return IGNORED.has(name)
-}
-
-function relativePath(rootPath: string, fullPath: string): string {
-  if (!fullPath.startsWith(rootPath)) return fullPath
-  return fullPath.slice(rootPath.length).replace(/^\//, '') || '.'
-}
-
-function mapPathPrefixes(paths: Set<string>, oldPrefix: string, newPrefix: string): Set<string> {
-  const next = new Set<string>()
-  for (const path of paths) {
-    if (path === oldPrefix || path.startsWith(`${oldPrefix}/`)) {
-      next.add(`${newPrefix}${path.slice(oldPrefix.length)}`)
-    } else {
-      next.add(path)
-    }
-  }
-  return next
-}
-
-function removePathPrefixes(paths: Set<string>, prefix: string): Set<string> {
-  const next = new Set<string>()
-  for (const path of paths) {
-    if (path === prefix || path.startsWith(`${prefix}/`)) continue
-    next.add(path)
-  }
-  return next
-}
-
-async function loadOneLevel(dir: string, sortMode: SortMode): Promise<TreeEntry[]> {
-  const items: FsEntry[] = await window.electron.fs.readDir(dir).catch(() => [])
-  const filtered = sortEntries(items.filter(item => !isIgnored(item.name)), sortMode)
-
-  return filtered.map((item) => ({
-    ...item,
-    children: [],
-  }))
-}
-
-function flattenFiles(entries: TreeEntry[], acc: TreeEntry[] = []): TreeEntry[] {
-  for (const entry of entries) {
-    if (entry.isDir) flattenFiles(entry.children, acc)
-    else acc.push(entry)
-  }
-  return acc
-}
-
-function filterTree(entries: TreeEntry[], query: string): TreeEntry[] {
-  const q = query.trim().toLowerCase()
-  if (!q) return entries
-
-  const result: TreeEntry[] = []
-  for (const entry of entries) {
-    if (entry.isDir) {
-      const children = filterTree(entry.children, q)
-      const matchesSelf = entry.name.toLowerCase().includes(q)
-      if (matchesSelf || children.length > 0) result.push({ ...entry, children })
-    } else if (entry.name.toLowerCase().includes(q)) {
-      result.push(entry)
-    }
-  }
-  return result
-}
-
-// ─── File icon — VSCode-style colored badge ───────────────────────────────────
-const SPECIAL_FILES: Record<string, { label: string; color: string; bg: string }> = {
-  'package.json': { label: 'PKG', color: '#fff', bg: '#cb3837' },
-  'package-lock.json': { label: 'PKG', color: '#fff', bg: '#8a2627' },
-  'yarn.lock': { label: 'YRN', color: '#fff', bg: '#2c8ebb' },
-  'pnpm-lock.yaml': { label: 'PNP', color: '#fff', bg: '#f69220' },
-  'tsconfig.json': { label: 'TSC', color: '#fff', bg: '#3178c6' },
-  '.gitignore': { label: 'GIT', color: '#fff', bg: '#f34f29' },
-  '.gitattributes': { label: 'GIT', color: '#fff', bg: '#f34f29' },
-  '.env': { label: 'ENV', color: '#fff', bg: '#3a4a1a' },
-  '.env.local': { label: 'ENV', color: '#fff', bg: '#3a4a1a' },
-  '.env.example': { label: 'ENV', color: '#888', bg: '#2a2a2a' },
-  dockerfile: { label: 'DOC', color: '#fff', bg: '#2496ed' },
-  Dockerfile: { label: 'DOC', color: '#fff', bg: '#2496ed' },
-  makefile: { label: 'MK', color: '#fff', bg: '#6d4c41' },
-  Makefile: { label: 'MK', color: '#fff', bg: '#6d4c41' },
-  'readme.md': { label: 'MD', color: '#fff', bg: '#1565c0' },
-  'README.md': { label: 'MD', color: '#fff', bg: '#1565c0' },
-  license: { label: 'LIC', color: '#fff', bg: '#4a4a1a' },
-  LICENSE: { label: 'LIC', color: '#fff', bg: '#4a4a1a' },
-}
-
-const EXT_META: Record<string, { label: string; color: string; bg: string }> = {
-  '.ts': { label: 'TS', color: '#fff', bg: '#3178c6' },
-  '.tsx': { label: 'TX', color: '#fff', bg: '#3178c6' },
-  '.mts': { label: 'TS', color: '#fff', bg: '#3178c6' },
-  '.cts': { label: 'TS', color: '#fff', bg: '#3178c6' },
-  '.js': { label: 'JS', color: '#000', bg: '#f7df1e' },
-  '.jsx': { label: 'JX', color: '#000', bg: '#f7df1e' },
-  '.mjs': { label: 'JS', color: '#000', bg: '#f7df1e' },
-  '.cjs': { label: 'JS', color: '#000', bg: '#f7df1e' },
-  '.json': { label: '{ }', color: '#f7df1e', bg: '#2a2a1a' },
-  '.jsonc': { label: '{ }', color: '#f7df1e', bg: '#2a2a1a' },
-  '.md': { label: 'MD', color: '#fff', bg: '#4a7a3a' },
-  '.mdx': { label: 'MX', color: '#fff', bg: '#4a7a3a' },
-  '.txt': { label: 'TXT', color: '#888', bg: '#252525' },
-  '.css': { label: 'CSS', color: '#fff', bg: '#563d7c' },
-  '.scss': { label: 'SCS', color: '#fff', bg: '#cd669a' },
-  '.sass': { label: 'SAS', color: '#fff', bg: '#cd669a' },
-  '.less': { label: 'LES', color: '#fff', bg: '#1d365d' },
-  '.html': { label: 'HTM', color: '#fff', bg: '#e34c26' },
-  '.htm': { label: 'HTM', color: '#fff', bg: '#e34c26' },
-  '.xml': { label: 'XML', color: '#fff', bg: '#f34f29' },
-  '.svg': { label: 'SVG', color: '#fff', bg: '#e67e22' },
-  '.vue': { label: 'VUE', color: '#fff', bg: '#42b883' },
-  '.svelte': { label: 'SV', color: '#fff', bg: '#ff3e00' },
-  '.astro': { label: 'AST', color: '#fff', bg: '#ff5d01' },
-  '.py': { label: 'PY', color: '#fff', bg: '#3572a5' },
-  '.pyi': { label: 'PY', color: '#fff', bg: '#3572a5' },
-  '.rb': { label: 'RB', color: '#fff', bg: '#cc342d' },
-  '.rs': { label: 'RS', color: '#fff', bg: '#a95028' },
-  '.go': { label: 'GO', color: '#fff', bg: '#00acd7' },
-  '.java': { label: 'JV', color: '#fff', bg: '#b07219' },
-  '.kt': { label: 'KT', color: '#fff', bg: '#7f52ff' },
-  '.swift': { label: 'SW', color: '#fff', bg: '#fa7343' },
-  '.c': { label: 'C', color: '#fff', bg: '#555599' },
-  '.cpp': { label: 'C++', color: '#fff', bg: '#f34b7d' },
-  '.cs': { label: 'C#', color: '#fff', bg: '#178600' },
-  '.php': { label: 'PHP', color: '#fff', bg: '#4f5d95' },
-  '.sh': { label: 'SH', color: '#fff', bg: '#4a6a1a' },
-  '.bash': { label: 'SH', color: '#fff', bg: '#4a6a1a' },
-  '.zsh': { label: 'ZSH', color: '#fff', bg: '#4a6a1a' },
-  '.fish': { label: 'FSH', color: '#fff', bg: '#4a6a1a' },
-  '.yaml': { label: 'YML', color: '#fff', bg: '#7a1a1a' },
-  '.yml': { label: 'YML', color: '#fff', bg: '#7a1a1a' },
-  '.toml': { label: 'TOM', color: '#fff', bg: '#9c4121' },
-  '.ini': { label: 'INI', color: '#fff', bg: '#5a4a3a' },
-  '.env': { label: 'ENV', color: '#fff', bg: '#3a4a1a' },
-  '.lock': { label: 'LCK', color: '#888', bg: '#252525' },
-  '.log': { label: 'LOG', color: '#888', bg: '#252525' },
-  '.png': { label: 'IMG', color: '#fff', bg: '#7a2a6a' },
-  '.jpg': { label: 'IMG', color: '#fff', bg: '#7a2a6a' },
-  '.jpeg': { label: 'IMG', color: '#fff', bg: '#7a2a6a' },
-  '.gif': { label: 'GIF', color: '#fff', bg: '#7a3a6a' },
-  '.webp': { label: 'WBP', color: '#fff', bg: '#7a3a6a' },
-  '.ico': { label: 'ICO', color: '#fff', bg: '#7a3a6a' },
-  '.woff': { label: 'FON', color: '#fff', bg: '#4a3a6a' },
-  '.woff2': { label: 'FON', color: '#fff', bg: '#4a3a6a' },
-  '.ttf': { label: 'FON', color: '#fff', bg: '#4a3a6a' },
-  '.pdf': { label: 'PDF', color: '#fff', bg: '#b31b1b' },
-  '.zip': { label: 'ZIP', color: '#fff', bg: '#5a5a1a' },
-  '.tar': { label: 'TAR', color: '#fff', bg: '#5a5a1a' },
-  '.gz': { label: 'GZ', color: '#fff', bg: '#5a5a1a' },
-  '.sql': { label: 'SQL', color: '#fff', bg: '#1a6a8a' },
-  '.prisma': { label: 'PRI', color: '#fff', bg: '#2d3748' },
-  '.graphql': { label: 'GQL', color: '#fff', bg: '#e10098' },
-}
-
-function FileIcon({ name, ext }: { name: string; ext: string }): JSX.Element {
-  const meta = SPECIAL_FILES[name] ?? EXT_META[ext] ?? {
-    label: ext.replace('.', '').slice(0, 3).toUpperCase() || 'TXT',
-    color: '#888',
-    bg: '#252525'
-  }
-
-  return (
-    <div style={{
-      width: 22, height: 14, flexShrink: 0, marginRight: 6,
-      background: meta.bg, borderRadius: 2,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }}>
-      <span style={{
-        fontSize: 7, fontWeight: 700, color: meta.color,
-        fontFamily: 'inherit', letterSpacing: '-0.02em', lineHeight: 1
-      }}>
-        {meta.label}
-      </span>
-    </div>
-  )
-}
-
-function FolderIcon({ expanded }: { expanded: boolean }): JSX.Element {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', marginRight: 5, flexShrink: 0, gap: 3 }}>
-      {/* Chevron — rotates 90deg when expanded */}
-      <svg
-        width="8" height="8" viewBox="0 0 8 8"
-        style={{
-          transition: 'transform 0.15s ease',
-          transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
-          opacity: expanded ? 0.9 : 0.45,
-        }}
-      >
-        <path d="M2 1l4 3-4 3" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-      {/* Folder */}
-      <svg width="14" height="12" viewBox="0 0 14 12" fill="none">
-        <path
-          d="M0 2.5C0 1.67 0.67 1 1.5 1H4.5L6 2.5H12.5C13.33 2.5 14 3.17 14 4V10C14 10.83 13.33 11.5 12.5 11.5H1.5C0.67 11.5 0 10.83 0 10V2.5Z"
-          fill={expanded ? '#dcb67a' : '#c09a5c'}
-        />
-      </svg>
-    </div>
-  )
-}
-
-function Badge({ count }: { count: number }): JSX.Element {
-  return (
-    <span style={{
-      fontSize: 10, color: '#aaa',
-      background: '#2a2a2a', borderRadius: 8,
-      padding: '1px 6px', marginLeft: 6,
-      fontFamily: 'inherit', flexShrink: 0
-    }}>
-      {count}
-    </span>
-  )
-}
-
-function SortIcon({ mode }: { mode: SortMode }): JSX.Element {
-  if (mode === 'name') {
-    // A→Z icon
-    return (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <path d="M2 3h4M2 7h3M2 11h2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-        <path d="M10 3v8M8 9l2 2 2-2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    )
-  }
-  if (mode === 'type') {
-    // Folder sort icon
-    return (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <path d="M1.5 3.5h4l1 1.5h6v6.5h-11z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-        <path d="M10 3v-1M8 0l2 2 2-2" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.5" />
-      </svg>
-    )
-  }
-  // ext — dot/extension sort
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path d="M3 4h5v8H3z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-      <path d="M8 6h2v-4H5v2" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-      <circle cx="5.5" cy="9" r="1" fill="currentColor" />
-    </svg>
-  )
-}
-
-function CreateInline({
-  depth,
-  type,
-  value,
-  onChange,
-  onSubmit,
-  onCancel,
-}: {
-  depth: number
-  type: 'file' | 'folder'
-  value: string
-  onChange: (value: string) => void
-  onSubmit: () => void
-  onCancel: () => void
-}): JSX.Element {
-  const fonts = useAppFonts()
+function SectionHeader({ label, collapsed, onToggle, extra }: { label: string; collapsed: boolean; onToggle: () => void; extra?: React.ReactNode }): JSX.Element {
   const theme = useTheme()
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 6,
-      height: 28, paddingLeft: 8 + depth * 16, paddingRight: 12
-    }}>
-      {type === 'folder' ? <FolderIcon expanded={false} /> : <FileIcon name="new.txt" ext=".txt" />}
-      <input
-        autoFocus
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        onKeyDown={e => {
-          e.stopPropagation()
-          if (e.key === 'Enter') onSubmit()
-          if (e.key === 'Escape') onCancel()
-        }}
-        onBlur={onSubmit}
-        placeholder={type === 'file' ? 'filename.ts' : 'folder-name'}
-        style={{
-          flex: 1, padding: '4px 8px', fontSize: fonts.size, borderRadius: 4,
-          background: theme.surface.input, color: theme.text.secondary,
-          border: `1px solid ${theme.accent.base}`, outline: 'none',
-          boxSizing: 'border-box', fontFamily: 'inherit'
-        }}
-      />
-    </div>
-  )
-}
-
-function RenameInput({
-  value,
-  onChange,
-  onSubmit,
-  onCancel,
-}: {
-  value: string
-  onChange: (value: string) => void
-  onSubmit: () => void
-  onCancel: () => void
-}): JSX.Element {
   const fonts = useAppFonts()
-  const theme = useTheme()
-  return (
-    <input
-      autoFocus
-      value={value}
-      onChange={e => onChange(e.target.value)}
-      onKeyDown={e => {
-        e.stopPropagation()
-        if (e.key === 'Enter') onSubmit()
-        if (e.key === 'Escape') onCancel()
-      }}
-      onBlur={onSubmit}
-      onClick={e => e.stopPropagation()}
-      style={{
-        flex: 1, padding: '1px 4px', fontSize: fonts.size, borderRadius: 3,
-        background: theme.surface.input, color: theme.text.primary,
-        border: `1px solid ${theme.accent.base}`, outline: 'none',
-        fontFamily: 'inherit'
-      }}
-    />
-  )
-}
-
-function GitBadge({ status }: { status: GitStatus }): JSX.Element {
-  return (
-    <span style={{
-      fontSize: 10, fontWeight: 700, color: GIT_COLORS[status],
-      marginLeft: 6, flexShrink: 0, fontFamily: 'inherit', lineHeight: 1
-    }} title={status}>
-      {GIT_LABELS[status]}
-    </span>
-  )
-}
-
-function TreeNode({
-  entry,
-  depth,
-  rootPath,
-  expandedPaths,
-  gitStatus,
-  creatingIn,
-  createName,
-  setCreateName,
-  onToggle,
-  onOpenFile,
-  onCtxMenu,
-  onSubmitCreate,
-  onCancelCreate,
-  renamingPath,
-  selectedPath,
-  onSelectPath,
-  onRenameSubmit,
-  onRenameCancel,
-}: {
-  entry: TreeEntry
-  depth: number
-  rootPath: string
-  expandedPaths: Set<string>
-  gitStatus: Record<string, GitStatus>
-  creatingIn: CreateState | null
-  createName: string
-  setCreateName: (value: string) => void
-  onToggle: (path: string) => void
-  onOpenFile: (path: string) => void
-  onCtxMenu: (e: React.MouseEvent, entry: FsEntry) => void
-  onSubmitCreate: () => void
-  onCancelCreate: () => void
-  renamingPath: string | null
-  selectedPath?: string | null
-  onSelectPath?: (path: string | null) => void
-  onRenameSubmit: (oldPath: string, newName: string) => void
-  onRenameCancel: () => void
-}): JSX.Element {
-  const fonts = useAppFonts()
-  const theme = useTheme()
-  const expanded = entry.isDir && expandedPaths.has(entry.path)
-  const [hovered, setHovered] = useState(false)
-  const [renameVal, setRenameVal] = useState(entry.name)
-  const isRenaming = renamingPath === entry.path
-  const isCreateTarget = creatingIn?.dir === entry.path && entry.isDir
-  const isSelected = selectedPath === entry.path
-
-  useEffect(() => {
-    if (isRenaming) setRenameVal(entry.name)
-  }, [isRenaming, entry.name])
-
-  return (
-    <div>
-      <div
-        style={{
-          display: 'flex', alignItems: 'center',
-          height: 26, paddingLeft: 8 + depth * 16, paddingRight: 12,
-          cursor: 'pointer', userSelect: 'none',
-          background: isSelected
-            ? theme.surface.selection
-            : hovered ? theme.surface.hover : 'transparent',
-          border: `1px solid ${isSelected ? theme.surface.selectionBorder : 'transparent'}`,
-          boxShadow: 'none',
-          backdropFilter: 'none',
-          WebkitBackdropFilter: 'none',
-          position: 'relative',
-          borderRadius: 8,
-          margin: '0 6px'
-        }}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onClick={isRenaming ? undefined : () => {
-          onSelectPath?.(entry.path)
-          if (entry.isDir) onToggle(entry.path)
-          else onOpenFile(entry.path)
-        }}
-        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onCtxMenu(e, entry) }}
-        draggable={!entry.isDir && !isRenaming}
-        onDragStart={e => {
-          e.dataTransfer.setData('text/plain', entry.path)
-          e.dataTransfer.effectAllowed = 'copy'
-        }}
-      >
-        {Array.from({ length: depth }).map((_, i) => (
-          <div key={i} style={{
-            position: 'absolute', left: 8 + i * 16 + 5,
-            width: 1, top: 0, bottom: 0,
-            background: theme.border.subtle, pointerEvents: 'none'
-          }} />
-        ))}
-
-        {entry.isDir ? <FolderIcon expanded={expanded} /> : <FileIcon name={entry.name} ext={entry.ext} />}
-
-        {isRenaming ? (
-          <RenameInput
-            value={renameVal}
-            onChange={setRenameVal}
-            onSubmit={() => onRenameSubmit(entry.path, renameVal.trim())}
-            onCancel={onRenameCancel}
-          />
-        ) : (
-          <span style={{
-            fontSize: fonts.size,
-            color: isSelected ? theme.accent.hover : entry.isDir ? theme.text.primary : theme.text.secondary,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            flex: 1
-          }}>
-            {entry.isDir ? (
-              <>
-                <span style={{ fontWeight: 500 }}>{entry.name}</span>
-                {entry.children.length > 0 && <Badge count={entry.children.length} />}
-              </>
-            ) : (
-              <>
-                <span style={{ fontWeight: 400 }}>{entry.name.replace(entry.ext, '')}</span>
-                <span style={{ color: theme.text.disabled }}>{entry.ext}</span>
-              </>
-            )}
-          </span>
-        )}
-
-        {!isRenaming && gitStatus[entry.path] && (
-          <GitBadge status={gitStatus[entry.path]} />
-        )}
-      </div>
-
-      {entry.isDir && expanded && (
-        <div style={{ position: 'relative' }}>
-          {isCreateTarget && (
-            <CreateInline
-              depth={depth + 1}
-              type={creatingIn.type}
-              value={createName}
-              onChange={setCreateName}
-              onSubmit={onSubmitCreate}
-              onCancel={onCancelCreate}
-            />
-          )}
-
-          {entry.children.length === 0 && !isCreateTarget ? (
-            <div style={{
-              paddingLeft: 8 + (depth + 1) * 16 + 22,
-              height: 24, fontSize: fonts.size, color: theme.text.disabled,
-              display: 'flex', alignItems: 'center', fontFamily: 'inherit'
-            }}>
-              empty
-            </div>
-          ) : (
-            entry.children.map(child => (
-              <TreeNode
-                key={child.path}
-                entry={child}
-                depth={depth + 1}
-                rootPath={rootPath}
-                expandedPaths={expandedPaths}
-                gitStatus={gitStatus}
-                creatingIn={creatingIn}
-                createName={createName}
-                setCreateName={setCreateName}
-                onToggle={onToggle}
-                onOpenFile={onOpenFile}
-                onCtxMenu={onCtxMenu}
-                selectedPath={selectedPath}
-                onSelectPath={onSelectPath}
-                onSubmitCreate={onSubmitCreate}
-                onCancelCreate={onCancelCreate}
-                renamingPath={renamingPath}
-                onRenameSubmit={onRenameSubmit}
-                onRenameCancel={onRenameCancel}
-              />
-            ))
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function FlatEntry({
-  entry,
-  rootPath,
-  gitStatus,
-  onOpenFile,
-  onCtxMenu,
-  renamingPath,
-  selectedPath,
-  onSelectPath,
-  onRenameSubmit,
-  onRenameCancel,
-}: {
-  entry: TreeEntry
-  rootPath: string
-  gitStatus: Record<string, GitStatus>
-  onOpenFile: (path: string) => void
-  onCtxMenu: (e: React.MouseEvent, entry: FsEntry) => void
-  renamingPath: string | null
-  selectedPath?: string | null
-  onSelectPath?: (path: string | null) => void
-  onRenameSubmit: (oldPath: string, newName: string) => void
-  onRenameCancel: () => void
-}): JSX.Element {
-  const fonts = useAppFonts()
-  const theme = useTheme()
-  const [hovered, setHovered] = useState(false)
-  const [renameVal, setRenameVal] = useState(entry.name)
-  const isRenaming = renamingPath === entry.path
-  const isSelected = selectedPath === entry.path
-
-  useEffect(() => {
-    if (isRenaming) setRenameVal(entry.name)
-  }, [isRenaming, entry.name])
-
   return (
     <div
+      onClick={onToggle}
       style={{
-        display: 'flex', alignItems: 'center',
-        height: 26, paddingLeft: 10, paddingRight: 12,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6,
+        padding: '6px 12px 4px',
         cursor: 'pointer', userSelect: 'none',
-        background: isSelected
-          ? theme.surface.selection
-          : hovered ? theme.surface.hover : 'transparent',
-        border: `1px solid ${isSelected ? theme.surface.selectionBorder : 'transparent'}`,
-        boxShadow: 'none',
-        backdropFilter: 'none',
-        WebkitBackdropFilter: 'none',
-        borderRadius: 8,
-        margin: '0 6px',
       }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onClick={isRenaming ? undefined : () => {
-        onSelectPath?.(entry.path)
-        onOpenFile(entry.path)
-      }}
-      onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onCtxMenu(e, entry) }}
     >
-      <FileIcon name={entry.name} ext={entry.ext} />
-
-      {isRenaming ? (
-        <RenameInput
-          value={renameVal}
-          onChange={setRenameVal}
-          onSubmit={() => onRenameSubmit(entry.path, renameVal.trim())}
-          onCancel={onRenameCancel}
-        />
-      ) : (
-        <>
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
-            <span style={{
-              fontSize: fonts.size, fontFamily: 'inherit', color: isSelected ? theme.accent.hover : theme.text.secondary,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-            }}>
-              <span style={{ fontWeight: 400 }}>{entry.name.replace(entry.ext, '')}</span>
-              <span style={{ color: '#4a4a4a' }}>{entry.ext}</span>
-            </span>
-            <span style={{
-              fontSize: fonts.size - 1, fontFamily: 'inherit', color: theme.text.disabled,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-            }}>
-              {relativePath(rootPath, entry.path)}
-            </span>
-          </div>
-          {gitStatus[entry.path] && (
-            <GitBadge status={gitStatus[entry.path]} />
-          )}
-        </>
-      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <svg
+          width="8" height="8" viewBox="0 0 8 8"
+          style={{ transition: 'transform 0.15s ease', transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)', opacity: 0.5, flexShrink: 0 }}
+        >
+          <path d="M2 1l4 3-4 3" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span style={{
+          fontSize: fonts.secondarySize - 2, fontWeight: 700, color: theme.text.disabled,
+          letterSpacing: 1.2, textTransform: 'uppercase',
+        }}>
+          {label}
+        </span>
+      </div>
+      {extra && <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>{extra}</div>}
     </div>
   )
 }
 
+// ─── Sidebar item ────────────────────────────────────────────────────────────
+
+function SidebarItem({ label, icon, active, muted, onClick, onContextMenu, indent = 0, extra }: {
+  label: string
+  icon?: React.ReactNode
+  active?: boolean
+  muted?: boolean
+  onClick: () => void
+  onContextMenu?: (e: React.MouseEvent) => void
+  indent?: number
+  extra?: React.ReactNode
+}): JSX.Element {
+  const theme = useTheme()
+  const fonts = useAppFonts()
+  const [hovered, setHovered] = useState(false)
+  return (
+    <div
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 7,
+        padding: '4px 8px 4px ' + (12 + indent * 14) + 'px',
+        cursor: 'pointer', userSelect: 'none',
+        borderRadius: 6, margin: '0 6px',
+        background: active ? theme.surface.selection : hovered ? theme.surface.hover : 'transparent',
+        transition: 'background 0.1s ease',
+      }}
+    >
+      {icon && <span style={{ color: active ? theme.accent.base : muted ? theme.text.disabled : theme.text.muted, flexShrink: 0, display: 'flex', alignItems: 'center' }}>{icon}</span>}
+      <span style={{
+        fontSize: fonts.size, fontWeight: active ? 500 : 400,
+        color: active ? theme.accent.base : muted ? theme.text.disabled : theme.text.secondary,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        flex: 1,
+      }}>
+        {label}
+      </span>
+      {extra && hovered && extra}
+    </div>
+  )
+}
+
+// ─── Tile type icons (small, 12px) ──────────────────────────────────────────
+
+const TILE_ICONS: Record<string, JSX.Element> = {
+  terminal: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M2 3l4 4-4 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 11h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>,
+  code: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L1 7l4 4M9 3l4 4-4 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+  note: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><rect x="2" y="1.5" width="10" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.2" /><path d="M4.5 4.5h5M4.5 7h5M4.5 9.5h3" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" /></svg>,
+  browser: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" /><path d="M1 5h12" stroke="currentColor" strokeWidth="1.2" /></svg>,
+  chat: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M2 2h10a1 1 0 011 1v6a1 1 0 01-1 1H5l-3 2.5V10H2a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" /></svg>,
+  files: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M1 3C1 2.17 1.67 1.5 2.5 1.5H5L6.5 3H11.5C12.33 3 13 3.67 13 4.5V11C13 11.83 12.33 12.5 11.5 12.5H2.5C1.67 12.5 1 11.83 1 11V3Z" stroke="currentColor" strokeWidth="1.2" /></svg>,
+  kanban: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.1" /><rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.1" /><rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.1" /><rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.1" /></svg>,
+  image: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><rect x="1.5" y="1.5" width="11" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.2" /><circle cx="5" cy="5" r="1.2" stroke="currentColor" strokeWidth="1" /><path d="M1.5 10l3-3 2 2 2.5-3 3.5 4" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" /></svg>,
+}
+
+const RESOURCE_ITEMS = [
+  { id: 'prompts', label: 'Prompts', icon: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M3 2h8a1 1 0 011 1v8a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.2" /><path d="M4 5h6M4 7.5h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" /></svg> },
+  { id: 'skills', label: 'Skills', icon: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M7 1l1.8 3.6L13 5.2l-3 2.9.7 4.1L7 10.3 3.3 12.2l.7-4.1-3-2.9 4.2-.6L7 1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" /></svg> },
+  { id: 'tools', label: 'Tools', icon: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M8.5 2.5a3 3 0 00-4.2 4.2L2 9l1 2 2 1 2.3-2.3a3 3 0 004.2-4.2L9.5 7.5 8 7l-.5-1.5L9.5 3.5z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" /></svg> },
+  { id: 'agents', label: 'Agents', icon: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="4.5" r="2.5" stroke="currentColor" strokeWidth="1.2" /><path d="M2.5 12.5c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg> },
+]
+
+const SESSION_SOURCE_ICONS: Record<string, JSX.Element> = {
+  codesurf: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><rect x="1.5" y="1.5" width="11" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.2" /><path d="M4 4.5h6M4 7h6M4 9.5h4" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" /></svg>,
+  claude: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M3 7c0-2.2 1.8-4 4-4 1.5 0 2.8.8 3.5 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /><path d="M11 7c0 2.2-1.8 4-4 4-1.5 0-2.8-.8-3.5-2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /><circle cx="7" cy="7" r="1" fill="currentColor" /></svg>,
+  codex: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 2.5 1.8 7 5 11.5M9 2.5 12.2 7 9 11.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><path d="M6.3 12 7.7 2" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" /></svg>,
+  cursor: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M3 3h8v8H3z" stroke="currentColor" strokeWidth="1.2" /><path d="M5 5h4v4H5z" stroke="currentColor" strokeWidth="1.2" opacity="0.55" /></svg>,
+  openclaw: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M3 5c0-1.4 1-2.5 2.2-2.5.7 0 1 .4 1.8.4s1.1-.4 1.8-.4C10 2.5 11 3.6 11 5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /><path d="M2.5 7.5c0 1.7 1.4 3 3 3h3c1.6 0 3-1.3 3-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /><circle cx="5" cy="7" r=".8" fill="currentColor" /><circle cx="9" cy="7" r=".8" fill="currentColor" /></svg>,
+  opencode: <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><rect x="2" y="2" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.2" /><path d="M4.5 9.5 7 4.5l2.5 5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+}
+
+interface SessionEntry {
+  id: string
+  source: 'codesurf' | 'claude' | 'codex' | 'cursor' | 'openclaw' | 'opencode'
+  scope: 'workspace' | 'project' | 'user'
+  tileId: string | null
+  sessionId: string | null
+  provider: string
+  model: string
+  messageCount: number
+  lastMessage: string | null
+  updatedAt: number
+  filePath?: string
+  title: string
+  projectPath?: string | null
+  sourceLabel: string
+  sourceDetail?: string
+  canOpenInChat?: boolean
+  canOpenInApp?: boolean
+  resumeBin?: string
+  resumeArgs?: string[]
+  relatedGroupId?: string | null
+  nestingLevel?: number
+}
+
+interface DisplaySessionEntry extends SessionEntry {
+  displayIndent: number
+}
+
+function sessionMetaText(session: SessionEntry): string {
+  return `${session.title} ${session.sourceLabel} ${session.sourceDetail ?? ''}`.toLowerCase()
+}
+
+function isCronSession(session: SessionEntry): boolean {
+  const meta = sessionMetaText(session)
+  return meta.includes('scheduled task') || meta.includes('cron')
+}
+
+function isSubagentSession(session: SessionEntry): boolean {
+  if ((session.nestingLevel ?? 0) > 0) return true
+  return sessionMetaText(session).includes('subagent')
+}
+
+function buildNestedSessionList(sessions: SessionEntry[]): DisplaySessionEntry[] {
+  type SessionNode = {
+    session: SessionEntry
+    children: SessionNode[]
+    parentId: string | null
+    subtreeUpdatedAt: number
+  }
+
+  const sorted = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)
+  const nodes = new Map(sorted.map(session => [session.id, {
+    session,
+    children: [],
+    parentId: null,
+    subtreeUpdatedAt: session.updatedAt,
+  }]))
+  const byGroup = new Map<string, SessionEntry[]>()
+
+  for (const session of sorted) {
+    if (!session.relatedGroupId) continue
+    const group = byGroup.get(session.relatedGroupId) ?? []
+    group.push(session)
+    byGroup.set(session.relatedGroupId, group)
+  }
+
+  const chooseParent = (session: SessionEntry): SessionEntry | null => {
+    const groupId = session.relatedGroupId
+    const level = session.nestingLevel ?? 0
+    if (!groupId || level <= 0) return null
+
+    const candidates = (byGroup.get(groupId) ?? []).filter(candidate => {
+      if (candidate.id === session.id) return false
+      return (candidate.nestingLevel ?? 0) < level
+    })
+    if (candidates.length === 0) return null
+
+    const preferredLevel = level - 1
+    const preferred = candidates.filter(candidate => (candidate.nestingLevel ?? 0) === preferredLevel)
+    const pool = preferred.length > 0 ? preferred : candidates
+    const older = pool.filter(candidate => candidate.updatedAt <= session.updatedAt)
+    if (older.length > 0) {
+      older.sort((a, b) => b.updatedAt - a.updatedAt)
+      return older[0]
+    }
+    return [...pool].sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null
+  }
+
+  for (const session of sorted) {
+    const parent = chooseParent(session)
+    if (!parent) continue
+    const parentNode = nodes.get(parent.id)
+    const childNode = nodes.get(session.id)
+    if (!parentNode || !childNode) continue
+    childNode.parentId = parent.id
+    parentNode.children.push(childNode)
+  }
+
+  const computeSubtree = (node: SessionNode): number => {
+    let latest = node.session.updatedAt
+    for (const child of node.children) {
+      latest = Math.max(latest, computeSubtree(child))
+    }
+    node.children.sort((a, b) => b.subtreeUpdatedAt - a.subtreeUpdatedAt || b.session.updatedAt - a.session.updatedAt)
+    node.subtreeUpdatedAt = latest
+    return latest
+  }
+
+  const roots = [...nodes.values()].filter(node => !node.parentId)
+  for (const root of roots) computeSubtree(root)
+  roots.sort((a, b) => b.subtreeUpdatedAt - a.subtreeUpdatedAt || b.session.updatedAt - a.session.updatedAt)
+
+  const flattened: DisplaySessionEntry[] = []
+  const walk = (node: SessionNode, depth: number) => {
+    flattened.push({ ...node.session, displayIndent: depth })
+    for (const child of node.children) walk(child, depth + 1)
+  }
+
+  for (const root of roots) walk(root, 0)
+  return flattened
+}
+
+// ─── Tile label helper ───────────────────────────────────────────────────────
+
+function tileLabel(tile: TileState): string {
+  if (tile.filePath) {
+    const name = tile.filePath.split('/').pop() ?? tile.filePath
+    return name
+  }
+  const TYPE_LABELS: Record<string, string> = {
+    terminal: 'Terminal', note: 'Note', code: 'Code', image: 'Image',
+    kanban: 'Board', browser: 'Browser', chat: 'Chat', files: 'Files',
+  }
+  return TYPE_LABELS[tile.type] ?? tile.type
+}
+
+// ─── SidebarFooter ──────────────────────────────────────────────────────────
+
 type SidebarFooterProps = Pick<Props,
-  'onNewTerminal' | 'onNewKanban' | 'onNewBrowser' | 'onNewChat' | 'extensionTiles' | 'onAddExtensionTile'
+  'onNewTerminal' | 'onNewKanban' | 'onNewBrowser' | 'onNewChat' | 'onNewFiles' | 'extensionTiles' | 'onAddExtensionTile'
 >
 
 export function SidebarFooter({
-  onNewTerminal,
-  onNewKanban,
-  onNewBrowser,
-  onNewChat,
-  extensionTiles,
-  onAddExtensionTile,
+  onNewTerminal, onNewKanban, onNewBrowser, onNewChat, onNewFiles,
+  extensionTiles, onAddExtensionTile,
 }: SidebarFooterProps): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const [showExtMenu, setShowExtMenu] = useState(false)
   const extMenuRef = useRef<HTMLDivElement>(null)
+  const footerIconColor = theme.text.secondary
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -718,65 +307,41 @@ export function SidebarFooter({
   }, [])
 
   return (
-    <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-        <div
-          title="Beta build"
-          style={{
-            height: 17,
-            padding: '0 9px',
-            borderRadius: 999,
-            border: '1px solid rgba(255,255,255,0.72)',
-            color: 'rgba(255,255,255,0.9)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 10,
-            fontWeight: 500,
-            letterSpacing: 0.3,
-            textTransform: 'uppercase',
-            fontFamily: 'inherit',
-            flexShrink: 0,
-          }}
-        >
-          Beta
+    <div style={{ padding: '11px 8px 2px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
+        <div title="Alpha build" style={{
+          height: 17, padding: '0 9px', borderRadius: 5,
+          border: `1px solid ${theme.border.default}`, background: theme.surface.panelElevated,
+          color: footerIconColor,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: fonts.secondarySize - 1, fontWeight: 600, letterSpacing: 0.3, textTransform: 'uppercase', fontFamily: 'inherit', flexShrink: 0,
+        }}>
+          Alpha
         </div>
-        <span
-          title={`Version ${__VERSION__}`}
-          style={{
-            fontSize: 11,
-            fontWeight: 500,
-            color: 'rgba(255,255,255,0.42)',
-            fontFamily: 'inherit',
-            letterSpacing: 0.2,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
+        <span title={`Version ${__VERSION__}`} style={{
+          fontSize: fonts.secondarySize, fontWeight: 500, color: footerIconColor,
+          fontFamily: 'inherit', letterSpacing: 0.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
           v{__VERSION__}
         </span>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4, flexShrink: 0 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 2, flexShrink: 0 }}>
         {([
-          { label: 'New Terminal', icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 3l4 4-4 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 11h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>, action: onNewTerminal },
-          { label: 'Agent Board', icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" /><rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" /><rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" /><rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.2" /></svg>, action: onNewKanban },
-          { label: 'Browser', icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" /><path d="M1 5h12" stroke="currentColor" strokeWidth="1.2" /><circle cx="3" cy="3.5" r="0.5" fill="currentColor" /><circle cx="5" cy="3.5" r="0.5" fill="currentColor" /></svg>, action: onNewBrowser },
-          { label: 'Chat', icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 2h10a1 1 0 011 1v6a1 1 0 01-1 1H5l-3 2.5V10H2a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" /></svg>, action: onNewChat },
-        ] as { label: string; icon: React.ReactNode; action: () => void }[]).map(btn => (
-          <button
-            key={btn.label}
-            title={btn.label}
-            style={{
-              width: 28, height: 28, borderRadius: 6,
-              border: `1px solid ${theme.border.default}`, background: 'transparent',
-              color: theme.text.muted, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted; e.currentTarget.style.color = theme.text.primary }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = theme.text.muted }}
-            onClick={btn.action}
+          { label: 'New Terminal', icon: TILE_ICONS.terminal, action: onNewTerminal },
+          { label: 'Agent Board', icon: TILE_ICONS.kanban, action: onNewKanban, disabled: true },
+          { label: 'Browser', icon: TILE_ICONS.browser, action: onNewBrowser },
+          { label: 'Chat', icon: TILE_ICONS.chat, action: onNewChat },
+          { label: 'Files', icon: TILE_ICONS.files, action: onNewFiles },
+        ] as { label: string; icon: React.ReactNode; action: () => void; disabled?: boolean }[]).map(btn => (
+          <button key={btn.label} title={btn.disabled ? `${btn.label} disabled` : btn.label} style={{
+            width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent',
+            color: btn.disabled ? theme.text.disabled : footerIconColor, cursor: btn.disabled ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            opacity: btn.disabled ? 0.45 : 1,
+          }}
+            onMouseEnter={e => { if (!btn.disabled) e.currentTarget.style.color = theme.text.primary }}
+            onMouseLeave={e => { e.currentTarget.style.color = btn.disabled ? theme.text.disabled : footerIconColor }}
+            onClick={btn.disabled ? undefined : btn.action}
           >
             {btn.icon}
           </button>
@@ -784,23 +349,18 @@ export function SidebarFooter({
 
         {extensionTiles && extensionTiles.length > 0 && (
           <div style={{ position: 'relative' }} ref={extMenuRef}>
-            <button
-              title="Extensions"
-              style={{
-                width: 28, height: 28, borderRadius: 6,
-                border: `1px solid ${theme.border.default}`, background: showExtMenu ? theme.surface.panelMuted : 'transparent',
-                color: showExtMenu ? theme.text.primary : theme.text.muted, cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted; e.currentTarget.style.color = theme.text.primary }}
-              onMouseLeave={e => { if (!showExtMenu) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = theme.text.muted } }}
+            <button title="Extensions" style={{
+              width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent',
+              color: showExtMenu ? theme.text.primary : footerIconColor, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+              onMouseEnter={e => { e.currentTarget.style.color = theme.text.primary }}
+              onMouseLeave={e => { if (!showExtMenu) e.currentTarget.style.color = footerIconColor }}
               onClick={() => setShowExtMenu(p => !p)}
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M6 1.5h2a.5.5 0 01.5.5v1.5H8a1 1 0 00-1 1v0a1 1 0 001 1h.5V7a.5.5 0 01-.5.5H6V7a1 1 0 00-1-1v0a1 1 0 00-1 1v.5H2.5A.5.5 0 012 7V5.5h.5a1 1 0 001-1v0a1 1 0 00-1-1H2V2a.5.5 0 01.5-.5H6z"
-                  stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
-                <path d="M8 7.5h2a.5.5 0 01.5.5v1.5H10a1 1 0 00-1 1v0a1 1 0 001 1h.5V13a.5.5 0 01-.5.5H8V13a1 1 0 00-1-1v0a1 1 0 00-1 1v.5H4.5A.5.5 0 014 13v-1.5h.5a1 1 0 001-1v0a1 1 0 00-1-1H4V8a.5.5 0 01.5-.5H8z"
-                  stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" opacity="0.5" />
+                <path d="M6 1.5h2a.5.5 0 01.5.5v1.5H8a1 1 0 00-1 1v0a1 1 0 001 1h.5V7a.5.5 0 01-.5.5H6V7a1 1 0 00-1-1v0a1 1 0 00-1 1v.5H2.5A.5.5 0 012 7V5.5h.5a1 1 0 001-1v0a1 1 0 00-1-1H2V2a.5.5 0 01.5-.5H6z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
+                <path d="M8 7.5h2a.5.5 0 01.5.5v1.5H10a1 1 0 00-1 1v0a1 1 0 001 1h.5V13a.5.5 0 01-.5.5H8V13a1 1 0 00-1-1v0a1 1 0 00-1 1v.5H4.5A.5.5 0 014 13v-1.5h.5a1 1 0 001-1v0a1 1 0 00-1-1H4V8a.5.5 0 01.5-.5H8z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" opacity="0.5" />
               </svg>
             </button>
             {showExtMenu && (
@@ -809,23 +369,25 @@ export function SidebarFooter({
                 background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`, borderRadius: 8,
                 padding: 4, boxShadow: theme.shadow.panel, zIndex: 1000,
               }}>
-                {extensionTiles.map(ext => (
-                  <button
-                    key={ext.type}
-                    onClick={() => { onAddExtensionTile?.(ext.type); setShowExtMenu(false) }}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 8,
-                      width: '100%', padding: '6px 10px', borderRadius: 6,
-                      border: 'none', background: 'transparent',
-                      color: theme.text.secondary, fontSize: 12, cursor: 'pointer',
-                      textAlign: 'left',
+                {extensionTiles.map(ext => {
+                  const disabled = ext.type === 'ext:artifact-builder'
+                  return (
+                    <button key={ext.type} onClick={disabled ? undefined : () => { onAddExtensionTile?.(ext.type); setShowExtMenu(false) }} style={{
+                      display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '6px 10px', borderRadius: 6,
+                      border: 'none', background: 'transparent', color: disabled ? theme.text.disabled : theme.text.secondary, fontSize: fonts.size, cursor: disabled ? 'not-allowed' : 'pointer', textAlign: 'left',
+                      opacity: disabled ? 0.45 : 1,
                     }}
-                    onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted; e.currentTarget.style.color = theme.text.primary }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = theme.text.secondary }}
-                  >
-                    <span>{ext.label}</span>
-                  </button>
-                ))}
+                      onMouseEnter={e => {
+                        if (disabled) return
+                        e.currentTarget.style.background = theme.surface.panelMuted; e.currentTarget.style.color = theme.text.primary
+                      }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = disabled ? theme.text.disabled : theme.text.secondary }}
+                      title={disabled ? `${ext.label} disabled` : ext.label}
+                    >
+                      <span>{ext.label}</span>
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -835,171 +397,107 @@ export function SidebarFooter({
   )
 }
 
+// ─── Sidebar ─────────────────────────────────────────────────────────────────
+
 export function Sidebar({
-  workspace, workspaces, onSwitchWorkspace, onNewWorkspace, onOpenFolder, onOpenFile, selectedPath, onSelectPath, onNewTerminal, onNewKanban, onNewBrowser, onNewChat,
-  extensionTiles, onAddExtensionTile,
-  collapsed, width, onWidthChange, onResizeStateChange, onToggleCollapse: _onToggleCollapse, showFooter = true
+  workspace, workspaces, tiles, onSwitchWorkspace, onDeleteWorkspace, onNewWorkspace, onOpenFolder, onOpenFile, onFocusTile, onUpdateTile, onCloseTile,
+  onNewTerminal, onNewKanban, onNewBrowser, onNewChat, onNewFiles, onOpenSettings,
+  onOpenSessionInChat, onOpenSessionInApp,
+  extensionTiles, onAddExtensionTile, pinnedExtensionIds,
+  collapsed, width, onWidthChange, minWidth = 270, maxWidth = 520, onResizeStateChange, onToggleCollapse: _onToggleCollapse, showFooter = true
 }: Props): JSX.Element {
   const fonts = useAppFonts()
   const theme = useTheme()
-  const [treeEntries, setTreeEntries] = useState<TreeEntry[]>([])
-  const [sortMode, setSortMode] = useState<SortMode>('name')
-  const [viewMode, setViewMode] = useState<ViewMode>('tree')
-  const [search, setSearch] = useState('')
-  const [gitStatus, setGitStatus] = useState<Record<string, GitStatus>>({})
   const widthRef = useRef(width)
   useEffect(() => { widthRef.current = width }, [width])
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [wsDropdownOpen, setWsDropdownOpen] = useState(false)
   const [newWsInput, setNewWsInput] = useState(false)
   const [newWsName, setNewWsName] = useState('')
-  const [ctx, setCtx] = useState<CtxState | null>(null)
-  const [creatingIn, setCreatingIn] = useState<CreateState | null>(null)
-  const [createName, setCreateName] = useState('')
-  const [renamingPath, setRenamingPath] = useState<string | null>(null)
-  const [loadingTree, setLoadingTree] = useState(false)
-  const [showFileMenu, setShowFileMenu] = useState(false)
-  const fileMenuRef = useRef<HTMLDivElement>(null)
-  const expandedPathsRef = useRef(expandedPaths)
-  expandedPathsRef.current = expandedPaths
+  const [sectionsCollapsed, setSectionsCollapsed] = useState<Record<string, boolean>>({})
+  const [tileCtx, setTileCtx] = useState<{ x: number; y: number; tile: TileState } | null>(null)
+  const [sessionCtx, setSessionCtx] = useState<{ x: number; y: number; session: SessionEntry } | null>(null)
+  const [renamingTileId, setRenamingTileId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [sessions, setSessions] = useState<SessionEntry[]>([])
+  const [showCronSessions, setShowCronSessions] = useState(true)
+  const [showSubagentSessions, setShowSubagentSessions] = useState(true)
+  const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null)
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
+  const deleteConfirmTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (deleteConfirmTimerRef.current) window.clearTimeout(deleteConfirmTimerRef.current)
+    }
+  }, [])
+
+  // Load sessions for current workspace
+  useEffect(() => {
+    if (!workspace) return
+    let cancelled = false
+    const load = () => {
+      window.electron.canvas.listSessions(workspace.id).then(s => {
+        if (!cancelled) setSessions(s)
+      }).catch(() => {})
+    }
+    load()
+    // Refresh sessions periodically
+    const interval = setInterval(load, 10000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [workspace?.id, tiles])
+
+  const BORDER_RADIUS_CYCLE = [8, 0, 16, 24]
+  const cycleBorderRadius = useCallback((tile: TileState) => {
+    const current = tile.borderRadius ?? 8
+    const idx = BORDER_RADIUS_CYCLE.indexOf(current)
+    const next = BORDER_RADIUS_CYCLE[(idx + 1) % BORDER_RADIUS_CYCLE.length]
+    onUpdateTile(tile.id, { borderRadius: next })
+  }, [onUpdateTile])
+
+  const tileContextMenuItems = useCallback((tile: TileState): MenuItem[] => {
+    const items: MenuItem[] = [
+      { label: 'Rename', action: () => { setRenamingTileId(tile.id); setRenameValue(tile.label ?? tileLabel(tile)) } },
+      { label: '', action: () => {}, divider: true },
+      { label: tile.hideTitlebar ? 'Show Titlebar' : 'Hide Titlebar', action: () => onUpdateTile(tile.id, { hideTitlebar: !tile.hideTitlebar }) },
+    ]
+    if (tile.type === 'browser') {
+      items.push({ label: tile.hideNavbar ? 'Show Navbar' : 'Hide Navbar', action: () => onUpdateTile(tile.id, { hideNavbar: !tile.hideNavbar }) })
+    }
+    items.push(
+      { label: `Corner Radius: ${tile.borderRadius ?? 8}px`, action: () => cycleBorderRadius(tile) },
+      { label: '', action: () => {}, divider: true },
+      { label: 'Close', action: () => onCloseTile(tile.id), danger: true },
+    )
+    return items
+  }, [onUpdateTile, onCloseTile, cycleBorderRadius])
+  const sessionContextMenuItems = useCallback((session: SessionEntry): MenuItem[] => {
+    const items: MenuItem[] = []
+
+    if (session.tileId) {
+      items.push({ label: 'Focus Existing Chat', action: () => onFocusTile(session.tileId!) })
+    }
+    if (session.canOpenInChat !== false) {
+      items.push({ label: 'Open in Chat', action: () => onOpenSessionInChat(session) })
+    }
+    if (session.canOpenInApp) {
+      items.push({ label: `Open in ${session.sourceLabel}`, action: () => onOpenSessionInApp(session) })
+    }
+    if (session.filePath) {
+      items.push({ label: 'Open Raw File', action: () => onOpenFile(session.filePath!) })
+    }
+
+    return items.length > 0 ? items : [{ label: 'No actions available', action: () => {} }]
+  }, [onFocusTile, onOpenFile, onOpenSessionInApp, onOpenSessionInChat])
   const resizing = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
 
-  const loadGit = useCallback(() => {
-    if (!workspace) return
-    window.electron.git?.status(workspace.path).then((result: { isRepo: boolean; root: string; files: { path: string; status: string }[] }) => {
-      if (!result.isRepo) {
-        setGitStatus({})
-        return
-      }
-      const map: Record<string, GitStatus> = {}
-      for (const file of result.files) {
-        map[`${result.root}/${file.path}`] = file.status as GitStatus
-      }
-      setGitStatus(map)
-    }).catch(() => setGitStatus({}))
-  }, [workspace])
-
-  const loadDirChildren = useCallback(async (dirPath: string): Promise<TreeEntry[]> => {
-    return await loadOneLevel(dirPath, sortMode).catch(() => [])
-  }, [sortMode])
-
-  const updateChildrenInTree = useCallback((
-    entries: TreeEntry[],
-    dirPath: string,
-    children: TreeEntry[],
-  ): TreeEntry[] => {
-    return entries.map(entry => {
-      if (entry.path === dirPath) {
-        return { ...entry, children }
-      }
-      if (entry.isDir && entry.children.length > 0) {
-        return { ...entry, children: updateChildrenInTree(entry.children, dirPath, children) }
-      }
-      return entry
-    })
-  }, [])
-
-  const loadTree = useCallback(async () => {
-    if (!workspace) {
-      setTreeEntries([])
-      return
-    }
-    setLoadingTree(true)
-    const rootChildren = await loadOneLevel(workspace.path, sortMode).catch(() => [])
-    setTreeEntries(rootChildren)
-    setLoadingTree(false)
-  }, [workspace, sortMode])
-
-  const reloadAll = useCallback(async () => {
-    if (!workspace) {
-      loadGit()
-      return
-    }
-    setLoadingTree(true)
-    const expanded = expandedPathsRef.current
-    const rootChildren = await loadOneLevel(workspace.path, sortMode).catch(() => [])
-
-    // Recursively reload children for currently-expanded dirs
-    const reloadExpanded = async (entries: TreeEntry[]): Promise<TreeEntry[]> => {
-      return await Promise.all(entries.map(async (entry) => {
-        if (entry.isDir && expanded.has(entry.path)) {
-          const children = await loadOneLevel(entry.path, sortMode).catch(() => [])
-          const reloadedChildren = await reloadExpanded(children)
-          return { ...entry, children: reloadedChildren }
-        }
-        return entry
-      }))
-    }
-
-    const reloaded = await reloadExpanded(rootChildren)
-    setTreeEntries(reloaded)
-    setLoadingTree(false)
-    loadGit()
-  }, [workspace, sortMode, loadGit])
-
-  useEffect(() => {
-    if (!workspace) {
-      setExpandedPaths(new Set())
-      setCreatingIn(null)
-      setCreateName('')
-      return
-    }
-    setExpandedPaths(new Set([workspace.path]))
-    void reloadAll()
-  }, [workspace?.id, reloadAll])
-
-  useEffect(() => {
-    if (!workspace) return
-    void loadTree()
-  }, [sortMode, workspace?.id, loadTree])
-
-  useEffect(() => {
-    loadGit()
-  }, [loadGit])
-
-  useEffect(() => {
-    if (!workspace) return
-    const unsub = window.electron.fs.watch(workspace.path, () => { void reloadAll() })
-    return () => unsub?.()
-  }, [workspace, reloadAll])
-
-  useEffect(() => {
-    if (!workspace || !selectedPath || !selectedPath.startsWith(workspace.path)) return
-
-    const relative = selectedPath.slice(workspace.path.length).replace(/^\/+/, '')
-    const segments = relative.split('/').filter(Boolean)
-    const parentDirs: string[] = []
-    let current = workspace.path
-
-    for (const segment of segments.slice(0, -1)) {
-      current = `${current}/${segment}`
-      parentDirs.push(current)
-    }
-
-    if (parentDirs.length === 0) return
-
-    setExpandedPaths(prev => {
-      const next = new Set(prev)
-      next.add(workspace.path)
-      parentDirs.forEach(dir => next.add(dir))
-      return next
-    })
-
-    void (async () => {
-      const dirsToLoad = [workspace.path, ...parentDirs]
-      for (const dir of dirsToLoad) {
-        const children = await loadDirChildren(dir)
-        setTreeEntries(prev => dir === workspace.path ? children : updateChildrenInTree(prev, dir, children))
-      }
-    })()
-  }, [workspace, selectedPath, loadDirChildren, updateChildrenInTree])
+  const toggleSection = (key: string) => setSectionsCollapsed(prev => ({ ...prev, [key]: !prev[key] }))
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!resizing.current) return
-      onWidthChange(Math.max(200, Math.min(520, startWidth.current + e.clientX - startX.current)))
+      onWidthChange(Math.max(minWidth, Math.min(maxWidth, startWidth.current + e.clientX - startX.current)))
     }
     const onUp = () => {
       if (!resizing.current) return
@@ -1014,152 +512,83 @@ export function Sidebar({
     }
   }, [onResizeStateChange, onWidthChange])
 
-  useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) setShowFileMenu(false)
+  // Group tiles by type for the Extensions section
+  const coreTiles = useMemo(() => tiles.filter(t => ['terminal', 'code', 'note', 'browser', 'chat', 'files', 'kanban', 'image'].includes(t.type)), [tiles])
+  const extensionInstances = useMemo(() => tiles.filter(t => t.type.startsWith('ext:')), [tiles])
+
+  // Group core tiles by type
+  const coreGroups = useMemo(() => {
+    const groups: Record<string, TileState[]> = {}
+    for (const t of coreTiles) {
+      if (!groups[t.type]) groups[t.type] = []
+      groups[t.type].push(t)
     }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
-  }, [])
+    return groups
+  }, [coreTiles])
 
-  const flatFiles = useMemo(() => flattenFiles(treeEntries), [treeEntries])
-  const filteredTree = useMemo(() => filterTree(treeEntries, search), [treeEntries, search])
-  const filteredFlat = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return q ? flatFiles.filter(entry => relativePath(workspace?.path ?? '', entry.path).toLowerCase().includes(q)) : flatFiles
-  }, [flatFiles, search, workspace?.path])
-
-  const cycleSortMode = useCallback(() => {
-    setSortMode(prev => SORT_MODES[(SORT_MODES.indexOf(prev) + 1) % SORT_MODES.length])
-  }, [])
-
-  const handleCtxMenu = useCallback((e: React.MouseEvent, entry: FsEntry) => {
-    setCtx({ x: e.clientX, y: e.clientY, entry })
-  }, [])
-
-  const handleBgCtxMenu = useCallback((e: React.MouseEvent) => {
-    if (!workspace) return
-    e.preventDefault()
-    setCtx({ x: e.clientX, y: e.clientY, entry: { name: workspace.name, path: workspace.path, isDir: true, ext: '' } })
-  }, [workspace])
-
-  const startCreate = useCallback(async (dir: string, type: 'file' | 'folder') => {
-    const wasExpanded = expandedPathsRef.current.has(dir)
-    setExpandedPaths(prev => new Set(prev).add(dir))
-    if (!wasExpanded) {
-      const children = await loadDirChildren(dir)
-      setTreeEntries(prev => updateChildrenInTree(prev, dir, children))
+  // Group extension tiles by type
+  const extGroups = useMemo(() => {
+    const groups: Record<string, TileState[]> = {}
+    for (const t of extensionInstances) {
+      if (!groups[t.type]) groups[t.type] = []
+      groups[t.type].push(t)
     }
-    setCreatingIn({ dir, type })
-    setCreateName('')
-    setCtx(null)
-  }, [loadDirChildren, updateChildrenInTree])
+    return groups
+  }, [extensionInstances])
 
-  const submitCreate = useCallback(async () => {
-    if (!creatingIn || !workspace) {
-      setCreatingIn(null)
-      return
-    }
-    const name = createName.trim()
-    if (!name) {
-      setCreatingIn(null)
-      setCreateName('')
-      return
-    }
-    const fullPath = `${creatingIn.dir}/${name}`
-    try {
-      if (creatingIn.type === 'file') await window.electron.fs.createFile(fullPath)
-      else await window.electron.fs.createDir(fullPath)
+  const extLabel = (type: string) => {
+    const entry = extensionTiles?.find(e => e.type === type)
+    if (entry) return entry.label
+    return type.replace('ext:', '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  }
 
-      if (creatingIn.type === 'folder') {
-        setExpandedPaths(prev => new Set(prev).add(creatingIn.dir).add(fullPath))
-      }
-    } catch (err) {
-      console.error(`Failed to create ${creatingIn.type}:`, err)
-    }
-    setCreatingIn(null)
-    setCreateName('')
-    await reloadAll()
-  }, [creatingIn, createName, workspace, reloadAll])
-
-  const cancelCreate = useCallback(() => {
-    setCreatingIn(null)
-    setCreateName('')
-  }, [])
-
-  const handleRenameSubmit = useCallback(async (oldPath: string, newName: string) => {
-    setRenamingPath(null)
-    const trimmed = newName.trim()
-    const oldBase = oldPath.split('/').pop() ?? ''
-    if (!trimmed || trimmed === oldBase) return
-    const dir = oldPath.split('/').slice(0, -1).join('/')
-    const newPath = `${dir}/${trimmed}`
-    try {
-      await window.electron.fs.renameFile(oldPath, newPath)
-      setExpandedPaths(prev => mapPathPrefixes(prev, oldPath, newPath))
-    } catch (err) {
-      console.error('Rename failed:', err)
-    }
-    await reloadAll()
-  }, [reloadAll])
-
-  const handleDelete = useCallback(async (entry: FsEntry) => {
-    try {
-      await window.electron.fs.deleteFile(entry.path)
-      setExpandedPaths(prev => removePathPrefixes(prev, entry.path))
-      if (renamingPath && (renamingPath === entry.path || renamingPath.startsWith(`${entry.path}/`))) setRenamingPath(null)
-      if (creatingIn && (creatingIn.dir === entry.path || creatingIn.dir.startsWith(`${entry.path}/`))) cancelCreate()
-    } catch (err) {
-      console.error('Delete failed:', err)
-    }
-    await reloadAll()
-  }, [renamingPath, creatingIn, cancelCreate, reloadAll])
-
-  const ctxItems = useCallback((): MenuItem[] => {
-    if (!ctx) return []
-    const { entry } = ctx
-    const dir = entry.isDir ? entry.path : entry.path.split('/').slice(0, -1).join('/')
-    const items: MenuItem[] = []
-    if (!entry.isDir) items.push({ label: 'Open', action: () => onOpenFile(entry.path) })
-    items.push({ label: 'New File', action: () => startCreate(dir, 'file') })
-    items.push({ label: 'New Folder', action: () => startCreate(dir, 'folder') })
-    items.push({ label: '', action: () => {}, divider: true })
-    items.push({ label: 'Rename', action: () => setRenamingPath(entry.path) })
-    items.push({ label: 'Copy Path', action: () => navigator.clipboard.writeText(entry.path) })
-    items.push({ label: 'Reveal in Finder', action: () => window.electron.fs.revealInFinder?.(entry.path) })
-    items.push({ label: '', action: () => {}, divider: true })
-    items.push({ label: `Delete ${entry.isDir ? 'Folder' : 'File'}`, danger: true, action: () => { void handleDelete(entry) } })
-    return items
-  }, [ctx, onOpenFile, startCreate, handleDelete])
-
-  const toggleExpanded = useCallback(async (path: string) => {
-    setExpandedPaths(prev => {
-      const next = new Set(prev)
-      if (next.has(path)) {
-        next.delete(path)
-        return next
-      }
-      next.add(path)
-      return next
+  const visibleSessions = useMemo(() => {
+    const filtered = sessions.filter(session => {
+      if (!showCronSessions && isCronSession(session)) return false
+      if (!showSubagentSessions && isSubagentSession(session)) return false
+      return true
     })
+    return buildNestedSessionList(filtered)
+  }, [sessions, showCronSessions, showSubagentSessions])
 
-    // If expanding, lazy-load children
-    if (!expandedPathsRef.current.has(path)) {
-      const children = await loadDirChildren(path)
-      setTreeEntries(prev => updateChildrenInTree(prev, path, children))
+  const armDeleteSession = useCallback((sessionId: string) => {
+    if (deleteConfirmTimerRef.current) window.clearTimeout(deleteConfirmTimerRef.current)
+    setPendingDeleteSessionId(sessionId)
+    deleteConfirmTimerRef.current = window.setTimeout(() => {
+      setPendingDeleteSessionId(current => current === sessionId ? null : current)
+      deleteConfirmTimerRef.current = null
+    }, 4000)
+  }, [])
+
+  const deleteSession = useCallback(async (session: SessionEntry) => {
+    if (!workspace || deletingSessionId) return
+    setDeletingSessionId(session.id)
+    try {
+      const result = await window.electron.canvas.deleteSession(workspace.id, session.id)
+      if (result?.ok) {
+        setSessions(prev => prev.filter(entry => entry.id !== session.id))
+      }
+    } finally {
+      setDeletingSessionId(null)
+      setPendingDeleteSessionId(current => current === session.id ? null : current)
+      if (deleteConfirmTimerRef.current) {
+        window.clearTimeout(deleteConfirmTimerRef.current)
+        deleteConfirmTimerRef.current = null
+      }
     }
-  }, [loadDirChildren, updateChildrenInTree])
+  }, [workspace, deletingSessionId])
 
   return (
     <div style={{
-      width: collapsed ? 0 : width,
+      width: collapsed ? 0 : Math.max(width, minWidth),
+      minWidth: collapsed ? 0 : minWidth,
       height: '100%',
       display: 'flex', flexDirection: 'column',
       position: 'relative', overflow: 'hidden',
       transition: 'width 0.15s ease',
     }}>
-      {/* Workspace selector — tight to top */}
-      <div style={{ padding: '4px 10px 6px' }}>
+      {/* ── WORKSPACES ── */}
+      <div style={{ padding: '4px 10px 2px' }}>
         <div
           style={{
             display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
@@ -1170,215 +599,355 @@ export function Sidebar({
         >
           <span style={{
             fontSize: fonts.size, color: theme.text.primary, fontWeight: 500,
-            flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            fontFamily: 'inherit'
+            flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'inherit'
           }}>
             {workspace?.name ?? 'No workspace'}
           </span>
-          <span style={{ fontSize: 9, color: theme.text.disabled }}>{wsDropdownOpen ? '▴' : '▾'}</span>
+          <span style={{ fontSize: 9, color: theme.text.disabled }}>{wsDropdownOpen ? '\u25B4' : '\u25BE'}</span>
         </div>
 
         {wsDropdownOpen && (
           <div style={{ marginTop: 4, background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`, borderRadius: 8, overflow: 'hidden' }}>
             {workspaces.map(ws => (
-              <div
-                key={ws.id}
-                style={{ padding: '7px 14px', fontSize: fonts.size, fontFamily: 'inherit', color: ws.id === workspace?.id ? theme.accent.base : theme.text.secondary, cursor: 'pointer' }}
+              <div key={ws.id}
+                style={{
+                  padding: '7px 10px 7px 14px', fontSize: fonts.size, fontFamily: 'inherit', color: ws.id === workspace?.id ? theme.accent.base : theme.text.secondary, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                }}
                 onMouseEnter={e => (e.currentTarget.style.background = theme.surface.hover)}
                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 onClick={() => { onSwitchWorkspace(ws.id); setWsDropdownOpen(false) }}
               >
-                {ws.name}
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ws.name}</span>
+                <button
+                  title="Delete workspace record"
+                  onClick={e => {
+                    e.stopPropagation()
+                    onDeleteWorkspace(ws.id)
+                  }}
+                  style={{
+                    width: 18, height: 18, borderRadius: 4, border: 'none', background: 'transparent',
+                    color: theme.text.disabled, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted; e.currentTarget.style.color = theme.status.danger }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = theme.text.disabled }}
+                >
+                  ×
+                </button>
               </div>
             ))}
             <div style={{ height: 1, background: theme.border.default, margin: '2px 0' }} />
             {newWsInput ? (
               <div style={{ padding: '4px 8px' }}>
-                <input
-                  autoFocus
-                  value={newWsName}
-                  onChange={e => setNewWsName(e.target.value)}
+                <input autoFocus value={newWsName} onChange={e => setNewWsName(e.target.value)}
                   onKeyDown={e => {
-                    if (e.key === 'Enter' && newWsName.trim()) {
-                      onNewWorkspace(newWsName.trim())
-                      setNewWsName('')
-                      setNewWsInput(false)
-                      setWsDropdownOpen(false)
-                    }
-                    if (e.key === 'Escape') {
-                      setNewWsInput(false)
-                      setNewWsName('')
-                    }
+                    if (e.key === 'Enter' && newWsName.trim()) { onNewWorkspace(newWsName.trim()); setNewWsName(''); setNewWsInput(false); setWsDropdownOpen(false) }
+                    if (e.key === 'Escape') { setNewWsInput(false); setNewWsName('') }
                   }}
-                  placeholder="Workspace name…"
+                  placeholder="Workspace name..."
                   style={{ width: '100%', padding: '4px 8px', fontSize: fonts.size, borderRadius: 4, background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.accent.base}`, outline: 'none', fontFamily: 'inherit' }}
                 />
               </div>
             ) : (
               <>
-                <div
-                  style={{ padding: '7px 14px', fontSize: fonts.size, color: theme.text.disabled, cursor: 'pointer', fontFamily: 'inherit' }}
+                <div style={{ padding: '7px 14px', fontSize: fonts.size, color: theme.text.muted, cursor: 'pointer', fontFamily: 'inherit' }}
                   onMouseEnter={e => (e.currentTarget.style.background = theme.surface.hover)}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                   onClick={() => { onOpenFolder(); setWsDropdownOpen(false) }}
-                >
-                  Open Folder…
-                </div>
-                <div
-                  style={{ padding: '7px 14px', fontSize: fonts.size, color: theme.text.disabled, cursor: 'pointer', fontFamily: 'inherit' }}
+                >Open Folder...</div>
+                <div style={{ padding: '7px 14px', fontSize: fonts.size, color: theme.text.muted, cursor: 'pointer', fontFamily: 'inherit' }}
                   onMouseEnter={e => (e.currentTarget.style.background = theme.surface.hover)}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                   onClick={() => setNewWsInput(true)}
-                >
-                  + New empty workspace
-                </div>
+                >+ New empty workspace</div>
               </>
             )}
           </div>
         )}
       </div>
 
-      {/* Compact toolbar: [ Search ] [Sort] [Menu] */}
-      <div style={{ padding: '4px 10px 6px', borderBottom: `1px solid ${theme.border.subtle}`, display: 'flex', gap: 4, alignItems: 'center' }}>
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search files"
-          style={{
-            flex: 1, padding: '4px 10px', fontSize: fonts.size,
-            background: theme.surface.input, color: theme.text.secondary,
-            border: `1px solid ${theme.border.default}`, borderRadius: 6,
-            outline: 'none', fontFamily: 'inherit', minWidth: 0
-          }}
-        />
-        <button
-          onClick={cycleSortMode}
-          title={`Sort: ${SORT_LABELS[sortMode]}`}
-          style={{
-            background: 'transparent', border: 'none',
-            cursor: 'pointer', padding: '4px 5px', borderRadius: 4,
-            color: theme.text.muted, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0
-          }}
-          onMouseEnter={e => { e.currentTarget.style.color = theme.text.primary }}
-          onMouseLeave={e => { e.currentTarget.style.color = theme.text.muted }}
-        >
-          <SortIcon mode={sortMode} />
-        </button>
-        <div ref={fileMenuRef} style={{ position: 'relative', flexShrink: 0 }}>
-          <button
-            onClick={() => setShowFileMenu(p => !p)}
-            title="File actions"
-            style={{
-              background: showFileMenu ? theme.surface.panelMuted : 'transparent', border: 'none',
-              cursor: 'pointer', padding: '4px 5px', borderRadius: 4,
-              color: showFileMenu ? theme.text.primary : theme.text.muted, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-            onMouseEnter={e => { if (!showFileMenu) e.currentTarget.style.color = theme.text.primary }}
-            onMouseLeave={e => { if (!showFileMenu) e.currentTarget.style.color = theme.text.muted }}
-          >
-            {/* Hamburger / list icon */}
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M2 3.5h10M2 7h10M2 10.5h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-            </svg>
-          </button>
-          {showFileMenu && (
-            <div style={{
-              position: 'absolute', top: '100%', right: 0,
-              marginTop: 4, minWidth: 150,
-              background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`,
-              borderRadius: 8, padding: 4,
-              boxShadow: theme.shadow.panel,
-              zIndex: 9999,
-            }}>
-              {([
-                { label: 'New File', action: () => { workspace && startCreate(workspace.path, 'file'); setShowFileMenu(false) } },
-                { label: 'New Folder', action: () => { workspace && startCreate(workspace.path, 'folder'); setShowFileMenu(false) } },
-                { label: 'Refresh', action: () => { void reloadAll(); setShowFileMenu(false) } },
-                { label: 'Show in Finder', action: () => { workspace && window.electron.fs.revealInFinder?.(workspace.path); setShowFileMenu(false) } },
-              ]).map(item => (
-                <div
-                  key={item.label}
-                  onClick={item.action}
-                  style={{
-                    padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
-                    fontSize: fonts.size, color: theme.text.secondary, fontFamily: 'inherit',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.background = theme.surface.hover)}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                >
-                  {item.label}
+      {/* Scrollable sections */}
+      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingTop: 6 }}>
+
+        {/* ── PINNED EXTENSIONS ── */}
+        {pinnedExtensionIds && pinnedExtensionIds.length > 0 && (() => {
+          const pinned = (extensionTiles ?? []).filter(e => {
+            const extId = e.type.replace(/^ext:/, '').split('-tile')[0]
+            return pinnedExtensionIds.some(pid => e.type.includes(pid) || extId === pid || pid === e.type)
+          })
+          if (pinned.length === 0) return null
+          return (
+            <>
+              <SectionHeader label="Extensions" collapsed={!!sectionsCollapsed.extensions} onToggle={() => toggleSection('extensions')} />
+              {!sectionsCollapsed.extensions && (
+                <div style={{ paddingBottom: 6 }}>
+                  {pinned.map(ext => (
+                    <SidebarItem
+                      key={ext.type}
+                      label={ext.label}
+                      icon={<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M6 1.5h2a.5.5 0 01.5.5v1.5H8a1 1 0 00-1 1 1 1 0 001 1h.5V7a.5.5 0 01-.5.5H6V7a1 1 0 00-1-1 1 1 0 00-1 1v.5H2.5A.5.5 0 012 7V5.5h.5a1 1 0 001-1 1 1 0 00-1-1H2V2a.5.5 0 01.5-.5H6z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round"/></svg>}
+                      onClick={() => onAddExtensionTile?.(ext.type)}
+                    />
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0', position: 'relative' }} onContextMenu={handleBgCtxMenu}>
-        {!workspace ? (
-          <div style={{ padding: '16px', fontSize: fonts.size, color: theme.text.disabled, fontFamily: 'inherit' }}>No workspace open</div>
-        ) : loadingTree && treeEntries.length === 0 ? (
-          <div style={{ padding: '16px', fontSize: fonts.size, color: theme.text.muted, fontFamily: 'inherit' }}>Loading files…</div>
-        ) : viewMode === 'list' ? (
-          filteredFlat.length === 0 ? (
-            <div style={{ padding: '16px', fontSize: fonts.size, color: theme.text.disabled, fontFamily: 'inherit' }}>{search ? 'No matches' : 'Empty'}</div>
-          ) : (
-            filteredFlat.map(entry => (
-              <FlatEntry
-                key={entry.path}
-                entry={entry}
-                rootPath={workspace.path}
-                gitStatus={gitStatus}
-                onOpenFile={onOpenFile}
-                onCtxMenu={handleCtxMenu}
-                renamingPath={renamingPath}
-                selectedPath={selectedPath}
-                onSelectPath={onSelectPath}
-                onRenameSubmit={handleRenameSubmit}
-                onRenameCancel={() => setRenamingPath(null)}
-              />
-            ))
+              )}
+            </>
           )
-        ) : (
-          <>
-            {creatingIn?.dir === workspace.path && (
-              <CreateInline
-                depth={0}
-                type={creatingIn.type}
-                value={createName}
-                onChange={setCreateName}
-                onSubmit={submitCreate}
-                onCancel={cancelCreate}
-              />
-            )}
+        })()}
 
-            {filteredTree.length === 0 ? (
-              <div style={{ padding: '16px', fontSize: fonts.size, color: theme.text.disabled, fontFamily: 'inherit' }}>{search ? 'No matches' : 'Empty'}</div>
-            ) : (
-              filteredTree.map(entry => (
-                <TreeNode
-                  key={entry.path}
-                  entry={entry}
-                  depth={0}
-                  rootPath={workspace.path}
-                  expandedPaths={expandedPaths}
-                  gitStatus={gitStatus}
-                  creatingIn={creatingIn?.dir === workspace.path ? null : creatingIn}
-                  createName={createName}
-                  setCreateName={setCreateName}
-                  onToggle={toggleExpanded}
-                  onOpenFile={onOpenFile}
-                  onCtxMenu={handleCtxMenu}
-                  selectedPath={selectedPath}
-                  onSelectPath={onSelectPath}
-                  onSubmitCreate={submitCreate}
-                  onCancelCreate={cancelCreate}
-                  renamingPath={renamingPath}
-                  onRenameSubmit={handleRenameSubmit}
-                  onRenameCancel={() => setRenamingPath(null)}
-                />
-              ))
+        {/* ── RESOURCES ── */}
+        <SectionHeader label="Resources" collapsed={!!sectionsCollapsed.resources} onToggle={() => toggleSection('resources')} />
+        {!sectionsCollapsed.resources && (
+          <div style={{ paddingBottom: 6 }}>
+            {RESOURCE_ITEMS.map(item => (
+              <SidebarItem
+                key={item.id}
+                label={item.label}
+                icon={item.icon}
+                onClick={() => onOpenSettings(item.id)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* ── BLOCKS ── */}
+        <SectionHeader label="Blocks" collapsed={!!sectionsCollapsed.blocks} onToggle={() => toggleSection('blocks')} />
+        {!sectionsCollapsed.blocks && (
+          <div style={{ paddingBottom: 6 }}>
+            {Object.entries(coreGroups).map(([type, instances]) => (
+              <React.Fragment key={type}>
+                {instances.map(tile => (
+                  renamingTileId === tile.id ? (
+                    <div key={tile.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 12px', margin: '0 6px' }}>
+                      <span style={{ color: theme.text.muted, flexShrink: 0, display: 'flex', alignItems: 'center' }}>{TILE_ICONS[tile.type] ?? TILE_ICONS.code}</span>
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            const trimmed = renameValue.trim()
+                            onUpdateTile(tile.id, { label: trimmed || undefined })
+                            setRenamingTileId(null)
+                          }
+                          if (e.key === 'Escape') setRenamingTileId(null)
+                        }}
+                        onBlur={() => {
+                          const trimmed = renameValue.trim()
+                          onUpdateTile(tile.id, { label: trimmed || undefined })
+                          setRenamingTileId(null)
+                        }}
+                        style={{
+                          flex: 1, padding: '2px 6px', fontSize: fonts.size, borderRadius: 4,
+                          background: theme.surface.input, color: theme.text.primary,
+                          border: `1px solid ${theme.accent.base}`, outline: 'none',
+                          fontFamily: 'inherit', minWidth: 0,
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <SidebarItem
+                      key={tile.id}
+                      label={tileLabel(tile)}
+                      icon={TILE_ICONS[tile.type] ?? TILE_ICONS.code}
+                      onClick={() => onFocusTile(tile.id)}
+                      onContextMenu={e => { e.preventDefault(); setTileCtx({ x: e.clientX, y: e.clientY, tile }) }}
+                      extra={
+                        <div style={{ display: 'flex', gap: 1, flexShrink: 0 }}>
+                          {/* Hide/show titlebar */}
+                          <button onClick={e => { e.stopPropagation(); onUpdateTile(tile.id, { hideTitlebar: !tile.hideTitlebar }) }}
+                            title={tile.hideTitlebar ? 'Show titlebar' : 'Hide titlebar'}
+                            style={{ width: 18, height: 18, borderRadius: 3, border: 'none', background: 'transparent', color: tile.hideTitlebar ? theme.accent.base : theme.text.disabled, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0 }}
+                            className="sidebar-tile-action"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.3" /><path d="M1 4.5h12" stroke="currentColor" strokeWidth="1.3" /></svg>
+                          </button>
+                          {/* Cycle border radius */}
+                          <button onClick={e => { e.stopPropagation(); cycleBorderRadius(tile) }}
+                            title={`Border radius: ${tile.borderRadius ?? 8}px`}
+                            style={{ width: 18, height: 18, borderRadius: 3, border: 'none', background: 'transparent', color: theme.text.disabled, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0 }}
+                            className="sidebar-tile-action"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx={Math.min((tile.borderRadius ?? 8) / 2, 6)} stroke="currentColor" strokeWidth="1.3" /></svg>
+                          </button>
+                        </div>
+                      }
+                    />
+                  )
+                ))}
+              </React.Fragment>
+            ))}
+            {coreTiles.length === 0 && (
+              <div style={{ padding: '4px 12px', fontSize: fonts.secondarySize, color: theme.text.disabled }}>No blocks open</div>
+            )}
+          </div>
+        )}
+
+        {/* ── SESSIONS ── */}
+        <SectionHeader
+          label="Sessions"
+          collapsed={!!sectionsCollapsed.sessions}
+          onToggle={() => toggleSection('sessions')}
+          extra={(
+            <>
+              <button
+                title={showCronSessions ? 'Hide cron jobs' : 'Show cron jobs'}
+                onClick={() => setShowCronSessions(value => !value)}
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: 6,
+                  border: 'none',
+                  background: showCronSessions ? theme.surface.hover : 'transparent',
+                  color: showCronSessions ? theme.text.secondary : theme.text.disabled,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: showCronSessions ? 1 : 0.6,
+                }}
+              >
+                <svg width="11" height="11" viewBox="0 0 14 14" fill="none">
+                  <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.2" />
+                  <path d="M7 4.4v2.9l1.8 1.2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <button
+                title={showSubagentSessions ? 'Hide subagents' : 'Show subagents'}
+                onClick={() => setShowSubagentSessions(value => !value)}
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: 6,
+                  border: 'none',
+                  background: showSubagentSessions ? theme.surface.hover : 'transparent',
+                  color: showSubagentSessions ? theme.text.secondary : theme.text.disabled,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: showSubagentSessions ? 1 : 0.6,
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                  <path d="M4 3.2h6M4 10.8h6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                  <path d="M4.8 3.2v2.1c0 .9.7 1.6 1.6 1.6h1.2c.9 0 1.6.7 1.6 1.6v2.3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </>
+          )}
+        />
+        {!sectionsCollapsed.sessions && (
+          <div style={{ paddingBottom: 6 }}>
+            {visibleSessions.length === 0 ? (
+              <div style={{ padding: '4px 12px', fontSize: fonts.secondarySize, color: theme.text.disabled }}>No sessions yet</div>
+            ) : visibleSessions.map(session => (
+              <SidebarItem
+                key={session.id}
+                label={session.title.length > 44 ? `${session.title.slice(0, 44)}...` : session.title}
+                icon={SESSION_SOURCE_ICONS[session.source]}
+                indent={session.displayIndent}
+                onClick={() => {
+                  if (session.tileId) {
+                    onFocusTile(session.tileId)
+                    return
+                  }
+                  onOpenSessionInChat(session)
+                }}
+                onContextMenu={e => {
+                  e.preventDefault()
+                  setSessionCtx({ x: e.clientX, y: e.clientY, session })
+                }}
+                extra={
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                    <span style={{
+                      fontSize: fonts.secondarySize - 1, color: theme.text.disabled,
+                      whiteSpace: 'nowrap', flexShrink: 0,
+                    }}>
+                      {session.sourceLabel}{session.messageCount > 0 ? ` · ${session.messageCount} msg` : ''}
+                    </span>
+                    <button
+                      title={pendingDeleteSessionId === session.id ? 'Click again to confirm delete' : 'Delete session'}
+                      onClick={e => {
+                        e.stopPropagation()
+                        if (pendingDeleteSessionId === session.id) {
+                          void deleteSession(session)
+                          return
+                        }
+                        armDeleteSession(session.id)
+                      }}
+                      disabled={deletingSessionId === session.id}
+                      style={{
+                        width: 18,
+                        height: 18,
+                        borderRadius: 4,
+                        border: 'none',
+                        background: pendingDeleteSessionId === session.id ? theme.status.danger : 'transparent',
+                        color: pendingDeleteSessionId === session.id ? '#fff' : theme.text.disabled,
+                        cursor: deletingSessionId === session.id ? 'default' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        opacity: deletingSessionId === session.id ? 0.5 : 1,
+                      }}
+                    >
+                      {pendingDeleteSessionId === session.id ? (
+                        <svg width="10" height="10" viewBox="0 0 14 14" fill="none">
+                          <path d="M3 7.2 5.6 9.8 11 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      ) : (
+                        <svg width="10" height="10" viewBox="0 0 14 14" fill="none">
+                          <path d="M3.5 4.5h7M5 4.5V3.4c0-.5.4-.9.9-.9h2.2c.5 0 .9.4.9.9v1.1M4.3 4.5l.4 6.1c0 .5.4.9.9.9h2.8c.5 0 .9-.4.9-.9l.4-6.1M6 6.2v3.2M8 6.2v3.2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                }
+              />
+            ))}
+          </div>
+        )}
+
+        {/* ── EXTENSIONS ── (hidden when extensionTiles is empty and no instances) */}
+        {(extensionInstances.length > 0 || (extensionTiles && extensionTiles.length > 0)) && (
+          <>
+            <SectionHeader label="Extensions" collapsed={!!sectionsCollapsed.extensions} onToggle={() => toggleSection('extensions')} />
+            {!sectionsCollapsed.extensions && (
+              <div style={{ paddingBottom: 6 }}>
+                {/* Installed extensions with instances */}
+                {Object.entries(extGroups).map(([type, instances]) => (
+                  <React.Fragment key={type}>
+                    <SidebarItem
+                      label={extLabel(type)}
+                      icon={<svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M6 1.5h2a.5.5 0 01.5.5v1.5H8a1 1 0 00-1 1v0a1 1 0 001 1h.5V7a.5.5 0 01-.5.5H6V7a1 1 0 00-1-1v0a1 1 0 00-1 1v.5H2.5A.5.5 0 012 7V5.5h.5a1 1 0 001-1v0a1 1 0 00-1-1H2V2a.5.5 0 01.5-.5H6z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" /></svg>}
+                      onClick={() => onFocusTile(instances[0].id)}
+                    />
+                    {instances.length > 1 && instances.map(tile => (
+                      <SidebarItem
+                        key={tile.id}
+                        label={`Instance ${tile.id.split('-').pop()}`}
+                        muted
+                        indent={1}
+                        onClick={() => onFocusTile(tile.id)}
+                      />
+                    ))}
+                  </React.Fragment>
+                ))}
+                {/* Uninstantiated extensions */}
+                {extensionTiles?.filter(e => !extGroups[e.type])?.map(ext => (
+                  <SidebarItem
+                    key={ext.type}
+                    label={ext.label}
+                    muted
+                    icon={<svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M6 1.5h2a.5.5 0 01.5.5v1.5H8a1 1 0 00-1 1v0a1 1 0 001 1h.5V7a.5.5 0 01-.5.5H6V7a1 1 0 00-1-1v0a1 1 0 00-1 1v.5H2.5A.5.5 0 012 7V5.5h.5a1 1 0 001-1v0a1 1 0 00-1-1H2V2a.5.5 0 01.5-.5H6z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" /></svg>}
+                    onClick={() => onAddExtensionTile?.(ext.type)}
+                  />
+                ))}
+                {extensionInstances.length === 0 && !extensionTiles?.length && (
+                  <div style={{ padding: '4px 12px', fontSize: fonts.secondarySize, color: theme.text.disabled }}>No extensions</div>
+                )}
+              </div>
             )}
           </>
         )}
@@ -1386,29 +955,26 @@ export function Sidebar({
 
       {showFooter && (
         <SidebarFooter
-          onNewTerminal={onNewTerminal}
-          onNewKanban={onNewKanban}
-          onNewBrowser={onNewBrowser}
-          onNewChat={onNewChat}
-          extensionTiles={extensionTiles}
-          onAddExtensionTile={onAddExtensionTile}
+          onNewTerminal={onNewTerminal} onNewKanban={onNewKanban} onNewBrowser={onNewBrowser}
+          onNewChat={onNewChat} onNewFiles={onNewFiles}
+          extensionTiles={extensionTiles} onAddExtensionTile={onAddExtensionTile}
         />
       )}
 
-      <div
-        style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 3, cursor: 'col-resize' }}
-        onMouseDown={e => {
-          resizing.current = true
-          startX.current = e.clientX
-          startWidth.current = widthRef.current
-          onResizeStateChange?.(true)
-          e.preventDefault()
-        }}
+      {/* Tile context menu */}
+      {tileCtx && (
+        <ContextMenu x={tileCtx.x} y={tileCtx.y} items={tileContextMenuItems(tileCtx.tile)} onClose={() => setTileCtx(null)} />
+      )}
+      {sessionCtx && (
+        <ContextMenu x={sessionCtx.x} y={sessionCtx.y} items={sessionContextMenuItems(sessionCtx.session)} onClose={() => setSessionCtx(null)} />
+      )}
+
+      {/* Resize handle */}
+      <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 3, cursor: 'col-resize' }}
+        onMouseDown={e => { resizing.current = true; startX.current = e.clientX; startWidth.current = widthRef.current; onResizeStateChange?.(true); e.preventDefault() }}
         onMouseEnter={e => (e.currentTarget.style.background = theme.accent.soft)}
         onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
       />
-
-      {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={ctxItems()} onClose={() => setCtx(null)} />}
     </div>
   )
 }

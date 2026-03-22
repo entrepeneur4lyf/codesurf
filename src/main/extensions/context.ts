@@ -15,6 +15,8 @@ import { ipcMain } from 'electron'
 import type { EventBus } from '../event-bus'
 import type { ExtensionManifest, ExtensionMCPToolContrib } from '../../shared/types'
 import type { ExtensionRegistry } from './registry'
+import { registerRelayIPC, unregisterRelayIPC } from '../ipc/relay'
+import { stopAllRelayServices } from '../relay/service'
 
 interface RegisteredTool extends ExtensionMCPToolContrib {
   handler?: (args: Record<string, unknown>) => Promise<string>
@@ -44,6 +46,12 @@ export class ExtensionContext {
     handle: (channel: string, handler: (...args: unknown[]) => unknown) => void
   }
 
+  /**
+   * Relay Suite only: registers relay:* IPC + ContexRelay host. Returns dispose
+   * (unregister IPC + stop relay services). Core app does not register relay.
+   */
+  readonly relayHost: { install: () => () => void } | undefined
+
   readonly settings: {
     get: (key: string) => unknown
   }
@@ -57,6 +65,7 @@ export class ExtensionContext {
   ) {
     const extId = manifest.id
     const prefix = `[Ext:${manifest.name}]`
+    this.relayHost = undefined
 
     // ── Bus API ──
     this.bus = {
@@ -104,6 +113,18 @@ export class ExtensionContext {
         this.ipcHandlers.push(fullChannel)
         console.log(`${prefix} Registered IPC: ${fullChannel}`)
       },
+    }
+
+    if (manifest.id === 'contex-relay-suite') {
+      this.relayHost = {
+        install: () => {
+          registerRelayIPC()
+          return () => {
+            unregisterRelayIPC()
+            stopAllRelayServices()
+          }
+        },
+      }
     }
 
     // ── Settings API ──

@@ -3,6 +3,11 @@
 import type { Workspace } from '../../shared/types'
 
 interface ElectronAPI {
+  appearance: {
+    shouldUseDark(): Promise<boolean>
+    setThemeSource(mode: 'dark' | 'light' | 'system'): Promise<boolean>
+    onUpdated(callback: (payload: { shouldUseDark: boolean }) => void): () => void
+  }
   workspace: {
     list(): Promise<Workspace[]>
     create(name: string): Promise<Workspace>
@@ -26,6 +31,7 @@ interface ElectronAPI {
     revealInFinder?(path: string): Promise<void>
     writeBrief(cardId: string, content: string): Promise<string>
     stat(path: string): Promise<{ size: number; mtimeMs: number; isFile: boolean; isDir: boolean }>
+    isProbablyTextFile(path: string): Promise<boolean>
     copyIntoDir(sourcePath: string, destDir: string): Promise<{ path: string }>
     watch(dirPath: string, callback: () => void): () => void
   }
@@ -48,15 +54,32 @@ interface ElectronAPI {
     onInject(cb: (cardId: string, message: string, appendNewline: boolean) => void): () => void
     inject(cardId: string, message: string): Promise<void>
   }
+  chat?: {
+    send(req: unknown): Promise<{ ok: boolean }>
+    stop(cardId: string): Promise<void>
+    clearSession(cardId: string): Promise<{ ok: boolean }>
+    opencodeModels(): Promise<{ models: Array<{ id: string; label: string; description?: string }>; source?: string; loading?: boolean }>
+    onOpencodeModelsUpdated(cb: (payload: { models: Array<{ id: string; label: string; description?: string }>; source: string; error?: string }) => void): () => void
+    openclawAgents(): Promise<{ agents: Array<{ id: string; label: string; description?: string }> }>
+    selectFiles(): Promise<string[]>
+  }
   shell?: {
     openExternal(url: string): Promise<void>
   }
   app?: {
     relaunch(): Promise<void>
   }
-  window?: {
+  window: {
     new(): Promise<void>
     newTab(): Promise<void>
+    isFresh(): Promise<boolean>
+    list(): Promise<{ id: number; title: string; focused: boolean }[]>
+    getCurrentId(): Promise<number>
+    setTitle(title: string): Promise<void>
+    focusById(id: number): Promise<void>
+    closeById(id: number): Promise<void>
+    setSidebarCollapsed(collapsed: boolean): Promise<boolean>
+    onListChanged(cb: (list: { id: number; title: string; focused: boolean }[]) => void): () => void
   }
   canvas: {
     load(workspaceId: string): Promise<import('../../shared/types').CanvasState | null>
@@ -65,6 +88,31 @@ interface ElectronAPI {
     saveTileState(workspaceId: string, tileId: string, state: any): Promise<void>
     clearTileState(workspaceId: string, tileId: string): Promise<void>
     deleteTileArtifacts(workspaceId: string, tileId: string): Promise<void>
+    listSessions(workspaceId: string): Promise<Array<{
+      id: string
+      source: 'codesurf' | 'claude' | 'codex' | 'cursor' | 'openclaw' | 'opencode'
+      scope: 'workspace' | 'project' | 'user'
+      tileId: string | null
+      sessionId: string | null
+      provider: string
+      model: string
+      messageCount: number
+      lastMessage: string | null
+      updatedAt: number
+      filePath?: string
+      title: string
+      projectPath?: string | null
+      sourceLabel: string
+      sourceDetail?: string
+      canOpenInChat?: boolean
+      canOpenInApp?: boolean
+      resumeBin?: string
+      resumeArgs?: string[]
+      relatedGroupId?: string | null
+      nestingLevel?: number
+    }>>
+    getSessionState(workspaceId: string, sessionEntryId: string): Promise<any>
+    deleteSession(workspaceId: string, sessionEntryId: string): Promise<{ ok: boolean; error?: string }>
   }
   kanban?: {
     load(workspaceId: string, tileId: string): Promise<{ columns: Array<{ id: string; title: string }>; cards: import('./components/KanbanCard').KanbanCardData[] } | null>
@@ -75,6 +123,8 @@ interface ElectronAPI {
     write(tileId: string, data: string): Promise<void>
     resize(tileId: string, cols: number, rows: number): Promise<void>
     destroy(tileId: string): Promise<void>
+    detach(tileId: string): Promise<void>
+    updatePeers(tileId: string, workspaceDir: string, peers: Array<{ peerId: string; peerType: string; tools: string[] }>): Promise<void>
     onData(tileId: string, cb: (data: string) => void): () => void
     onActive(tileId: string, cb: () => void): () => void
   }
@@ -134,12 +184,61 @@ interface ElectronAPI {
     removeContext(workspacePath: string, tileId: string, filename: string): Promise<boolean>
     listContext(workspacePath: string, tileId: string): Promise<string[]>
     readContext(workspacePath: string, tileId: string, filename: string): Promise<string | null>
+    listMessages(workspacePath: string, tileId: string, mailbox: import('../../shared/types').CollabMailbox): Promise<import('../../shared/types').CollabMessageListItem[]>
+    readMessage(workspacePath: string, tileId: string, mailbox: import('../../shared/types').CollabMailbox, filename: string): Promise<import('../../shared/types').CollabMessage | null>
+    sendMessage(workspacePath: string, fromTileId: string, draft: import('../../shared/types').CollabMessageDraft): Promise<{ id: string; threadId: string; filename: string; fromTileId: string; toTileId: string; senderPath: string; recipientPath: string }>
+    updateMessageStatus(workspacePath: string, tileId: string, mailbox: import('../../shared/types').CollabMailbox, filename: string, status: import('../../shared/types').CollabMessageStatus): Promise<boolean>
+    moveMessage(workspacePath: string, tileId: string, fromMailbox: import('../../shared/types').CollabMailbox, toMailbox: import('../../shared/types').CollabMailbox, filename: string): Promise<boolean>
     watchState(workspacePath: string, tileId: string): Promise<boolean>
     unwatchState(workspacePath: string, tileId: string): Promise<boolean>
+    watchMessages(workspacePath: string, tileId: string): Promise<boolean>
+    unwatchMessages(workspacePath: string, tileId: string): Promise<boolean>
     removeTileDir(workspacePath: string, tileId: string): Promise<boolean>
     pruneOrphanedTileDirs(workspacePath: string, tileIds: string[]): Promise<{ removed: string[] }>
     onStateChanged(callback: (data: { workspacePath: string; tileId: string; state: any }) => void): () => void
+    onMessageChanged(callback: (data: { workspacePath: string; tileId: string; mailbox: import('../../shared/types').CollabMailbox; filename: string; event: 'add' | 'change' | 'unlink'; message?: import('../../shared/types').CollabMessage | null }) => void): () => void
   }
+  relay: {
+    init(workspacePath: string): Promise<boolean>
+    syncWorkspace(workspaceId: string, workspacePath: string, tiles: import('../../shared/types').TileState[]): Promise<unknown[]>
+    listParticipants(workspacePath: string): Promise<import('../../../packages/contex-relay/src').RelayParticipant[]>
+    listChannels(workspacePath: string): Promise<import('../../../packages/contex-relay/src').RelayChannel[]>
+    listCentralFeed(workspacePath: string, limit?: number): Promise<import('../../../packages/contex-relay/src').RelayMessageListItem[]>
+    listMessages(workspacePath: string, participantId: string, mailbox: 'inbox' | 'sent' | 'memory' | 'bin', limit?: number): Promise<import('../../../packages/contex-relay/src').RelayMessageListItem[]>
+    readMessage(workspacePath: string, participantId: string, mailbox: 'inbox' | 'sent' | 'memory' | 'bin', filename: string): Promise<import('../../../packages/contex-relay/src').RelayMessage | null>
+    sendDirectMessage(workspacePath: string, from: string, draft: import('../../../packages/contex-relay/src').RelayDirectMessageDraft): Promise<import('../../../packages/contex-relay/src').RelayMessage>
+    sendChannelMessage(workspacePath: string, from: string, draft: import('../../../packages/contex-relay/src').RelayChannelMessageDraft): Promise<import('../../../packages/contex-relay/src').RelayMessage>
+    updateMessageStatus(workspacePath: string, participantId: string, mailbox: 'inbox' | 'sent' | 'memory' | 'bin', filename: string, status: import('../../../packages/contex-relay/src').RelayMessageStatus): Promise<boolean>
+    moveMessage(workspacePath: string, participantId: string, fromMailbox: 'inbox' | 'sent' | 'memory' | 'bin', toMailbox: 'inbox' | 'sent' | 'memory' | 'bin', filename: string): Promise<boolean>
+    setWorkContext(workspacePath: string, participantId: string, work: import('../../../packages/contex-relay/src').RelayWorkContext): Promise<import('../../../packages/contex-relay/src').RelayParticipant>
+    analyzeRelationships(workspacePath: string): Promise<import('../../../packages/contex-relay/src').RelayRelationshipHint[]>
+    spawnAgent(workspacePath: string, request: import('../../../packages/contex-relay/src').RelaySpawnRequest): Promise<import('../../../packages/contex-relay/src').RelayParticipant>
+    stopAgent(workspacePath: string, participantId: string): Promise<boolean>
+    waitForReady(workspacePath: string, ids: string[], timeoutMs?: number): Promise<boolean>
+    waitForAny(workspacePath: string, ids: string[], timeoutMs?: number): Promise<import('../../../packages/contex-relay/src').RelayParticipant>
+    onEvent(callback: (data: { workspacePath: string; event: import('../../../packages/contex-relay/src').RelayEvent }) => void): () => void
+  }
+  extensions: {
+    list(): Promise<Array<{ id: string; name: string; version: string; description?: string; author?: string; tier: 'safe' | 'power'; ui?: import('../../shared/types').ExtensionManifest['ui']; enabled: boolean; contributes?: import('../../shared/types').ExtensionManifest['contributes'] }>>
+    listTiles(): Promise<import('../../shared/types').ExtensionTileContrib[]>
+    tileEntry(extId: string, tileType: string, tileId?: string): Promise<string | null>
+    getBridgeScript(tileId: string, extId: string): Promise<string>
+    enable(extId: string): Promise<boolean>
+    disable(extId: string): Promise<boolean>
+    refresh(workspacePath?: string | null): Promise<Array<{ id: string; name: string; version: string; description?: string; author?: string; tier: 'safe' | 'power'; ui?: import('../../shared/types').ExtensionManifest['ui']; enabled: boolean; contributes?: import('../../shared/types').ExtensionManifest['contributes'] }>>
+    invoke(extId: string, method: string, ...args: unknown[]): Promise<unknown>
+    getSettings(extId: string): Promise<Record<string, unknown>>
+    setSettings(extId: string, settings: Record<string, unknown>): Promise<boolean>
+    contextMenuItems(): Promise<import('../../shared/types').ExtensionContextMenuContrib[]>
+  }
+  chromeSync: {
+    listProfiles(): Promise<Array<{ name: string; dir: string; email?: string; avatarIcon?: string }>>
+    getStatus(settings: { enabled: boolean; profileDir: string | null }): Promise<{ enabled: boolean; profileDir: string | null; lastSync: number | null; profiles: Array<{ name: string; dir: string; email?: string }> }>
+    syncCookies(profileDir: string, partition: string): Promise<{ count: number; errors: string[] }>
+    getBookmarks(profileDir: string): Promise<unknown[]>
+    searchHistory(profileDir: string, query: string, limit?: number): Promise<Array<{ url: string; title: string; visitCount: number; lastVisitTime: number }>>
+  }
+  homedir: string
   bus: {
     publish(channel: string, type: string, source: string, payload: Record<string, unknown>): Promise<import('../../shared/types').BusEvent>
     subscribe(channel: string, subscriberId: string, callback: (event: import('../../shared/types').BusEvent) => void): () => void

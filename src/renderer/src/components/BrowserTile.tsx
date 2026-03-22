@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, RotateCcw, RotateCw, Home, Globe, Monitor, Smartphone, Crosshair } from 'lucide-react'
 import { useTheme } from '../ThemeContext'
+import { useAppFonts } from '../FontContext'
 
-const HOMEPAGE = 'https://duckduckgo.com'
+const HOMEPAGE = 'https://www.google.com'
 
 const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) @contex/electron/0.2.0 Chrome/132.0.6834.159 Safari/537.36'
@@ -13,6 +14,9 @@ const CLUSO_EMBED_JS_PATH = '/Users/jkneen/clawd/agentation-real/dist/assets/clu
 const CLUSO_EMBED_CSS_PATH = '/Users/jkneen/clawd/agentation-real/dist/assets/cluso-embed.css'
 const WEBVIEW_DISPOSE_DELAY_MS = 15000
 const WEBVIEW_PARKING_ROOT_ID = 'browser-tile-webview-parking-root'
+const CLUSO_TOOLBAR_WIDTH = 297
+const CLUSO_TOOLBAR_HEIGHT = 44
+const CLUSO_TOOLBAR_BOTTOM_OFFSET = 8
 
 type WebviewRegistryEntry = {
   webview: Electron.WebviewTag
@@ -43,19 +47,20 @@ function getWebviewParkingRoot(): HTMLDivElement {
   return root
 }
 
-function createManagedWebview(tileId: string, src: string): Electron.WebviewTag {
+function createManagedWebview(tileId: string, src: string, bgColor = '#111317'): Electron.WebviewTag {
   const webview = document.createElement('webview') as Electron.WebviewTag
   webview.setAttribute('allowpopups', '')
   webview.setAttribute('partition', `persist:browser-tile-${tileId}`)
   webview.setAttribute('useragent', DESKTOP_UA)
-  webview.setAttribute('webpreferences', 'devTools=yes')
+  // backgroundColor sets the Chromium compositor surface color — prevents white flash before content loads
+  webview.setAttribute('webpreferences', `devTools=yes, backgroundColor=${bgColor}`)
   webview.style.cssText =
-    'position: absolute; top: 0; left: 0; right: 0; bottom: 0; border: none; background: transparent;'
+    `position: absolute; top: 0; left: 0; right: 0; bottom: 0; border: none; background: ${bgColor};`
   webview.src = src
   return webview
 }
 
-function getOrCreateManagedWebview(tileId: string, src: string): { webview: Electron.WebviewTag; reused: boolean } {
+function getOrCreateManagedWebview(tileId: string, src: string, bgColor?: string): { webview: Electron.WebviewTag; reused: boolean } {
   const existing = webviewRegistry.get(tileId)
   if (existing) {
     if (existing.disposeTimer !== null) clearTimeout(existing.disposeTimer)
@@ -71,7 +76,7 @@ function getOrCreateManagedWebview(tileId: string, src: string): { webview: Elec
     webviewRegistry.delete(tileId)
   }
 
-  const webview = createManagedWebview(tileId, src)
+  const webview = createManagedWebview(tileId, src, bgColor)
   webviewRegistry.set(tileId, { webview, disposeTimer: null })
   return { webview, reused: false }
 }
@@ -92,12 +97,17 @@ function scheduleManagedWebviewDisposal(tileId: string, webview: Electron.Webvie
 }
 
 function safeLoadURL(webview: Electron.WebviewTag, url: string): void {
+  if (!webview.isConnected || !webview.parentElement) {
+    webview.src = url
+    return
+  }
   try {
     void webview.loadURL(url).catch((err: { code?: string }) => {
       if (err?.code === 'ERR_ABORTED') return
       console.warn('[BrowserTile] loadURL failed:', err)
     })
   } catch (err) {
+    webview.src = url
     console.warn('[BrowserTile] loadURL threw:', err)
   }
 }
@@ -137,8 +147,13 @@ const createClusoInjectScript = (jsContent: string, cssContent: string): string 
   const ROOT_ID = '__huggi_cluso_root__';
   const MOUNT_ID = '__huggi_cluso_mount__';
   const CSS_ID = '__huggi_cluso_css__';
-  const SCRIPT_ID = '__huggi_cluso_script__';
   const FLAG = '__huggiClusoBooting__';
+  const TOOLBAR_POSITION_KEY = 'feedback-toolbar-position';
+  const DEFAULT_TOOLBAR_WIDTH = ${CLUSO_TOOLBAR_WIDTH};
+  const DEFAULT_TOOLBAR_HEIGHT = ${CLUSO_TOOLBAR_HEIGHT};
+  const DEFAULT_TOOLBAR_BOTTOM_OFFSET = ${CLUSO_TOOLBAR_BOTTOM_OFFSET};
+  const VISIBILITY_STYLE_ID = '__huggi_cluso_visibility__';
+  const DESIRED_ACTIVE_KEY = '__huggi_cluso_desired_active__';
 
   function log(message) {
     try { console.log(message); } catch {}
@@ -186,25 +201,69 @@ const createClusoInjectScript = (jsContent: string, cssContent: string): string 
     document.head.appendChild(style);
   }
 
+  function ensureVisibilityCss() {
+    if (document.getElementById(VISIBILITY_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = VISIBILITY_STYLE_ID;
+    style.textContent = [
+      'html[data-huggi-cluso-active="false"] [data-cluso-toolbar] {',
+      '  opacity: 0 !important;',
+      '  pointer-events: none !important;',
+      '  visibility: hidden !important;',
+      '}',
+    ].join('\\n');
+    document.head.appendChild(style);
+  }
+
+  function syncToolbarVisibility(active) {
+    try {
+      document.documentElement.dataset.huggiClusoActive = active ? 'true' : 'false';
+    } catch {}
+  }
+
+  function getDesiredActive() {
+    return typeof window[DESIRED_ACTIVE_KEY] === 'boolean' ? !!window[DESIRED_ACTIVE_KEY] : null;
+  }
+
+  function getDefaultToolbarPosition() {
+    return {
+      x: Math.max(20, Math.round((window.innerWidth - DEFAULT_TOOLBAR_WIDTH) / 2)),
+      y: Math.max(20, Math.round(window.innerHeight - DEFAULT_TOOLBAR_HEIGHT - DEFAULT_TOOLBAR_BOTTOM_OFFSET)),
+    };
+  }
+
+  function seedToolbarPosition(force) {
+    try {
+      if (!force && localStorage.getItem(TOOLBAR_POSITION_KEY)) return;
+      localStorage.setItem(TOOLBAR_POSITION_KEY, JSON.stringify(getDefaultToolbarPosition()));
+    } catch {}
+  }
+
   const root = ensureRoot();
   const mount = ensureMount(root);
   ensureCss();
+  ensureVisibilityCss();
+  seedToolbarPosition(false);
+  syncToolbarVisibility(false);
 
   window.__CLUSO_EMBEDDED_CONFIG__ = {
-    showToolbar: false,
-    defaultActive: false,
+    runtimeMode: 'embedded-release',
+    showToolbar: true,
+    hideCollapsedToolbar: true,
+    defaultActive: getDesiredActive() ?? false,
     autoExitAfterSubmit: true,
-    copyToClipboard: false,
+    copyToClipboard: true,
+    submitButtonLabel: 'Send to App',
     outputDetail: "forensic",
     visibleControls: {
-      pause: false,
-      markers: false,
-      copy: false,
-      send: false,
-      clear: false,
-      settings: false,
+      pause: true,
+      markers: true,
+      copy: true,
+      send: true,
+      clear: true,
+      settings: true,
       inspector: false,
-      exit: false,
+      exit: true,
     },
   };
 
@@ -213,12 +272,22 @@ const createClusoInjectScript = (jsContent: string, cssContent: string): string 
   }
 
   if (window.__CLUSO_HOST__) {
-    log('__CLUSO_READY__:{"reused":true}');
+    const desiredActive = getDesiredActive();
+    if (typeof desiredActive === 'boolean' && typeof window.__CLUSO_HOST__.setActive === 'function') {
+      window.__CLUSO_HOST__.setActive(desiredActive);
+    }
+    syncToolbarVisibility(
+      typeof window.__CLUSO_HOST__.getActive === 'function'
+        ? !!window.__CLUSO_HOST__.getActive()
+        : !!window.__CLUSO_HOST__.active
+    );
+    log('__CLUSO_READY__:' + JSON.stringify({
+      reused: true,
+      active: typeof window.__CLUSO_HOST__.getActive === 'function'
+        ? !!window.__CLUSO_HOST__.getActive()
+        : !!window.__CLUSO_HOST__.active,
+    }));
     return '__CLUSO_ALREADY_READY__';
-  }
-
-  if (document.getElementById(SCRIPT_ID)) {
-    return '__CLUSO_ALREADY_INJECTED__';
   }
 
   window[FLAG] = true;
@@ -229,30 +298,87 @@ const createClusoInjectScript = (jsContent: string, cssContent: string): string 
     return originalGetElementById(id);
   };
 
-  const blob = new Blob([${JSON.stringify(jsContent)}], { type: 'text/javascript' });
-  const blobUrl = URL.createObjectURL(blob);
-
-  const script = document.createElement('script');
-  script.id = SCRIPT_ID;
-  script.src = blobUrl;
-
+  let restored = false;
   const restore = () => {
+    if (restored) return;
+    restored = true;
     document.getElementById = originalGetElementById;
     window[FLAG] = false;
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
   };
 
-  script.onload = () => {
+  const emitReady = () => {
+    const host = window.__CLUSO_HOST__;
+    const active = host
+      ? (typeof host.getActive === 'function' ? !!host.getActive() : !!host.active)
+      : false;
+    syncToolbarVisibility(active);
+    log('__CLUSO_READY__:' + JSON.stringify({ embedded: true, active }));
+  };
+
+  const patchHost = (host) => {
+    if (!host || host.__huggiClusoPatched) return;
+    host.__huggiClusoPatched = true;
+
+    const sync = () => {
+      const active = typeof host.getActive === 'function' ? !!host.getActive() : !!host.active;
+      syncToolbarVisibility(active);
+    };
+
+    if (typeof host.setActive === 'function') {
+      const originalSetActive = host.setActive.bind(host);
+      host.setActive = (nextActive) => {
+        const result = originalSetActive(nextActive);
+        window.setTimeout(sync, 0);
+        return result;
+      };
+    }
+
+    if (typeof host.toggleActive === 'function') {
+      const originalToggleActive = host.toggleActive.bind(host);
+      host.toggleActive = () => {
+        const result = originalToggleActive();
+        window.setTimeout(sync, 0);
+        return result;
+      };
+    }
+
+    sync();
+  };
+
+  const waitForHost = (attempt) => {
+    if (window.__CLUSO_HOST__) {
+      patchHost(window.__CLUSO_HOST__);
+      const desiredActive = getDesiredActive();
+      if (typeof desiredActive === 'boolean' && typeof window.__CLUSO_HOST__.setActive === 'function') {
+        window.__CLUSO_HOST__.setActive(desiredActive);
+      }
+      restore();
+      window.setTimeout(emitReady, 0);
+      return;
+    }
+    if (attempt < 40) {
+      window.setTimeout(() => waitForHost(attempt + 1), 50);
+      return;
+    }
     restore();
+    log('__CLUSO_ERROR__:' + JSON.stringify({
+      stage: 'host',
+      message: 'Cluso host bridge did not register in time',
+    }));
   };
 
-  script.onerror = () => {
+  try {
+    ${jsContent}
+    waitForHost(0);
+    return '__CLUSO_INJECTED__';
+  } catch (error) {
     restore();
-    log('__CLUSO_ERROR__:{"stage":"load"}');
-  };
-
-  document.head.appendChild(script);
-  return '__CLUSO_INJECTED__';
+    log('__CLUSO_ERROR__:' + JSON.stringify({
+      stage: 'execute',
+      message: error && error.message ? String(error.message) : String(error),
+    }));
+    return '__CLUSO_EXECUTE_ERROR__';
+  }
 })();
 `
 
@@ -290,6 +416,47 @@ function createBusBridgeScript(tileId: string): string {
   `
 }
 
+function createClusoSetActiveScript(nextActive: boolean): string {
+  return `
+    (() => {
+      window.__huggi_cluso_desired_active__ = ${nextActive ? 'true' : 'false'};
+      try {
+        document.documentElement.dataset.huggiClusoActive = ${nextActive ? '"true"' : '"false"'};
+      } catch {}
+      const host = window.__CLUSO_HOST__;
+      if (!host) return '__CLUSO_PENDING__';
+      try {
+        if (${nextActive ? 'true' : 'false'}) {
+          const position = {
+            x: Math.max(20, Math.round((window.innerWidth - ${CLUSO_TOOLBAR_WIDTH}) / 2)),
+            y: Math.max(20, Math.round(window.innerHeight - ${CLUSO_TOOLBAR_HEIGHT} - ${CLUSO_TOOLBAR_BOTTOM_OFFSET})),
+          };
+          try {
+            localStorage.setItem('feedback-toolbar-position', JSON.stringify(position));
+          } catch {}
+        }
+
+        if (typeof host.setActive === 'function') {
+          host.setActive(${nextActive ? 'true' : 'false'});
+          return '__CLUSO_TOGGLED__';
+        }
+
+        if (typeof host.toggleActive === 'function') {
+          const current = typeof host.getActive === 'function' ? !!host.getActive() : !!host.active;
+          if (current !== ${nextActive ? 'true' : 'false'}) {
+            host.toggleActive();
+          }
+          return '__CLUSO_TOGGLED__';
+        }
+
+        return '__CLUSO_NO_HOST_API__';
+      } catch (error) {
+        return '__CLUSO_TOGGLE_ERROR__:' + (error && error.message ? String(error.message) : String(error));
+      }
+    })();
+  `
+}
+
 // ---------------------------------------------------------------------------
 // URL helpers
 // ---------------------------------------------------------------------------
@@ -314,7 +481,7 @@ function normalizeUrl(value: string): string {
       return `http://${trimmed}`
     return `https://${trimmed}`
   }
-  return `${HOMEPAGE}/?q=${encodeURIComponent(trimmed)}`
+  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +503,7 @@ function ToolbarButton({
   children: React.ReactNode
 }): React.JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const handleMouseDown = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation()
     if (disabled) return
@@ -361,23 +529,23 @@ function ToolbarButton({
         width: 26,
         height: 26,
         borderRadius: 6,
-        border: `1px solid ${active ? theme.border.accent : theme.border.default}`,
-        background: disabled ? theme.surface.panelMuted : active ? theme.surface.selection : theme.surface.panelElevated,
+        border: 'none',
+        background: 'transparent',
         color: disabled ? theme.text.disabled : active ? theme.accent.hover : theme.text.secondary,
         cursor: disabled ? 'not-allowed' : 'pointer',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
-        fontSize: 12
+        fontSize: fonts.secondarySize
       }}
       onMouseEnter={e => {
         if (disabled || active) return
-        e.currentTarget.style.background = theme.surface.hover
+        e.currentTarget.style.color = theme.text.primary
       }}
       onMouseLeave={e => {
         if (disabled || active) return
-        e.currentTarget.style.background = theme.surface.panelElevated
+        e.currentTarget.style.color = theme.text.secondary
       }}
     >
       {children}
@@ -396,6 +564,8 @@ interface Props {
   height: number
   zIndex: number
   isInteracting?: boolean
+  connectedPeers?: string[]
+  hideNavbar?: boolean
 }
 
 type BrowserMode = 'desktop' | 'mobile'
@@ -403,17 +573,22 @@ type BrowserMode = 'desktop' | 'mobile'
 // ---------------------------------------------------------------------------
 // BrowserTile
 // ---------------------------------------------------------------------------
-export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zIndex: _zIndex, isInteracting }: Props): React.JSX.Element {
+export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zIndex: _zIndex, isInteracting, connectedPeers = [], hideNavbar = false }: Props): React.JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const browserBackground = theme.surface.panel
   const browserToolbarBackground = theme.surface.titlebar
   const browserBorder = theme.border.default
+  const browserBackgroundRef = useRef(browserBackground)
+  browserBackgroundRef.current = browserBackground
   const wvContainerRef = useRef<HTMLDivElement>(null)
   const wvRef = useRef<Electron.WebviewTag | null>(null)
   const wvReadyRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const mountedRef = useRef(true)
   const clusoToggleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const peerRelayUnsubscribeRef = useRef<(() => void) | null>(null)
+  const mcpCommandUnsubscribeRef = useRef<(() => void) | null>(null)
 
   // Track component mount state for async cleanup
   useEffect(() => {
@@ -453,7 +628,8 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
         initialSrc.current = saved.currentUrl
         prevInitialUrl.current = saved.currentUrl
         if (wvRef.current) {
-          safeLoadURL(wvRef.current, saved.currentUrl)
+          if (wvReadyRef.current) safeLoadURL(wvRef.current, saved.currentUrl)
+          else wvRef.current.src = saved.currentUrl
         }
       }
       if (typeof saved.canGoBack === 'boolean') setCanGoBack(saved.canGoBack)
@@ -477,6 +653,54 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
     }).catch(() => {})
   }, [workspaceId, tileId, addressBar, currentUrl, canGoBack, canGoForward, isLoading, mode])
 
+  // Fan-out bus traffic from this browser tile to canvas peers (unrelated to ContexRelay mailbox).
+  useEffect(() => {
+    const peers = new Set(connectedPeers)
+    if (!window.electron?.bus || peers.size === 0) {
+      if (peerRelayUnsubscribeRef.current) {
+        peerRelayUnsubscribeRef.current()
+        peerRelayUnsubscribeRef.current = null
+      }
+      return
+    }
+
+    if (peerRelayUnsubscribeRef.current) {
+      peerRelayUnsubscribeRef.current()
+      peerRelayUnsubscribeRef.current = null
+    }
+
+    const unsubscribe = window.electron.bus.subscribe(`tile:${tileId}`, `browser:${tileId}:relay`, (evt) => {
+      // Forward only traffic that originated from this browser's web content to peers.
+      // This prevents unrelated channel traffic from being mirrored infinitely.
+      if (!String(evt.source || '').startsWith(`browser:${tileId}`)) {
+        return
+      }
+
+      for (const peerId of peers) {
+        if (peerId === tileId) continue
+        window.electron.bus.publish(
+          `tile:${peerId}`,
+          evt.type,
+          `browser-relay:${tileId}`,
+          {
+            ...evt.payload,
+            fromTile: tileId,
+            relayFrom: String(evt.source || '').replace(`browser:${tileId}`, 'browser'),
+            originChannel: evt.channel,
+          }
+        )
+      }
+    })
+
+    peerRelayUnsubscribeRef.current = unsubscribe
+    return () => {
+      if (peerRelayUnsubscribeRef.current) {
+        peerRelayUnsubscribeRef.current()
+        peerRelayUnsubscribeRef.current = null
+      }
+    }
+  }, [connectedPeers, tileId])
+
   // Cluso embed assets — loaded once on mount
   const clusoAssetsRef = useRef<{ js: string | null; css: string | null }>({ js: null, css: null })
 
@@ -496,24 +720,58 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
   const setIsClusoActiveRef = useRef(setIsClusoActive)
   setIsClusoActiveRef.current = setIsClusoActive
 
+  const executeInWebview = useCallback((script: string): Promise<unknown> => {
+    const webview = wvRef.current
+    if (!webview || !mountedRef.current) return Promise.reject(new Error('Webview unavailable'))
+
+    if (wvReadyRef.current) {
+      return webview.executeJavaScript(script)
+    }
+
+    return new Promise((resolve, reject) => {
+      const onReady = () => {
+        if (!mountedRef.current || !wvReadyRef.current) {
+          cleanup()
+          reject(new Error('Webview became unavailable before ready'))
+          return
+        }
+        webview.executeJavaScript(script).then(resolve).catch(reject).finally(cleanup)
+      }
+
+      const cleanup = () => {
+        clearTimeout(timeout)
+        webview.removeEventListener('dom-ready', onReady)
+      }
+
+      const timeout = setTimeout(() => {
+        cleanup()
+        reject(new Error('Webview ready timeout'))
+      }, 5000)
+
+      webview.addEventListener('dom-ready', onReady)
+    })
+  }, [])
+
   // Inject cluso into the webview — called after each page load
   const injectCluso = useCallback(() => {
-    const webview = wvRef.current
-    if (!webview || !wvReadyRef.current) return
     const { js, css } = clusoAssetsRef.current
     if (!js || !css) {
-      console.warn('[BrowserTile] Cluso assets not available — skipping injection')
+      console.warn('[Cluso] Assets not loaded yet — skipping injection')
       return
     }
     setIsClusoReadyRef.current(false)
     setIsClusoActiveRef.current(false)
-    webview
-      .executeJavaScript(createClusoInjectScript(js, css))
-      .catch(err => console.error('[BrowserTile] Cluso injection failed:', err))
-  }, []) // stable — reads assets via ref
+    executeInWebview(createClusoInjectScript(js, css))
+      .then(result => {
+        if (typeof result === 'string' && result.includes('ERROR')) console.error('[Cluso] Injection error:', result)
+      })
+      .catch(err => console.error('[Cluso] Injection failed:', err))
+  }, [executeInWebview]) // stable — reads assets via ref
 
-  // Load cluso embed assets from filesystem (once)
+  // Load cluso embed assets from filesystem (once per mount)
+  const clusoAssetsLoadedRef = useRef(false)
   useEffect(() => {
+    if (clusoAssetsLoadedRef.current && clusoAssetsRef.current.js) return
     const loadAssets = async () => {
       try {
         const [jsResult, cssResult] = await Promise.all([
@@ -523,6 +781,10 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
         clusoAssetsRef.current = {
           js: typeof jsResult === 'string' ? jsResult : null,
           css: typeof cssResult === 'string' ? cssResult : null
+        }
+        clusoAssetsLoadedRef.current = !!(clusoAssetsRef.current.js && clusoAssetsRef.current.css)
+        if (!clusoAssetsLoadedRef.current) {
+          console.warn('[Cluso] Assets loaded but empty/invalid — inspector will not work')
         }
         // The page can finish loading before the assets arrive from disk.
         // If that happened, retry injection now instead of waiting for another navigation.
@@ -545,29 +807,56 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
     const container = wvContainerRef.current
     if (!container) return
 
-    const { webview, reused } = getOrCreateManagedWebview(tileId, initialSrc.current)
+    const { webview, reused } = getOrCreateManagedWebview(tileId, initialSrc.current, browserBackground)
 
     wvRef.current = webview
-    wvReadyRef.current = reused
+    wvReadyRef.current = false
+
+    // Sync webview background with current theme so it doesn't flash white
+    webview.style.background = browserBackground
 
     // ---- helpers --------------------------------------------------------
     const updateNav = () => {
-      if (!wvRef.current) return
-      const url = wvRef.current.getURL()
-      if (url) {
-        setCurrentUrlRef.current(url)
-        if (document.activeElement !== inputRef.current) {
-          setAddressBarRef.current(url)
+      if (!wvRef.current || !wvReadyRef.current) return
+      try {
+        const url = wvRef.current.getURL()
+        if (url) {
+          setCurrentUrlRef.current(url)
+          if (document.activeElement !== inputRef.current) {
+            setAddressBarRef.current(url)
+          }
+          window.electron?.bus?.publish(
+            `tile:${tileId}`,
+            'activity',
+            `browser:${tileId}`,
+            { kind: 'navigation', event: 'navigated', url }
+          )
         }
+        setCanGoBackRef.current(wvRef.current.canGoBack())
+        setCanGoForwardRef.current(wvRef.current.canGoForward())
+        setIsLoadingRef.current(wvRef.current.isLoading())
+      } catch {
+        wvReadyRef.current = false
       }
-      setCanGoBackRef.current(wvRef.current.canGoBack())
-      setCanGoForwardRef.current(wvRef.current.canGoForward())
-      setIsLoadingRef.current(wvRef.current.isLoading())
+    }
+
+    // ---- dark mode background injection -----------------------------------
+    // Inject a low-specificity dark background into the webview content so
+    // pages that don't set their own background (about:blank, loading states)
+    // don't flash white.  Real pages override this with their own styles.
+    const injectDarkBackground = () => {
+      if (!webview || !wvReadyRef.current) return
+      const bg = browserBackgroundRef.current
+      webview.insertCSS(
+        `html:not([style*="background"]):not([class]) { background-color: ${bg} !important; }` +
+        `body:not([style*="background"]):not([class]) { background-color: ${bg} !important; }`
+      ).catch(() => { /* webview may not be ready yet */ })
     }
 
     // ---- event handlers -------------------------------------------------
     const onDomReady = () => {
       wvReadyRef.current = true
+      injectDarkBackground()
       updateNav()
     }
 
@@ -581,11 +870,8 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
       setIsClusoActiveRef.current(false)
       injectCluso()
       // Inject bus bridge so webview content can publish to the EventBus
-      if (wvRef.current) {
-        wvRef.current
-          .executeJavaScript(createBusBridgeScript(tileId))
-          .catch(err => console.warn('[BrowserTile] Bus bridge injection failed:', err))
-      }
+      executeInWebview(createBusBridgeScript(tileId))
+        .catch(err => console.warn('[BrowserTile] Bus bridge injection failed:', err))
     }
 
     const onFailLoad = () => {
@@ -672,12 +958,48 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
     webview.addEventListener('new-window', onNewWindow)
     webview.addEventListener('console-message', onConsoleMessage)
 
-    if (!container.contains(webview)) container.appendChild(webview)
+    // Sync Chrome cookies into this tile's session before the webview starts loading.
+    // Only for fresh webviews — reused ones already have cookies from their previous session.
+    const attachWebview = () => {
+      if (!mountedRef.current || wvRef.current !== webview) return
+      if (!container.contains(webview)) container.appendChild(webview)
+    }
+
+    if (!reused && !container.contains(webview)) {
+      // Attempt Chrome cookie sync (async, best-effort)
+      window.electron?.settings?.get().then((settings: any) => {
+        if (!settings?.chromeSyncEnabled || !settings?.chromeSyncProfileDir) {
+          attachWebview()
+          return
+        }
+        const partition = `persist:browser-tile-${tileId}`
+        window.electron?.chromeSync?.syncCookies(settings.chromeSyncProfileDir, partition)
+          .then(() => attachWebview())
+          .catch(() => attachWebview())
+      }).catch(() => attachWebview())
+    } else if (!container.contains(webview)) {
+      container.appendChild(webview)
+    }
 
     if (reused) {
-      queueMicrotask(() => {
+      requestAnimationFrame(() => {
         if (!mountedRef.current || wvRef.current !== webview) return
+        wvReadyRef.current = true
         updateNav()
+        // Replayed webviews do not emit a fresh page-load cycle, so restore the
+        // host-side bridge state explicitly on reattach.
+        // Ensure assets are available before injecting — they load async from disk
+        const tryInject = (attempt: number) => {
+          const { js, css } = clusoAssetsRef.current
+          if (js && css) {
+            injectCluso()
+          } else if (attempt < 20 && mountedRef.current) {
+            setTimeout(() => tryInject(attempt + 1), 100)
+          }
+        }
+        tryInject(0)
+        executeInWebview(createBusBridgeScript(tileId))
+          .catch(err => console.warn('[BrowserTile] Bus bridge reinjection failed:', err))
       })
     }
 
@@ -701,6 +1023,12 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
       scheduleManagedWebviewDisposal(tileId, webview)
     }
   }, [tileId, injectCluso, stateLoaded])
+
+  // Keep webview background in sync with theme (avoids white flash on theme change)
+  useEffect(() => {
+    const webview = wvRef.current
+    if (webview) webview.style.background = browserBackground
+  }, [browserBackground])
 
   // Navigate when initialUrl prop changes (e.g. opened from sidebar)
   const prevInitialUrl = useRef(startUrl)
@@ -763,39 +1091,78 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
     }
   }, [])
 
+  // ---- MCP/peer command bridge -----------------------------------------
+  useEffect(() => {
+    if (!window.electron?.bus) return
+
+    if (mcpCommandUnsubscribeRef.current) {
+      mcpCommandUnsubscribeRef.current()
+      mcpCommandUnsubscribeRef.current = null
+    }
+
+    const unsubscribe = window.electron.bus.subscribe(`tile:${tileId}`, `browser:${tileId}:mcp`, (evt) => {
+      if (!evt?.type?.startsWith('mcp_') && !String(evt.source || '').startsWith('mcp:')) return
+      const payload = (evt.payload as Record<string, unknown>) || {}
+      const command = typeof payload.command === 'string' ? payload.command : ''
+      if (!command) return
+      if (command === 'browser_navigate' && typeof payload.url === 'string') {
+        navigate(payload.url)
+        return
+      }
+      if (command === 'browser_reload') {
+        reload()
+        return
+      }
+      if (command === 'browser_back') {
+        goBack()
+        return
+      }
+      if (command === 'browser_forward') {
+        goForward()
+        return
+      }
+      if (command === 'browser_set_mode' && (payload.mode === 'desktop' || payload.mode === 'mobile')) {
+        switchMode(payload.mode)
+      }
+    })
+
+    mcpCommandUnsubscribeRef.current = unsubscribe
+
+    return () => {
+      if (mcpCommandUnsubscribeRef.current) {
+        mcpCommandUnsubscribeRef.current()
+        mcpCommandUnsubscribeRef.current = null
+      }
+    }
+  }, [tileId, navigate, reload, goBack, goForward, switchMode])
+
   // Toggle cluso element selector.
   // Uses a retry loop outside the webview (via setTimeout) so that:
   //  - the attempts counter always increments
   //  - the timer is cleaned up if the component unmounts mid-polling
   const handleToggleCluso = useCallback(() => {
-    const TOGGLE_SCRIPT = `
-      (() => {
-        const host = window.__CLUSO_HOST__;
-        if (!host) return '__CLUSO_NOT_READY__';
-        try {
-          if (typeof host.toggleActive === 'function') {
-            host.toggleActive();
-          } else if (typeof host.setActive === 'function') {
-            const current = host.isActive?.() ?? host.active ?? false;
-            host.setActive(!current);
-          }
-          return '__CLUSO_TOGGLED__';
-        } catch {
-          return '__CLUSO_TOGGLE_ERROR__';
-        }
-      })();
-    `
-
-    const MAX_ATTEMPTS = 20
+    const MAX_ATTEMPTS = 30
     const RETRY_DELAY_MS = 100
+    const nextActive = !isClusoActive
+    const toggleScript = createClusoSetActiveScript(nextActive)
 
     const tryToggle = (attempt: number) => {
       const webview = wvRef.current
       if (!webview || !wvReadyRef.current || !mountedRef.current) return
 
-      webview.executeJavaScript(TOGGLE_SCRIPT).then((result: string) => {
-        if (result === '__CLUSO_NOT_READY__' && attempt < MAX_ATTEMPTS && mountedRef.current) {
+      executeInWebview(toggleScript).then((result: string) => {
+        if ((result === '__CLUSO_NOT_READY__' || result === '__CLUSO_PENDING__') && attempt < MAX_ATTEMPTS && mountedRef.current) {
           clusoToggleTimerRef.current = setTimeout(() => tryToggle(attempt + 1), RETRY_DELAY_MS)
+          return
+        }
+
+        if (result === '__CLUSO_TOGGLED__') {
+          setIsClusoActiveRef.current(nextActive)
+          return
+        }
+
+        if (typeof result === 'string' && result.startsWith('__CLUSO_TOGGLE_ERROR__')) {
+          console.error('[BrowserTile] Failed to toggle Cluso:', result)
         }
       }).catch((err: unknown) => {
         console.error('[BrowserTile] Failed to toggle Cluso:', err)
@@ -806,7 +1173,7 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
     // have happened yet. Retry it here before polling for the host bridge.
     if (!isClusoReady) injectCluso()
     tryToggle(0)
-  }, [injectCluso, isClusoReady])
+  }, [injectCluso, executeInWebview, isClusoReady, isClusoActive])
 
   const focusAddressInput = useCallback(() => {
     requestAnimationFrame(() => {
@@ -888,7 +1255,7 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
             background: theme.surface.input,
             color: theme.text.primary,
             padding: '0 8px 0 24px',
-            fontSize: 11,
+            fontSize: fonts.secondarySize,
             outline: 'none',
             boxSizing: 'border-box'
           }}
@@ -946,19 +1313,21 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
   return (
     <div style={{ position: 'absolute', inset: 0, background: browserBackground }}>
       {/* Toolbar — explicit top/height so compositor knows exact rect; zIndex above webview */}
-      <div style={{
-        position: 'absolute', top: 0, left: 0, right: 0, height: 34,
-        display: 'flex', alignItems: 'center', padding: '0 6px',
-        background: browserToolbarBackground, borderBottom: `1px solid ${browserBorder}`,
-        zIndex: 2,
-      }}>
-        {toolbar}
-      </div>
+      {!hideNavbar && (
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, height: 34,
+          display: 'flex', alignItems: 'center', padding: '0 6px',
+          background: browserToolbarBackground, borderBottom: `1px solid ${browserBorder}`,
+          zIndex: 2,
+        }}>
+          {toolbar}
+        </div>
+      )}
 
-      {/* Webview container — starts below toolbar; explicit top: 34 keeps it out of toolbar's rect */}
+      {/* Webview container — starts below toolbar (or fills entire tile when navbar hidden) */}
       <div
         ref={wvContainerRef}
-        style={{ position: 'absolute', top: 34, left: 0, right: 0, bottom: 0, zIndex: 1 }}
+        style={{ position: 'absolute', top: hideNavbar ? 0 : 34, left: 0, right: 0, bottom: 0, zIndex: 1, background: browserBackground }}
       />
 
       {/* Invisible overlay during drag/resize — blocks mouse events from reaching webview */}
@@ -983,7 +1352,7 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
             position: 'absolute',
             bottom: 8,
             right: 8,
-            fontSize: 10,
+            fontSize: fonts.secondarySize - 1,
             background: theme.surface.overlay,
             border: `1px solid ${theme.border.default}`,
             color: theme.text.muted,
@@ -992,7 +1361,7 @@ export function BrowserTile({ tileId, workspaceId, initialUrl, width, height, zI
             pointerEvents: 'none'
           }}
         >
-          Small tiles may hide browser controls
+          Small blocks may hide browser controls
         </div>
       )}
     </div>

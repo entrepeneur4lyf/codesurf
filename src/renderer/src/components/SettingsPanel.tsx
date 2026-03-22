@@ -1,10 +1,15 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef, lazy } from 'react'
 import type { AppSettings, FontSettings, FontToken } from '../../../shared/types'
-import { DEFAULT_SETTINGS, DEFAULT_FONTS, withDefaultSettings } from '../../../shared/types'
-import { Settings, Type, Monitor, Terminal, FolderOpen, Sliders, Network, Plus, Trash2, ChevronDown, ChevronRight, FileJson, AlertTriangle, Check, Copy, RotateCcw, FormInput, Code2 } from 'lucide-react'
+import { DEFAULT_FONTS, withDefaultSettings } from '../../../shared/types'
+import { Settings, Type, Monitor, FolderOpen, Plus, Trash2, ChevronDown, ChevronRight, FileJson, AlertTriangle, Check, Copy, RotateCcw, FormInput, Code2, Puzzle, RefreshCw, Star, Wrench, Users, FileText, Globe, Eye, EyeOff, PanelRight } from 'lucide-react'
 import { useAppFonts } from '../FontContext'
 import { useTheme } from '../ThemeContext'
-import { THEME_OPTIONS, getThemeCanvasDefaults } from '../theme'
+import { THEME_OPTIONS, getThemeCanvasDefaults, resolveEffectiveThemeId, getThemeById, type AppearanceMode } from '../theme'
+
+const LazyPromptsSection = lazy(() => import('./CustomisationTile').then(m => ({ default: m.PromptsSection })))
+const LazySkillsSection = lazy(() => import('./CustomisationTile').then(m => ({ default: m.SkillsSection })))
+const LazyToolsSection = lazy(() => import('./CustomisationTile').then(m => ({ default: m.ToolsSection })))
+const LazyAgentsSection = lazy(() => import('./CustomisationTile').then(m => ({ default: m.AgentsSection })))
 
 interface Workspace {
   id: string
@@ -14,19 +19,33 @@ interface Workspace {
 
 interface Props {
   onClose: () => void
+  settings: AppSettings
   onSettingsChange: (s: AppSettings) => void
   workspaces?: Workspace[]
+  workspacePath?: string
+  initialSection?: Section
+  /** OS dark mode (for "system" appearance and preset list). */
+  systemPrefersDark?: boolean
 }
 
-type Section = 'general' | 'canvas' | 'terminal' | 'sidebar' | 'behaviour' | 'mcp'
+type BuiltinSection = 'general' | 'canvas' | 'sidebar' | 'browser' | 'mcp' | 'extensions' | 'prompts' | 'skills' | 'tools' | 'agents'
+type Section = BuiltinSection | `ext:${string}`
 
-const SECTIONS: { id: Section; label: string; icon: React.ReactNode; description: string }[] = [
-  { id: 'general',   label: 'General',   icon: <Type size={15} />,      description: 'Display settings — fonts, weights, sizes, line heights, and raw JSON' },
-  { id: 'canvas',    label: 'Canvas',    icon: <Monitor size={15} />,   description: 'Background, grid and snap settings' },
-  { id: 'terminal',  label: 'Terminal',  icon: <Terminal size={15} />,  description: 'Font size and family for terminal tiles' },
-  { id: 'sidebar',   label: 'Sidebar',   icon: <FolderOpen size={15} />,description: 'File tree sort and ignored folders' },
-  { id: 'behaviour', label: 'Behaviour', icon: <Sliders size={15} />,   description: 'Auto-save interval and UI font size' },
-  { id: 'mcp',       label: 'MCP',       icon: <Network size={15} />,   description: 'Model Context Protocol server connections' },
+const SECTIONS: { id: Section; label: string; icon: React.ReactNode; description: string; group?: string }[] = [
+  // App settings
+  { id: 'general',    label: 'General',    icon: <Type size={15} />,       description: 'Display settings — fonts, weights, sizes, line heights, and raw JSON', group: 'app' },
+  { id: 'canvas',     label: 'Canvas',     icon: <Monitor size={15} />,    description: 'Background, grid and snap settings', group: 'app' },
+
+  { id: 'sidebar',    label: 'Sidebar',    icon: <FolderOpen size={15} />, description: 'File tree sort and ignored folders', group: 'app' },
+
+  { id: 'browser',    label: 'Browser',    icon: <Globe size={15} />,      description: 'Chrome data sync — cookies, bookmarks, history', group: 'app' },
+  // Customisation
+  { id: 'prompts',    label: 'Prompts',    icon: <FileText size={15} />,   description: 'Prompt templates with variables and fields', group: 'customise' },
+  { id: 'skills',     label: 'Skills',     icon: <Star size={15} />,       description: 'Custom skills and skill registry', group: 'customise' },
+  { id: 'tools',      label: 'Tools',      icon: <Wrench size={15} />,     description: 'MCP servers, tools, integrations and registry', group: 'customise' },
+  { id: 'agents',     label: 'Agents',     icon: <Users size={15} />,      description: 'Agent modes with system prompts and tool access', group: 'customise' },
+  // System
+  { id: 'extensions', label: 'Extensions', icon: <Puzzle size={15} />,     description: 'Installed extensions', group: 'system' },
 ]
 
 // ─── MCP types ────────────────────────────────────────────────────────────────
@@ -46,6 +65,37 @@ interface MCPConfig {
   mcpServers: Record<string, MCPServerEntry>
   endpoints: Record<string, string>
   updatedAt: string
+}
+
+type ExtensionListEntry = {
+  id: string
+  name: string
+  version: string
+  description?: string
+  author?: string
+  tier: 'safe' | 'power'
+  ui?: import('../../../shared/types').ExtensionManifest['ui']
+  enabled: boolean
+  contributes?: import('../../../shared/types').ExtensionManifest['contributes']
+  dirPath?: string | null
+}
+
+// ─── Extension settings panel ─────────────────────────────────────────────────
+function ExtSettingsPanel({ extId, tileType }: { extId: string; tileType: string }): React.JSX.Element {
+  const [src, setSrc] = useState<string | null>(null)
+  useEffect(() => {
+    window.electron.extensions?.tileEntry?.(extId, tileType)
+      .then((url: string | null) => setSrc(url ?? null))
+      .catch(() => setSrc(null))
+  }, [extId, tileType])
+  if (!src) return <div style={{ fontSize: 12, color: theme.text.muted }}>Loading…</div>
+  return (
+    <iframe
+      key={src}
+      src={src}
+      style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8 }}
+    />
+  )
 }
 
 // ─── Control components ────────────────────────────────────────────────────────
@@ -79,7 +129,7 @@ function NumInput({ value, min, max, step = 1, onChange }: { value: number; min:
       type="number" value={value} min={min} max={max} step={step}
       onChange={e => onChange(Number(e.target.value))}
       style={{
-        width: 72, padding: '5px 10px', fontSize: 13,
+        width: 72, padding: '5px 10px', fontSize: 'inherit',
         background: theme.surface.input, color: theme.text.secondary,
         border: `1px solid ${theme.border.default}`, borderRadius: 8, outline: 'none',
         textAlign: 'right'
@@ -88,7 +138,7 @@ function NumInput({ value, min, max, step = 1, onChange }: { value: number; min:
   )
 }
 
-function RangeInput({ value, min, max, step = 0.01, onChange }: { value: number; min: number; max: number; step?: number; onChange: (v: number) => void }): React.JSX.Element {
+function RangeInput({ value, min, max, step = 0.01, onChange, formatValue }: { value: number; min: number; max: number; step?: number; onChange: (v: number) => void; formatValue?: (v: number) => string }): React.JSX.Element {
   const theme = useTheme()
   const clamped = Math.max(min, Math.min(max, value))
   return (
@@ -105,7 +155,7 @@ function RangeInput({ value, min, max, step = 0.01, onChange }: { value: number;
       <div style={{
         minWidth: 44,
         padding: '5px 8px',
-        fontSize: 12,
+        fontSize: 'inherit',
         textAlign: 'right',
         color: theme.text.muted,
         background: theme.surface.input,
@@ -113,7 +163,7 @@ function RangeInput({ value, min, max, step = 0.01, onChange }: { value: number;
         borderRadius: 8,
         fontVariantNumeric: 'tabular-nums'
       }}>
-        {Math.round(clamped * 100)}%
+        {formatValue ? formatValue(clamped) : `${Math.round(clamped * 100)}%`}
       </div>
     </div>
   )
@@ -126,7 +176,7 @@ function TextInput({ value, onChange, width = 240 }: { value: string; onChange: 
       type="text" value={value}
       onChange={e => onChange(e.target.value)}
       style={{
-        width, padding: '5px 10px', fontSize: 12,
+        width, padding: '5px 10px', fontSize: 'inherit',
         background: theme.surface.input, color: theme.text.secondary,
         border: `1px solid ${theme.border.default}`, borderRadius: 8, outline: 'none'
       }}
@@ -137,6 +187,16 @@ function TextInput({ value, onChange, width = 240 }: { value: string; onChange: 
 function ColorSwatch({ value, onChange }: { value: string; onChange: (v: string) => void }): React.JSX.Element {
   const fonts = useAppFonts()
   const theme = useTheme()
+  const colorInputValue = (() => {
+    if (/^#[0-9a-f]{6}$/i.test(value)) return value
+    if (/^#[0-9a-f]{3}$/i.test(value)) {
+      return `#${value[1]}${value[1]}${value[2]}${value[2]}${value[3]}${value[3]}`
+    }
+    const match = value.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i)
+    if (!match) return '#000000'
+    const [r, g, b] = match.slice(1, 4).map((channel) => Math.max(0, Math.min(255, Number(channel))))
+    return `#${[r, g, b].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`
+  })()
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <div style={{ position: 'relative' }}>
@@ -144,10 +204,10 @@ function ColorSwatch({ value, onChange }: { value: string; onChange: (v: string)
           style={{ width: 28, height: 28, borderRadius: 6, background: value, cursor: 'pointer', border: `1px solid ${theme.border.strong}` }}
           onClick={e => (e.currentTarget.nextSibling as HTMLInputElement)?.click()}
         />
-        <input type="color" value={value} onChange={e => onChange(e.target.value)}
+        <input type="color" value={colorInputValue} onChange={e => onChange(e.target.value)}
           style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }} />
       </div>
-      <span style={{ fontSize: 11, color: theme.text.disabled, fontFamily: fonts.mono }}>{value}</span>
+      <span style={{ fontSize: fonts.secondarySize, color: theme.text.disabled, fontFamily: fonts.mono }}>{value}</span>
     </div>
   )
 }
@@ -194,6 +254,10 @@ const SANS_FONTS = sortFonts([
   '"Saira Condensed", sans-serif',
   '"Tektur", sans-serif',
   '"Rajdhani", sans-serif',
+  // Paseo font stacks
+  'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  '"SF Pro Rounded", "Hiragino Maru Gothic ProN", Meiryo, "MS PGothic", sans-serif',
+  '"Roboto", "Segoe UI", sans-serif',
   'system-ui, sans-serif',
 ])
 
@@ -205,6 +269,12 @@ const MONO_FONTS = sortFonts([
   '"Cascadia Code", "Fira Code", monospace',
   '"Source Code Pro", "Menlo", monospace',
   '"Geist Mono", "SF Mono", monospace',
+  // Paseo font stacks
+  '"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+  '"JetBrains Mono", "JetBrainsMono Nerd Font", "JetBrainsMono NF", "MesloLGM Nerd Font", "Hack Nerd Font", "FiraCode Nerd Font", "SF Mono", Menlo, Monaco, Consolas, monospace',
+  '"MesloLGM Nerd Font", "MesloLGM NF", "JetBrains Mono", monospace',
+  '"Hack Nerd Font", "Fira Code", monospace',
+  '"FiraCode Nerd Font", "Fira Code", monospace',
   'monospace',
 ])
 
@@ -216,7 +286,7 @@ function FontSelect({ value, onChange, fonts }: { value: string; onChange: (v: s
       value={value}
       onChange={e => onChange(e.target.value)}
       style={{
-        width: '100%', maxWidth: 280, padding: '5px 10px', fontSize: 12,
+        width: '100%', maxWidth: 280, padding: '5px 10px', fontSize: 'inherit',
         background: theme.surface.input, color: theme.text.secondary,
         border: `1px solid ${theme.border.default}`, borderRadius: 8, outline: 'none',
         fontFamily: value
@@ -241,6 +311,7 @@ function FontSelect({ value, onChange, fonts }: { value: string; onChange: (v: s
 // ─── Setting row ──────────────────────────────────────────────────────────────
 function SettingRow({ label, description, children }: { label: string; description?: string; children: React.ReactNode }): React.JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -248,8 +319,8 @@ function SettingRow({ label, description, children }: { label: string; descripti
       marginBottom: 8, gap: 16
     }}>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 14, color: theme.text.primary, fontWeight: 500, marginBottom: description ? 3 : 0 }}>{label}</div>
-        {description && <div style={{ fontSize: 12, color: theme.text.disabled }}>{description}</div>}
+        <div style={{ fontSize: fonts.size, color: theme.text.primary, fontWeight: 500, marginBottom: description ? 3 : 0 }}>{label}</div>
+        {description && <div style={{ fontSize: fonts.secondarySize, color: theme.text.disabled }}>{description}</div>}
       </div>
       <div style={{ flexShrink: 0 }}>{children}</div>
     </div>
@@ -258,9 +329,10 @@ function SettingRow({ label, description, children }: { label: string; descripti
 
 function SectionLabel({ label }: { label: string }): React.JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   return (
     <div style={{
-      fontSize: 11, fontWeight: 600, color: theme.text.disabled,
+      fontSize: fonts.secondarySize, fontWeight: 600, color: theme.text.disabled,
       letterSpacing: '0.08em', textTransform: 'uppercase',
       marginTop: 20, marginBottom: 8, paddingLeft: 2
     }}>
@@ -269,10 +341,138 @@ function SectionLabel({ label }: { label: string }): React.JSX.Element {
   )
 }
 
+// ─── Chrome Sync section ──────────────────────────────────────────────────────
+
+interface ChromeProfile { name: string; dir: string; email?: string }
+
+function ChromeSyncSection({ settings, onUpdate, theme }: {
+  settings: AppSettings
+  onUpdate: (key: keyof AppSettings, value: any) => void
+  theme: ReturnType<typeof useTheme>
+}): React.JSX.Element {
+  const fonts = useAppFonts()
+  const [profiles, setProfiles] = useState<ChromeProfile[]>([])
+  const [syncStatus, setSyncStatus] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+
+  useEffect(() => {
+    window.electron?.chromeSync?.listProfiles().then((p: ChromeProfile[]) => {
+      setProfiles(p)
+      // Auto-select first profile if none set
+      if (p.length > 0 && !settings.chromeSyncProfileDir) {
+        onUpdate('chromeSyncProfileDir', p[0].dir)
+      }
+    }).catch(() => {})
+  }, [])
+
+  const handleSync = async () => {
+    if (!settings.chromeSyncProfileDir || syncing) return
+    setSyncing(true)
+    setSyncStatus('Syncing...')
+    try {
+      // Sync cookies into a test partition to verify it works
+      const result = await window.electron?.chromeSync?.syncCookies(
+        settings.chromeSyncProfileDir,
+        'persist:browser-tile-test',
+      )
+      if (result?.errors?.length > 0) {
+        setSyncStatus(`Synced ${result.count} cookies (${result.errors.length} errors)`)
+      } else {
+        setSyncStatus(`Synced ${result?.count ?? 0} cookies`)
+      }
+    } catch (e: any) {
+      setSyncStatus(`Error: ${e.message || 'Failed'}`)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const noChrome = profiles.length === 0
+
+  return (
+    <>
+      <SectionLabel label="Chrome Data Sync" />
+      <SettingRow label="Enable Chrome sync" description="Import cookies, bookmarks, and history from Chrome into browser blocks">
+        <button
+          onClick={() => onUpdate('chromeSyncEnabled', !settings.chromeSyncEnabled)}
+          style={{
+            width: 36, height: 20, borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: settings.chromeSyncEnabled ? theme.accent.base : theme.surface.panelMuted,
+            position: 'relative', transition: 'background 0.15s',
+          }}
+        >
+          <div style={{
+            width: 16, height: 16, borderRadius: 8, background: theme.text.primary,
+            position: 'absolute', top: 2,
+            left: settings.chromeSyncEnabled ? 18 : 2,
+            transition: 'left 0.15s',
+          }} />
+        </button>
+      </SettingRow>
+
+      {settings.chromeSyncEnabled && (
+        <>
+          <SettingRow label="Chrome profile" description={noChrome ? 'Chrome not detected on this machine' : 'Select which Chrome profile to sync from'}>
+            {noChrome ? (
+              <span style={{ fontSize: fonts.secondarySize, color: theme.text.disabled }}>Not found</span>
+            ) : (
+              <select
+                value={settings.chromeSyncProfileDir ?? ''}
+                onChange={e => onUpdate('chromeSyncProfileDir', e.target.value)}
+                style={{
+                  fontSize: fonts.secondarySize, padding: '4px 8px', borderRadius: 6,
+                  background: theme.surface.panelMuted, color: theme.text.primary,
+                  border: `1px solid ${theme.border.default}`, outline: 'none',
+                  minWidth: 140,
+                }}
+              >
+                {profiles.map(p => (
+                  <option key={p.dir} value={p.dir}>
+                    {p.name}{p.email ? ` (${p.email})` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+          </SettingRow>
+
+          <SettingRow label="Sync now" description="Import Chrome cookies into all new browser blocks">
+            <button
+              onClick={handleSync}
+              disabled={syncing || noChrome}
+              style={{
+                fontSize: fonts.secondarySize, padding: '5px 12px', borderRadius: 6,
+                background: theme.accent.base, color: '#fff', border: 'none',
+                cursor: syncing || noChrome ? 'not-allowed' : 'pointer',
+                opacity: syncing || noChrome ? 0.5 : 1,
+              }}
+            >
+              {syncing ? 'Syncing...' : 'Sync'}
+            </button>
+          </SettingRow>
+
+          {syncStatus && (
+            <div style={{ fontSize: fonts.secondarySize, color: theme.text.muted, padding: '4px 2px' }}>
+              {syncStatus}
+            </div>
+          )}
+        </>
+      )}
+
+      <SectionLabel label="What gets synced" />
+      <div style={{ fontSize: fonts.secondarySize, color: theme.text.muted, lineHeight: 1.6, padding: '0 2px' }}>
+        <strong style={{ color: theme.text.secondary }}>Cookies</strong> — Logged-in sessions from Chrome are injected into each new browser block so you are immediately authenticated.<br />
+        <strong style={{ color: theme.text.secondary }}>Bookmarks</strong> — Available in the browser toolbar (coming soon).<br />
+        <strong style={{ color: theme.text.secondary }}>History</strong> — Address bar autocomplete from Chrome history (coming soon).<br />
+        <strong style={{ color: theme.text.secondary }}>Note:</strong> macOS will prompt you once for Keychain access to decrypt Chrome cookies.
+      </div>
+    </>
+  )
+}
+
 // ─── Main panel ───────────────────────────────────────────────────────────────
-export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Props): React.JSX.Element {
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [section, setSection] = useState<Section>('general')
+export function SettingsPanel({ onClose, settings: initialSettings, onSettingsChange, workspaces = [], workspacePath, initialSection, systemPrefersDark = true }: Props): React.JSX.Element {
+  const [settings, setSettings] = useState<AppSettings>(initialSettings)
+  const [section, setSection] = useState<Section>(initialSection ?? 'general')
   const [mcpConfig, setMcpConfig] = useState<MCPConfig | null>(null)
   const fonts = useAppFonts()
   const theme = useTheme()
@@ -283,11 +483,22 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
   const [workspaceServers, setWorkspaceServers] = useState<Record<string, Record<string, MCPServerEntry>>>({})
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
   const [updateState, setUpdateState] = useState<{ checking: boolean; downloading: boolean; result: null | { ok: boolean; currentVersion: string; status: string; updateAvailable: boolean; updateInfo?: { version?: string; releaseName?: string; releaseDate?: string } } }>({ checking: false, downloading: false, result: null })
+  const [extensionsList, setExtensionsList] = useState<ExtensionListEntry[]>([])
+  const [extensionsLoading, setExtensionsLoading] = useState(false)
+  const [extensionsError, setExtensionsError] = useState<string | null>(null)
+  const [expandedExtId, setExpandedExtId] = useState<string | null>(null)
+  const [extSettingsMap, setExtSettingsMap] = useState<Record<string, Record<string, unknown>>>({})
+
+  const latestSettingsSaveRef = useRef(0)
+  const settingsRef = useRef<AppSettings>(withDefaultSettings(initialSettings))
 
   useEffect(() => {
-    window.electron.settings?.get().then((s: AppSettings) => {
-      if (s) setSettings(withDefaultSettings(s))
-    })
+    const normalized = withDefaultSettings(initialSettings)
+    settingsRef.current = normalized
+    setSettings(normalized)
+  }, [initialSettings])
+
+  useEffect(() => {
     window.electron.mcp?.getConfig?.().then((cfg: unknown) => {
       if (cfg) setMcpConfig(cfg as MCPConfig)
     })
@@ -308,6 +519,60 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
       }
     })
   }, [section, workspaces])
+
+  const loadExtensions = useCallback(async () => {
+    if (!window.electron?.extensions?.list) {
+      setExtensionsError('Extensions API unavailable')
+      return
+    }
+    setExtensionsLoading(true)
+    setExtensionsError(null)
+    try {
+      const list = await window.electron.extensions.list()
+      setExtensionsList(list as ExtensionListEntry[])
+    } catch (e) {
+      setExtensionsError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setExtensionsLoading(false)
+    }
+  }, [])
+
+  const refreshExtensions = useCallback(async () => {
+    if (!window.electron?.extensions?.refresh) return loadExtensions()
+    setExtensionsLoading(true)
+    setExtensionsError(null)
+    try {
+      const wsPath = workspaces[0]?.path ?? null
+      const list = await window.electron.extensions.refresh(wsPath)
+      setExtensionsList(list as ExtensionListEntry[])
+    } catch (e) {
+      setExtensionsError(e instanceof Error ? e.message : String(e))
+      await loadExtensions()
+    } finally {
+      setExtensionsLoading(false)
+    }
+  }, [workspaces, loadExtensions])
+
+  const toggleExtensionEnabled = useCallback(async (extId: string, nextEnabled: boolean) => {
+    if (!window.electron?.extensions) return
+    try {
+      if (nextEnabled) {
+        await window.electron.extensions.enable(extId)
+        await window.electron.extensions.refresh(workspaces[0]?.path ?? null)
+      } else {
+        await window.electron.extensions.disable(extId)
+      }
+      const list = await window.electron.extensions.list()
+      setExtensionsList(list as ExtensionListEntry[])
+    } catch (e) {
+      setExtensionsError(e instanceof Error ? e.message : String(e))
+    }
+  }, [workspaces])
+
+  useEffect(() => {
+    if (section !== 'extensions') return
+    void loadExtensions()
+  }, [section, loadExtensions])
 
   const checkForUpdates = useCallback(async () => {
     setUpdateState(prev => ({ ...prev, checking: true }))
@@ -380,38 +645,44 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
     saveWorkspaceServers(wsId, rest)
   }, [workspaceServers, saveWorkspaceServers])
 
+  const persistSettings = useCallback((next: AppSettings) => {
+    const requestId = ++latestSettingsSaveRef.current
+    const normalizedNext = withDefaultSettings(next)
+    settingsRef.current = normalizedNext
+    onSettingsChange(normalizedNext)
+    void window.electron.settings?.set(normalizedNext).then((saved: AppSettings) => {
+      if (!saved || requestId !== latestSettingsSaveRef.current) return
+      const normalizedSaved = withDefaultSettings(saved)
+      settingsRef.current = normalizedSaved
+      setSettings(normalizedSaved)
+      onSettingsChange(normalizedSaved)
+    })
+  }, [onSettingsChange])
+
   // Auto-save on every change
   const update = useCallback(<K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-    setSettings(prev => {
-      const next = { ...prev, [key]: value }
-      window.electron.settings?.set(next).then((saved: AppSettings) => {
-        if (saved) onSettingsChange(saved)
-
-      })
-      return next
-    })
-  }, [onSettingsChange])
+    const next = withDefaultSettings({ ...settingsRef.current, [key]: value })
+    settingsRef.current = next
+    setSettings(next)
+    persistSettings(next)
+  }, [persistSettings])
 
   const updateSettingsPatch = useCallback((patch: Partial<AppSettings>) => {
-    setSettings(prev => {
-      const themePatch = patch.themeId !== undefined && patch.canvasBackground === undefined && patch.gridColorSmall === undefined && patch.gridColorLarge === undefined
-        ? (() => {
-            const canvas = getThemeCanvasDefaults(patch.themeId)
-            return {
-              canvasBackground: canvas.background,
-              gridColorSmall: canvas.gridSmall,
-              gridColorLarge: canvas.gridLarge,
-            }
-          })()
-        : {}
-      const next = withDefaultSettings({ ...prev, ...patch, ...themePatch })
-      window.electron.settings?.set(next).then((saved: AppSettings) => {
-        if (saved) onSettingsChange(saved)
-
-      })
-      return next
-    })
-  }, [onSettingsChange])
+    const themePatch = patch.themeId !== undefined && patch.canvasBackground === undefined && patch.gridColorSmall === undefined && patch.gridColorLarge === undefined
+      ? (() => {
+          const canvas = getThemeCanvasDefaults(patch.themeId)
+          return {
+            canvasBackground: canvas.background,
+            gridColorSmall: canvas.gridSmall,
+            gridColorLarge: canvas.gridLarge,
+          }
+        })()
+      : {}
+    const next = withDefaultSettings({ ...settingsRef.current, ...patch, ...themePatch })
+    settingsRef.current = next
+    setSettings(next)
+    persistSettings(next)
+  }, [persistSettings])
 
   const applyThemePreset = useCallback((themeId: string) => {
     const canvas = getThemeCanvasDefaults(themeId)
@@ -423,6 +694,33 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
     })
   }, [updateSettingsPatch])
 
+  const applyAppearanceMode = useCallback((mode: AppearanceMode) => {
+    const currentThemeId = settings.themeId
+    if (mode === 'light') {
+      const canvas = getThemeCanvasDefaults('paper-light')
+      updateSettingsPatch({
+        appearance: mode,
+        themeId: 'paper-light',
+        canvasBackground: canvas.background,
+        gridColorSmall: canvas.gridSmall,
+        gridColorLarge: canvas.gridLarge,
+      })
+      return
+    }
+    let nextThemeId = currentThemeId
+    if (currentThemeId === 'paper-light') {
+      nextThemeId = 'default-dark'
+    }
+    const canvas = getThemeCanvasDefaults(nextThemeId)
+    updateSettingsPatch({
+      appearance: mode,
+      themeId: nextThemeId,
+      canvasBackground: canvas.background,
+      gridColorSmall: canvas.gridSmall,
+      gridColorLarge: canvas.gridLarge,
+    })
+  }, [settings.themeId, updateSettingsPatch])
+
   // Close on Escape
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -430,22 +728,52 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const active = SECTIONS.find(s => s.id === section)!
+  const activeExt = section.startsWith('ext:') ? extensionsList.find(e => `ext:${e.id}` === section) : undefined
+  const active = SECTIONS.find(s => s.id === section) ?? (activeExt ? { label: activeExt.name, description: activeExt.description ?? '' } : { label: '', description: '' })
 
   const renderContent = () => {
     switch (section) {
-      case 'general':
+      case 'general': {
+        const resolvedThemeId = resolveEffectiveThemeId(settings.appearance ?? 'dark', settings.themeId, systemPrefersDark)
+        const resolvedUiMode = getThemeById(resolvedThemeId).mode
+        const presetOptions = THEME_OPTIONS.filter(o => o.mode === resolvedUiMode)
+        const appearanceMode = settings.appearance ?? 'dark'
         return (
           <>
+            <SectionLabel label="Appearance" />
+            <SettingRow label="Mode" description="Dark uses the palette below. Light uses the Paper Light theme. System follows your OS dark/light setting.">
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {(['dark', 'light', 'system'] as const).map(mode => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => applyAppearanceMode(mode)}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: 8,
+                      fontSize: fonts.secondarySize,
+                      fontWeight: 600,
+                      border: `1px solid ${appearanceMode === mode ? theme.accent.base : theme.border.default}`,
+                      background: appearanceMode === mode ? theme.accent.soft : theme.surface.input,
+                      color: appearanceMode === mode ? theme.accent.hover : theme.text.secondary,
+                      cursor: 'pointer',
+                      textTransform: 'capitalize',
+                    }}
+                  >
+                    {mode === 'system' ? 'System' : mode}
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
             <SectionLabel label="Theme" />
-            <SettingRow label="Preset" description="Changes tile chrome, terminal colours, shell surfaces, and resets the canvas palette to the preset defaults.">
+            <SettingRow label="Preset" description="Changes block chrome, terminal colours, shell surfaces, and resets the canvas palette to the preset defaults. Presets match the current light or dark mode.">
               <select
-                value={settings.themeId}
+                value={resolvedThemeId}
                 onChange={e => applyThemePreset(e.target.value)}
                 style={{
                   minWidth: 220,
                   padding: '6px 10px',
-                  fontSize: 12,
+                  fontSize: fonts.secondarySize,
                   background: theme.surface.input,
                   color: theme.text.secondary,
                   border: `1px solid ${theme.border.default}`,
@@ -453,7 +781,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
                   outline: 'none',
                 }}
               >
-                {THEME_OPTIONS.map(option => (
+                {presetOptions.map(option => (
                   <option key={option.id} value={option.id}>
                     {option.label} · {option.mode}
                   </option>
@@ -469,6 +797,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
             />
           </>
         )
+      }
       case 'canvas':
         return (
           <>
@@ -477,10 +806,15 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
               <ColorSwatch value={settings.canvasBackground} onChange={v => update('canvasBackground', v)} />
             </SettingRow>
             <SettingRow label="Canvas translucency" description="Slide left for see-through vibrancy, all the way right for fully opaque">
-              <RangeInput value={settings.translucentBackgroundOpacity} min={0.05} max={1} step={0.01} onChange={v => update('translucentBackgroundOpacity', Number(v.toFixed(2)))} />
+              <RangeInput value={settings.translucentBackgroundOpacity} min={0.05} max={1} step={0.01} onChange={v => update('translucentBackgroundOpacity', Number(v.toFixed(2)))} formatValue={v => `${Math.round(v * 100)}%`} />
             </SettingRow>
-            <SettingRow label="Cursor glow" description="Show or hide the cursor-proximity glow over the canvas grid">
-              <Toggle value={settings.canvasGlowEnabled} onChange={v => update('canvasGlowEnabled', v)} />
+            <SettingRow label="Cursor glow" description="Show or hide the cursor-proximity glow over the canvas grid. Radius is measured in screen pixels.">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <Toggle value={settings.canvasGlowEnabled} onChange={v => update('canvasGlowEnabled', v)} />
+                <div style={{ opacity: settings.canvasGlowEnabled ? 1 : 0.45, pointerEvents: settings.canvasGlowEnabled ? 'auto' : 'none' }}>
+                  <RangeInput value={settings.canvasGlowRadius} min={50} max={200} step={5} onChange={v => update('canvasGlowRadius', v)} formatValue={v => `${Math.round(v)}px`} />
+                </div>
+              </div>
             </SettingRow>
             <SectionLabel label="Grid" />
             <SettingRow label="Small dot colour" description="Color of the small grid dots">
@@ -499,81 +833,60 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
             <SettingRow label="Snap grid size" description="Snap grid size in pixels">
               <NumInput value={settings.gridSize} min={4} max={80} onChange={v => update('gridSize', v)} />
             </SettingRow>
-            <SettingRow label="Snap to grid" description="Snap tiles to the grid when dragging">
+            <SettingRow label="Snap to grid" description="Snap blocks to the grid when dragging">
               <Toggle value={settings.snapToGrid} onChange={v => update('snapToGrid', v)} />
             </SettingRow>
           </>
         )
-      case 'terminal':
-        return (
-          <>
-            <SectionLabel label="Font" />
-            <SettingRow label="Font size" description="Terminal font size in points">
-              <NumInput value={settings.terminalFontSize} min={8} max={24} onChange={v => update('terminalFontSize', v)} />
-            </SettingRow>
-            <SettingRow label="Font family" description="Font stack for terminals">
-              <TextInput value={settings.terminalFontFamily} onChange={v => update('terminalFontFamily', v)} />
-            </SettingRow>
-          </>
-        )
+
       case 'sidebar':
         return (
           <>
-            <SectionLabel label="Files" />
-            <SettingRow label="Default sort" description="Initial sort order for the file tree">
-              <select value={settings.sidebarDefaultSort}
-                onChange={e => update('sidebarDefaultSort', e.target.value as AppSettings['sidebarDefaultSort'])}
-                style={{ padding: '5px 10px', fontSize: 13, background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.border.default}`, borderRadius: 8, outline: 'none' }}>
-                <option value="name">Name</option>
-                <option value="type">Type</option>
-                <option value="ext">Ext</option>
-              </select>
-            </SettingRow>
-            <SettingRow label="Ignored folders" description="Comma-separated list of folders to hide">
-              <TextInput value={settings.sidebarIgnored.join(', ')}
-                onChange={v => update('sidebarIgnored', v.split(',').map(s => s.trim()).filter(Boolean))}
-                width={280} />
+            <SectionLabel label="Sidebar" />
+            <SettingRow label="Navigation" description="The sidebar shows workspaces and canvases. Use Files blocks on the canvas for file browsing.">
+              <span style={{ fontSize: fonts.secondarySize, color: theme.text.muted }}>Files block replaces sidebar file browser</span>
             </SettingRow>
           </>
         )
 
-      case 'behaviour':
-        return (
-          <>
-            <SectionLabel label="Saving" />
-            <SettingRow label="Auto-save interval" description="How often canvas state is written to disk (ms)">
-              <NumInput value={settings.autoSaveIntervalMs} min={100} max={10000} step={100} onChange={v => update('autoSaveIntervalMs', v)} />
-            </SettingRow>
-            <SectionLabel label="Interface" />
-            <SettingRow label="UI font size" description="Base font size for the interface">
-              <NumInput value={settings.uiFontSize} min={10} max={18} onChange={v => update('uiFontSize', v)} />
-            </SettingRow>
-          </>
-        )
 
+
+      case 'browser':
+        return <ChromeSyncSection settings={settings} onUpdate={update} theme={theme} />
+
+      case 'tools':
       case 'mcp': {
         const servers = mcpConfig?.mcpServers ?? {}
         const userServers = Object.entries(servers).filter(([k]) => k !== 'contex')
         return (
           <>
-            {/* Status */}
+            {/* Tools & permissions — only when accessed via Tools tab */}
+            {section === 'tools' && (
+              <div style={{ marginBottom: 20 }}>
+                <React.Suspense fallback={<div style={{ color: theme.text.muted, fontSize: fonts.secondarySize }}>Loading...</div>}>
+                  <LazyToolsSection />
+                </React.Suspense>
+              </div>
+            )}
+
+            {/* MCP Server Status */}
             <SectionLabel label="Server Status" />
-            <div style={{ background: '#161616', borderRadius: 10, padding: '12px 16px', marginBottom: 8 }}>
+            <div style={{ background: theme.surface.panelMuted, borderRadius: 10, padding: '12px 16px', marginBottom: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: mcpConfig ? '#3fb950' : '#555', boxShadow: mcpConfig ? '0 0 6px #3fb950' : 'none', flexShrink: 0 }} />
-                <span style={{ fontSize: 13, color: '#e0e0e0', fontWeight: 500 }}>contex</span>
-                <span style={{ fontSize: 11, color: '#444', fontFamily: 'inherit', marginLeft: 'auto' }}>built-in</span>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: mcpConfig ? theme.status.success : '#555', boxShadow: mcpConfig ? '0 0 6px #3fb950' : 'none', flexShrink: 0 }} />
+                <span style={{ fontSize: fonts.size, color: theme.text.primary, fontWeight: 500 }}>contex</span>
+                <span style={{ fontSize: fonts.secondarySize, color: theme.text.muted, fontFamily: 'inherit', marginLeft: 'auto' }}>built-in</span>
               </div>
               {mcpConfig && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {Object.entries(mcpConfig.endpoints ?? {}).map(([k, v]) => (
                     <div key={k} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <span style={{ fontSize: 10, color: '#444', fontFamily: fonts.mono, width: 50, flexShrink: 0 }}>{k}</span>
-                      <span style={{ fontSize: 10, color: '#3fb950', fontFamily: fonts.mono, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span>
+                      <span style={{ fontSize: 10, color: theme.text.muted, fontFamily: fonts.mono, width: 50, flexShrink: 0 }}>{k}</span>
+                      <span style={{ fontSize: 10, color: theme.status.success, fontFamily: fonts.mono, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span>
                       <button onClick={() => navigator.clipboard.writeText(v)}
-                        style={{ fontSize: 9, color: '#444', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}
-                        onMouseEnter={e => (e.currentTarget.style.color = '#888')}
-                        onMouseLeave={e => (e.currentTarget.style.color = '#444')}>
+                        style={{ fontSize: 9, color: theme.text.muted, background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}
+                        onMouseEnter={e => (e.currentTarget.style.color = theme.text.muted)}
+                        onMouseLeave={e => (e.currentTarget.style.color = theme.text.disabled)}>
                         copy
                       </button>
                     </div>
@@ -585,61 +898,61 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
             {/* User servers */}
             <SectionLabel label={`Connected Servers${mcpSaved ? ' — saved' : ''}`} />
             {userServers.map(([name, s]) => (
-              <div key={name} style={{ background: '#161616', borderRadius: 10, marginBottom: 6, overflow: 'hidden' }}>
+              <div key={name} style={{ background: theme.surface.panelMuted, borderRadius: 10, marginBottom: 6, overflow: 'hidden' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px' }}>
                   <span
                     onClick={() => updateServer(name, { enabled: !(s.enabled !== false) })}
                     title="Toggle enabled"
-                    style={{ width: 7, height: 7, borderRadius: '50%', background: s.enabled !== false ? '#3fb950' : '#333', flexShrink: 0, cursor: 'pointer' }}
+                    style={{ width: 7, height: 7, borderRadius: '50%', background: s.enabled !== false ? theme.status.success : theme.border.default, flexShrink: 0, cursor: 'pointer' }}
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, color: '#e0e0e0', fontWeight: 500 }}>{name}</div>
-                    {s.description && <div style={{ fontSize: 11, color: '#555', marginTop: 1 }}>{s.description}</div>}
-                    <div style={{ fontSize: 10, color: '#333', fontFamily: fonts.mono, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontSize: fonts.size, color: theme.text.primary, fontWeight: 500 }}>{name}</div>
+                    {s.description && <div style={{ fontSize: fonts.secondarySize, color: theme.text.disabled, marginTop: 1 }}>{s.description}</div>}
+                    <div style={{ fontSize: 10, color: theme.text.disabled, fontFamily: fonts.mono, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {s.url ?? s.cmd}
                     </div>
                   </div>
                   <button onClick={() => setExpandedServer(expandedServer === name ? null : name)}
-                    style={{ background: 'none', border: 'none', color: '#444', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                    onMouseEnter={e => (e.currentTarget.style.color = '#888')}
-                    onMouseLeave={e => (e.currentTarget.style.color = '#444')}>
+                    style={{ background: 'none', border: 'none', color: theme.text.muted, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                    onMouseEnter={e => (e.currentTarget.style.color = theme.text.muted)}
+                    onMouseLeave={e => (e.currentTarget.style.color = theme.text.disabled)}>
                     {expandedServer === name ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   </button>
                   <button onClick={() => removeServer(name)}
-                    style={{ background: 'none', border: 'none', color: '#333', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                    onMouseEnter={e => (e.currentTarget.style.color = '#f44747')}
-                    onMouseLeave={e => (e.currentTarget.style.color = '#333')}>
+                    style={{ background: 'none', border: 'none', color: theme.text.disabled, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                    onMouseEnter={e => (e.currentTarget.style.color = theme.status.danger)}
+                    onMouseLeave={e => (e.currentTarget.style.color = theme.text.disabled)}>
                     <Trash2 size={13} />
                   </button>
                 </div>
                 {expandedServer === name && (
                   <div style={{ borderTop: '1px solid #1f1f1f', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div>
-                      <div style={{ fontSize: 10, color: '#444', marginBottom: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>URL</div>
+                      <div style={{ fontSize: 10, color: theme.text.muted, marginBottom: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>URL</div>
                       <input value={s.url ?? ''} onChange={e => {
                             const url = e.target.value || undefined
                             updateServer(name, { url, cmd: undefined, type: url ? 'http' : 'stdio' })
                           }}
                         placeholder="http://localhost:3000"
-                        style={{ width: '100%', padding: '6px 10px', fontSize: 12, background: '#111', color: '#ccc', border: '1px solid #2a2a2a', borderRadius: 6, outline: 'none', fontFamily: fonts.mono, boxSizing: 'border-box' }} />
+                        style={{ width: '100%', padding: '6px 10px', fontSize: fonts.secondarySize, background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.border.default}`, borderRadius: 6, outline: 'none', fontFamily: fonts.mono, boxSizing: 'border-box' }} />
                     </div>
                     <div>
-                      <div style={{ fontSize: 10, color: '#444', marginBottom: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Stdio Command</div>
+                      <div style={{ fontSize: 10, color: theme.text.muted, marginBottom: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Stdio Command</div>
                       <input value={s.cmd ?? ''} onChange={e => {
                             const cmd = e.target.value || undefined
                             updateServer(name, { cmd, url: undefined, type: cmd ? 'stdio' : 'http' })
                           }}
                         placeholder="npx @modelcontextprotocol/server-name"
-                        style={{ width: '100%', padding: '6px 10px', fontSize: 12, background: '#111', color: '#ccc', border: '1px solid #2a2a2a', borderRadius: 6, outline: 'none', fontFamily: fonts.mono, boxSizing: 'border-box' }} />
+                        style={{ width: '100%', padding: '6px 10px', fontSize: fonts.secondarySize, background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.border.default}`, borderRadius: 6, outline: 'none', fontFamily: fonts.mono, boxSizing: 'border-box' }} />
                     </div>
                     <div>
-                      <div style={{ fontSize: 10, color: '#444', marginBottom: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Description</div>
+                      <div style={{ fontSize: 10, color: theme.text.muted, marginBottom: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Description</div>
                       <input value={s.description ?? ''} onChange={e => updateServer(name, { description: e.target.value })}
                         placeholder="What does this server provide?"
-                        style={{ width: '100%', padding: '6px 10px', fontSize: 12, background: '#111', color: '#ccc', border: '1px solid #2a2a2a', borderRadius: 6, outline: 'none', boxSizing: 'border-box' }} />
+                        style={{ width: '100%', padding: '6px 10px', fontSize: fonts.secondarySize, background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.border.default}`, borderRadius: 6, outline: 'none', boxSizing: 'border-box' }} />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontSize: 12, color: '#e0e0e0' }}>Enabled</span>
+                      <span style={{ fontSize: fonts.secondarySize, color: theme.text.primary }}>Enabled</span>
                       <Toggle value={s.enabled !== false} onChange={v => updateServer(name, { enabled: v })} />
                     </div>
                   </div>
@@ -649,7 +962,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
 
             {/* Add server */}
             {addingServer ? (
-              <div style={{ background: '#161616', borderRadius: 10, padding: '14px 16px', marginTop: 4 }}>
+              <div style={{ background: theme.surface.panelMuted, borderRadius: 10, padding: '14px 16px', marginTop: 4 }}>
                 <SectionLabel label="New Server" />
                 {[
                   { key: 'name', label: 'Name', placeholder: 'my-server', mono: false },
@@ -658,22 +971,22 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
                   { key: 'description', label: 'Description', placeholder: 'What does this server do?', mono: false },
                 ].map(f => (
                   <div key={f.key} style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 10, color: '#444', marginBottom: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{f.label}</div>
+                    <div style={{ fontSize: 10, color: theme.text.muted, marginBottom: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{f.label}</div>
                     <input
                       value={(newServer as Record<string, string>)[f.key]}
                       onChange={e => setNewServer(p => ({ ...p, [f.key]: e.target.value }))}
                       placeholder={f.placeholder}
-                      style={{ width: '100%', padding: '6px 10px', fontSize: 12, background: '#111', color: '#ccc', border: '1px solid #2a2a2a', borderRadius: 6, outline: 'none', fontFamily: f.mono ? 'monospace' : 'inherit', boxSizing: 'border-box' }}
+                      style={{ width: '100%', padding: '6px 10px', fontSize: fonts.secondarySize, background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.border.default}`, borderRadius: 6, outline: 'none', fontFamily: f.mono ? 'monospace' : 'inherit', boxSizing: 'border-box' }}
                     />
                   </div>
                 ))}
                 <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                   <button onClick={addServer}
-                    style={{ flex: 1, padding: '7px 0', borderRadius: 8, background: '#fff', color: '#000', border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                    style={{ flex: 1, padding: '7px 0', borderRadius: 8, background: theme.accent.base, color: theme.text.inverse, border: 'none', fontSize: fonts.size, fontWeight: 600, cursor: 'pointer' }}>
                     Add Server
                   </button>
                   <button onClick={() => setAddingServer(false)}
-                    style={{ padding: '7px 16px', borderRadius: 8, background: '#222', color: '#666', border: '1px solid #333', fontSize: 13, cursor: 'pointer' }}>
+                    style={{ padding: '7px 16px', borderRadius: 8, background: theme.surface.panelElevated, color: theme.text.muted, border: `1px solid ${theme.border.default}`, fontSize: fonts.size, cursor: 'pointer' }}>
                     Cancel
                   </button>
                 </div>
@@ -683,11 +996,11 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
                 onClick={() => setAddingServer(true)}
                 style={{
                   width: '100%', marginTop: 4, padding: '10px 0', borderRadius: 10,
-                  background: 'transparent', border: '1px dashed #2a2a2a', color: '#555',
-                  fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                  background: 'transparent', border: `1px dashed ${theme.border.default}`, color: theme.text.disabled,
+                  fontSize: fonts.size, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
                 }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = '#4a9eff44'; e.currentTarget.style.color = '#4a9eff' }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = '#2a2a2a'; e.currentTarget.style.color = '#555' }}>
+                onMouseEnter={e => { e.currentTarget.style.borderColor = theme.accent.base; e.currentTarget.style.color = theme.accent.base }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = theme.border.default; e.currentTarget.style.color = theme.text.disabled }}>
                 <Plus size={14} /> Add MCP Server
               </button>
             )}
@@ -696,7 +1009,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
             {workspaces.length > 0 && (
               <>
                 <SectionLabel label="Workspace Servers" />
-                <div style={{ fontSize: 12, color: '#444', marginBottom: 10 }}>
+                <div style={{ fontSize: fonts.secondarySize, color: theme.text.muted, marginBottom: 10 }}>
                   MCP servers scoped to a specific workspace — only active when that workspace is open.
                 </div>
 
@@ -707,15 +1020,15 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
                       key={ws.id}
                       onClick={() => setActiveWorkspaceId(ws.id)}
                       style={{
-                        padding: '4px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer',
-                        background: activeWorkspaceId === ws.id ? '#fff' : '#161616',
-                        color: activeWorkspaceId === ws.id ? '#000' : '#666',
-                        border: `1px solid ${activeWorkspaceId === ws.id ? '#fff' : '#2a2a2a'}`,
+                        padding: '4px 12px', borderRadius: 6, fontSize: fonts.secondarySize, cursor: 'pointer',
+                        background: activeWorkspaceId === ws.id ? theme.accent.base : theme.surface.panelElevated,
+                        color: activeWorkspaceId === ws.id ? theme.text.inverse : theme.text.muted,
+                        border: `1px solid ${activeWorkspaceId === ws.id ? theme.accent.base : theme.border.default}`,
                         fontWeight: activeWorkspaceId === ws.id ? 600 : 400
                       }}>
                       {ws.name}
                       {Object.keys(workspaceServers[ws.id] ?? {}).length > 0 && (
-                        <span style={{ marginLeft: 6, fontSize: 10, color: activeWorkspaceId === ws.id ? '#555' : '#444' }}>
+                        <span style={{ marginLeft: 6, fontSize: 10, color: activeWorkspaceId === ws.id ? theme.text.inverse : theme.text.disabled }}>
                           {Object.keys(workspaceServers[ws.id]).length}
                         </span>
                       )}
@@ -729,24 +1042,24 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
                   const ws = workspaces.find(w => w.id === activeWorkspaceId)!
                   return (
                     <>
-                      <div style={{ fontSize: 10, color: '#333', fontFamily: fonts.mono, marginBottom: 8 }}>{ws.path}</div>
+                      <div style={{ fontSize: 10, color: theme.text.disabled, fontFamily: fonts.mono, marginBottom: 8 }}>{ws.path}</div>
                       {Object.entries(wsServers).map(([name, s]) => (
-                        <div key={name} style={{ background: '#161616', borderRadius: 10, marginBottom: 6, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div key={name} style={{ background: theme.surface.panelMuted, borderRadius: 10, marginBottom: 6, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
                           <span
                             onClick={() => updateWorkspaceServer(activeWorkspaceId, name, { enabled: !(s.enabled !== false) })}
-                            style={{ width: 7, height: 7, borderRadius: '50%', background: s.enabled !== false ? '#3fb950' : '#333', flexShrink: 0, cursor: 'pointer' }}
+                            style={{ width: 7, height: 7, borderRadius: '50%', background: s.enabled !== false ? theme.status.success : theme.border.default, flexShrink: 0, cursor: 'pointer' }}
                           />
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, color: '#e0e0e0', fontWeight: 500 }}>{name}</div>
-                            {s.description && <div style={{ fontSize: 11, color: '#555', marginTop: 1 }}>{s.description}</div>}
-                            <div style={{ fontSize: 10, color: '#333', fontFamily: fonts.mono, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <div style={{ fontSize: fonts.size, color: theme.text.primary, fontWeight: 500 }}>{name}</div>
+                            {s.description && <div style={{ fontSize: fonts.secondarySize, color: theme.text.disabled, marginTop: 1 }}>{s.description}</div>}
+                            <div style={{ fontSize: 10, color: theme.text.disabled, fontFamily: fonts.mono, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {s.url ?? s.cmd}
                             </div>
                           </div>
                           <button onClick={() => removeWorkspaceServer(activeWorkspaceId, name)}
-                            style={{ background: 'none', border: 'none', color: '#333', cursor: 'pointer' }}
-                            onMouseEnter={e => (e.currentTarget.style.color = '#f44747')}
-                            onMouseLeave={e => (e.currentTarget.style.color = '#333')}>
+                            style={{ background: 'none', border: 'none', color: theme.text.disabled, cursor: 'pointer' }}
+                            onMouseEnter={e => (e.currentTarget.style.color = theme.status.danger)}
+                            onMouseLeave={e => (e.currentTarget.style.color = theme.text.disabled)}>
                             <Trash2 size={13} />
                           </button>
                         </div>
@@ -764,11 +1077,11 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
                         }}
                         style={{
                           width: '100%', padding: '10px 0', borderRadius: 10,
-                          background: 'transparent', border: '1px dashed #2a2a2a', color: '#555',
-                          fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                          background: 'transparent', border: `1px dashed ${theme.border.default}`, color: theme.text.disabled,
+                          fontSize: fonts.size, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
                         }}
-                        onMouseEnter={e => { e.currentTarget.style.borderColor = '#4a9eff44'; e.currentTarget.style.color = '#4a9eff' }}
-                        onMouseLeave={e => { e.currentTarget.style.borderColor = '#2a2a2a'; e.currentTarget.style.color = '#555' }}>
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = theme.accent.base; e.currentTarget.style.color = theme.accent.base }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = theme.border.default; e.currentTarget.style.color = theme.text.disabled }}>
                         <Plus size={14} /> Add to {ws.name}
                       </button>
                     </>
@@ -778,34 +1091,297 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
             )}
 
             {/* Config paths */}
-            <div style={{ marginTop: 20, padding: '14px 16px', background: '#0d0d0d', borderRadius: 10, border: '1px solid #1a1a1a', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ marginTop: 20, padding: '14px 16px', background: theme.surface.panel, borderRadius: 10, border: `1px solid ${theme.border.default}`, display: 'flex', flexDirection: 'column', gap: 10 }}>
               {[
                 { label: 'Global config', path: '~/.contex/mcp-server.json' },
                 { label: 'Workspace servers', path: '~/.contex/workspaces/<id>/mcp-servers.json' },
                 { label: 'Merged config (point agents here)', path: '~/.contex/workspaces/<id>/.contex/mcp-merged.json', highlight: true },
               ].map(row => (
                 <div key={row.label}>
-                  <div style={{ fontSize: 10, color: '#444', marginBottom: 3, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{row.label}</div>
+                  <div style={{ fontSize: 10, color: theme.text.muted, marginBottom: 3, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{row.label}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <code style={{ fontSize: 11, color: row.highlight ? '#4a9eff' : '#555', fontFamily: fonts.mono, flex: 1 }}>{row.path}</code>
+                    <code style={{ fontSize: fonts.secondarySize, color: row.highlight ? '#4a9eff' : '#555', fontFamily: fonts.mono, flex: 1 }}>{row.path}</code>
                     <button
                       onClick={() => navigator.clipboard.writeText(row.path)}
-                      style={{ fontSize: 10, color: '#333', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}
-                      onMouseEnter={e => (e.currentTarget.style.color = '#888')}
-                      onMouseLeave={e => (e.currentTarget.style.color = '#333')}>
+                      style={{ fontSize: 10, color: theme.text.disabled, background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}
+                      onMouseEnter={e => (e.currentTarget.style.color = theme.text.muted)}
+                      onMouseLeave={e => (e.currentTarget.style.color = theme.text.disabled)}>
                       copy
                     </button>
                   </div>
                 </div>
               ))}
-              <div style={{ marginTop: 4, padding: '8px 10px', background: '#111', borderRadius: 6, border: '1px solid #1f1f1f' }}>
-                <div style={{ fontSize: 11, color: '#555' }}>
+              <div style={{ marginTop: 4, padding: '8px 10px', background: theme.surface.input, borderRadius: 6, border: `1px solid ${theme.border.subtle}` }}>
+                <div style={{ fontSize: fonts.secondarySize, color: theme.text.disabled }}>
                   The merged config combines global + workspace servers into one file. Point Claude Code, Cursor, or any MCP client at the merged path for the active workspace.
                 </div>
               </div>
             </div>
           </>
         )
+      }
+
+      case 'extensions':
+        return (
+          <>
+            <SectionLabel label="Installed extensions" />
+            {/* Master kill-switch */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '10px 14px', marginBottom: 12, borderRadius: 10,
+              background: settings.extensionsDisabled ? 'rgba(244,71,71,0.08)' : theme.surface.panelMuted,
+              border: `1px solid ${settings.extensionsDisabled ? 'rgba(244,71,71,0.25)' : theme.border.default}`,
+              transition: 'background 0.15s, border-color 0.15s',
+            }}>
+              <div>
+                <div style={{ fontSize: fonts.size, fontWeight: 600, color: theme.text.primary }}>Disable all extensions</div>
+                <div style={{ fontSize: fonts.secondarySize, color: theme.text.muted, marginTop: 2 }}>
+                  {settings.extensionsDisabled ? 'Extensions are hidden from the sidebar and footer' : 'Hide all extensions from the sidebar and footer'}
+                </div>
+              </div>
+              <Toggle value={settings.extensionsDisabled ?? false} onChange={v => updateSettingsPatch({ extensionsDisabled: v })} />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: fonts.secondarySize, color: theme.text.disabled, lineHeight: 1.45, flex: 1, minWidth: 200 }}>
+                Extensions load from <code style={{ fontSize: fonts.secondarySize, color: theme.text.muted, fontFamily: fonts.mono }}>~/.contex/extensions</code>
+                {workspaces.length > 0 && (
+                  <> and the active workspace&apos;s <code style={{ fontSize: fonts.secondarySize, color: theme.text.muted, fontFamily: fonts.mono }}>.contex/extensions</code></>
+                )}
+                . Disable a power extension to unload its main process code; use Refresh after adding folders.
+              </div>
+              <button
+                type="button"
+                onClick={() => { void refreshExtensions() }}
+                disabled={extensionsLoading}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '7px 12px', borderRadius: 8, fontSize: fonts.secondarySize, fontWeight: 600,
+                  cursor: extensionsLoading ? 'wait' : 'pointer',
+                  background: theme.surface.input,
+                  color: theme.text.secondary,
+                  border: `1px solid ${theme.border.default}`,
+                  flexShrink: 0,
+                }}
+              >
+                <RefreshCw size={14} style={{ opacity: extensionsLoading ? 0.5 : 1 }} />
+                Rescan
+              </button>
+            </div>
+
+            {extensionsError && (
+              <div style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 8, background: 'rgba(244,71,71,0.12)', border: '1px solid rgba(244,71,71,0.35)', fontSize: fonts.secondarySize, color: '#f48771' }}>
+                {extensionsError}
+              </div>
+            )}
+
+            {extensionsLoading && extensionsList.length === 0 ? (
+              <div style={{ fontSize: fonts.size, color: theme.text.muted, padding: '12px 0' }}>Loading extensions…</div>
+            ) : extensionsList.length === 0 ? (
+              <div style={{ fontSize: fonts.size, color: theme.text.disabled, padding: '16px', background: theme.surface.panelMuted, borderRadius: 10, border: `1px dashed ${theme.border.default}` }}>
+                No extensions found. Add a folder under <span style={{ fontFamily: fonts.mono, fontSize: fonts.secondarySize }}>~/.contex/extensions</span> with an <span style={{ fontFamily: fonts.mono, fontSize: fonts.secondarySize }}>extension.json</span> manifest.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {extensionsList.map(ext => {
+                  const tiles = ext.contributes?.tiles?.length ?? 0
+                  const menus = ext.contributes?.contextMenu?.length ?? 0
+                  const extSettings = ext.contributes?.settings ?? []
+                  const isHiddenFromSidebar = (settings.hiddenFromSidebarExtIds ?? []).includes(ext.id)
+                  const isInSettingsPanel = (settings.settingsPanelExtIds ?? []).includes(ext.id)
+                  const isExpanded = expandedExtId === ext.id
+                  const savedExtSettings = extSettingsMap[ext.id] ?? {}
+                  return (
+                    <div
+                      key={ext.id}
+                      style={{
+                        background: theme.surface.panelMuted,
+                        borderRadius: 10,
+                        border: `1px solid ${isExpanded ? theme.border.strong : theme.border.default}`,
+                        overflow: 'hidden',
+                        transition: 'border-color 0.15s',
+                      }}
+                    >
+                      {/* Card header row */}
+                      <div style={{ padding: '12px 14px', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                            <span style={{ fontSize: fonts.size, fontWeight: 600, color: theme.text.primary }}>{ext.name}</span>
+                            <span style={{ fontSize: fonts.secondarySize, color: theme.text.muted, fontFamily: fonts.mono }}>v{ext.version}</span>
+                            <span style={{
+                              fontSize: 10, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.04em',
+                              padding: '2px 6px', borderRadius: 4,
+                              background: ext.tier === 'power' ? 'rgba(74,158,255,0.15)' : 'rgba(63,185,80,0.12)',
+                              color: ext.tier === 'power' ? '#4a9eff' : theme.status.success,
+                            }}>{ext.tier}</span>
+                            <span style={{
+                              fontSize: 10, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.04em',
+                              padding: '2px 6px', borderRadius: 4,
+                              background: ext.ui?.mode === 'custom' ? 'rgba(251,191,36,0.15)' : theme.surface.accentSoft,
+                              color: ext.ui?.mode === 'custom' ? theme.status.warning : theme.accent.base,
+                            }}>{ext.ui?.mode === 'custom' ? 'custom ui' : 'core ui'}</span>
+                            <span style={{
+                              fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4,
+                              background: ext.enabled ? 'rgba(63,185,80,0.12)' : 'rgba(136,136,136,0.15)',
+                              color: ext.enabled ? theme.status.success : theme.text.disabled,
+                            }}>{ext.enabled ? 'enabled' : 'disabled'}</span>
+                          </div>
+                          <div style={{ fontSize: fonts.secondarySize, color: theme.text.muted, fontFamily: fonts.mono, marginBottom: 4 }}>{ext.id}</div>
+                          {ext.description && (
+                            <div style={{ fontSize: fonts.secondarySize, color: theme.text.secondary, lineHeight: 1.4, marginBottom: 4 }}>{ext.description}</div>
+                          )}
+                          <div style={{ fontSize: fonts.secondarySize, color: theme.text.muted }}>
+                            {tiles > 0 && <span>{tiles} block{tiles === 1 ? '' : 's'}</span>}
+                            {tiles > 0 && menus > 0 && ' · '}
+                            {menus > 0 && <span>{menus} menu item{menus === 1 ? '' : 's'}</span>}
+                            {(tiles > 0 || menus > 0) && ' · '}
+                            <span>{ext.ui?.mode === 'custom' ? 'bespoke extension surface' : 'host-aligned extension surface'}</span>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                          {/* Show in sidebar toggle (ON by default) */}
+                          <button
+                            title={isHiddenFromSidebar ? 'Show in sidebar' : 'Hide from sidebar'}
+                            onClick={() => {
+                              const next = isHiddenFromSidebar
+                                ? (settings.hiddenFromSidebarExtIds ?? []).filter(id => id !== ext.id)
+                                : [...(settings.hiddenFromSidebarExtIds ?? []), ext.id]
+                              updateSettingsPatch({ hiddenFromSidebarExtIds: next })
+                            }}
+                            style={{
+                              background: 'none', border: 'none', cursor: 'pointer', padding: 4, borderRadius: 6,
+                              color: isHiddenFromSidebar ? theme.text.disabled : theme.text.secondary,
+                              display: 'flex', alignItems: 'center', transition: 'color 0.15s',
+                            }}
+                          >
+                            {isHiddenFromSidebar ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                          {/* Show as settings panel toggle */}
+                          {ext.contributes?.tiles && ext.contributes.tiles.length > 0 && (
+                            <button
+                              title={isInSettingsPanel ? 'Remove from settings' : 'Show in settings panel'}
+                              onClick={() => {
+                                const next = isInSettingsPanel
+                                  ? (settings.settingsPanelExtIds ?? []).filter(id => id !== ext.id)
+                                  : [...(settings.settingsPanelExtIds ?? []), ext.id]
+                                updateSettingsPatch({ settingsPanelExtIds: next })
+                              }}
+                              style={{
+                                background: isInSettingsPanel ? theme.surface.accentSoft : 'none',
+                                border: 'none', cursor: 'pointer', padding: 4, borderRadius: 6,
+                                color: isInSettingsPanel ? theme.accent.base : theme.text.disabled,
+                                display: 'flex', alignItems: 'center', transition: 'color 0.15s, background 0.15s',
+                              }}
+                            >
+                              <PanelRight size={14} />
+                            </button>
+                          )}
+                          {/* Settings cog — only show if extension declares settings */}
+                          {extSettings.length > 0 && (
+                            <button
+                              title="Extension settings"
+                              onClick={async () => {
+                                if (isExpanded) { setExpandedExtId(null); return }
+                                // Load current settings for this extension
+                                const current = await window.electron.extensions?.getSettings?.(ext.id).catch(() => ({})) ?? {}
+                                setExtSettingsMap(prev => ({ ...prev, [ext.id]: current }))
+                                setExpandedExtId(ext.id)
+                              }}
+                              style={{
+                                background: isExpanded ? theme.surface.accentSoft : 'none',
+                                border: 'none', cursor: 'pointer', padding: 4, borderRadius: 6,
+                                color: isExpanded ? theme.accent.base : theme.text.disabled,
+                                display: 'flex', alignItems: 'center',
+                                transition: 'color 0.15s, background 0.15s',
+                              }}
+                            >
+                              <Settings size={14} />
+                            </button>
+                          )}
+                          <Toggle value={ext.enabled} onChange={v => { void toggleExtensionEnabled(ext.id, v) }} />
+                        </div>
+                      </div>
+                      {/* Inline settings panel */}
+                      {isExpanded && extSettings.length > 0 && (
+                        <div style={{
+                          borderTop: `1px solid ${theme.border.default}`,
+                          padding: '12px 14px',
+                          background: theme.surface.panel,
+                          display: 'flex', flexDirection: 'column', gap: 10,
+                        }}>
+                          <div style={{ fontSize: fonts.secondarySize, fontWeight: 600, color: theme.text.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Settings</div>
+                          {extSettings.map((s) => (
+                            <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <label style={{ fontSize: fonts.secondarySize, color: theme.text.secondary, flex: 1 }}>{s.label}</label>
+                              {s.type === 'boolean' ? (
+                                <Toggle
+                                  value={savedExtSettings[s.key] !== undefined ? Boolean(savedExtSettings[s.key]) : Boolean(s.default)}
+                                  onChange={async v => {
+                                    const next = { ...savedExtSettings, [s.key]: v }
+                                    setExtSettingsMap(prev => ({ ...prev, [ext.id]: next }))
+                                    await window.electron.extensions?.setSettings?.(ext.id, next).catch(() => {})
+                                  }}
+                                />
+                              ) : (
+                                <input
+                                  type={s.type === 'number' ? 'number' : 'text'}
+                                  value={String(savedExtSettings[s.key] ?? s.default ?? '')}
+                                  onChange={async e => {
+                                    const val = s.type === 'number' ? Number(e.target.value) : e.target.value
+                                    const next = { ...savedExtSettings, [s.key]: val }
+                                    setExtSettingsMap(prev => ({ ...prev, [ext.id]: next }))
+                                    await window.electron.extensions?.setSettings?.(ext.id, next).catch(() => {})
+                                  }}
+                                  style={{
+                                    background: theme.surface.input, border: `1px solid ${theme.border.default}`,
+                                    color: theme.text.primary, borderRadius: 6, padding: '4px 8px',
+                                    fontSize: fonts.secondarySize, fontFamily: fonts.mono, width: 160,
+                                  }}
+                                />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </>
+        )
+
+      case 'prompts':
+        return workspacePath ? (
+          <React.Suspense fallback={<div style={{ color: theme.text.muted, fontSize: fonts.secondarySize }}>Loading...</div>}>
+            <LazyPromptsSection workspacePath={workspacePath} />
+          </React.Suspense>
+        ) : <div style={{ color: theme.text.disabled, fontSize: fonts.secondarySize }}>Open a workspace first</div>
+
+      case 'skills':
+        return workspacePath ? (
+          <React.Suspense fallback={<div style={{ color: theme.text.muted, fontSize: fonts.secondarySize }}>Loading...</div>}>
+            <LazySkillsSection workspacePath={workspacePath} />
+          </React.Suspense>
+        ) : <div style={{ color: theme.text.disabled, fontSize: fonts.secondarySize }}>Open a workspace first</div>
+
+      case 'agents':
+        return workspacePath ? (
+          <React.Suspense fallback={<div style={{ color: theme.text.muted, fontSize: fonts.secondarySize }}>Loading...</div>}>
+            <LazyAgentsSection workspacePath={workspacePath} />
+          </React.Suspense>
+        ) : <div style={{ color: theme.text.disabled, fontSize: fonts.secondarySize }}>Open a workspace first</div>
+
+      default: {
+        if (section.startsWith('ext:')) {
+          const extId = section.slice(4)
+          const ext = extensionsList.find(e => e.id === extId)
+          const tile = ext?.contributes?.tiles?.[0]
+          if (ext && tile) {
+            return <ExtSettingsPanel extId={extId} tileType={tile.type} />
+          }
+          return <div style={{ color: theme.text.disabled, fontSize: fonts.secondarySize }}>Extension has no block.</div>
+        }
+        return null
       }
     }
   }
@@ -820,11 +1396,12 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div style={{
-        width: 720, height: 580,
+        width: '90vw', maxWidth: 1100, height: '85vh', maxHeight: 780,
         background: theme.surface.panel, borderRadius: 14,
         border: `1px solid ${theme.border.default}`,
         boxShadow: theme.shadow.modal,
-        display: 'flex', overflow: 'hidden'
+        display: 'flex', overflow: 'hidden',
+        fontFamily: fonts.primary, fontSize: fonts.size, lineHeight: fonts.lineHeight, fontWeight: fonts.weight,
       }}>
 
         {/* Left nav */}
@@ -850,11 +1427,11 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
                 width: 22, height: 22, borderRadius: '50%',
                 border: '1.5px solid currentColor',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 12, lineHeight: 1
+                fontSize: fonts.secondarySize, lineHeight: 1
               }}>
                 ×
               </div>
-              <span style={{ fontSize: 11 }}>esc</span>
+              <span style={{ fontSize: fonts.secondarySize }}>esc</span>
             </div>
           </div>
 
@@ -864,31 +1441,75 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
             <span style={{ fontSize: 17, fontWeight: 700, color: theme.text.primary }}>Settings</span>
           </div>
 
-          {/* Nav items */}
-          <div style={{ flex: 1 }}>
-            {SECTIONS.map(s => (
-              <div
-                key={s.id}
-                onClick={() => setSection(s.id)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '9px 16px', cursor: 'pointer',
-                  color: section === s.id ? theme.text.primary : theme.text.disabled,
-                  background: section === s.id ? theme.surface.selection : 'transparent',
-                  fontSize: 14, userSelect: 'none',
-                  transition: 'color 0.1s'
-                }}
-                onMouseEnter={e => { if (section !== s.id) e.currentTarget.style.color = theme.text.muted }}
-                onMouseLeave={e => { if (section !== s.id) e.currentTarget.style.color = theme.text.disabled }}
-              >
-                <span style={{ opacity: section === s.id ? 1 : 0.5 }}>{s.icon}</span>
-                {s.label}
-              </div>
-            ))}
+          {/* Nav items — grouped */}
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {(['app', 'customise', 'system'] as const).map(group => {
+              const groupSections = SECTIONS.filter(s => s.group === group)
+              const groupLabel = group === 'app' ? 'App' : group === 'customise' ? 'Customise' : 'System'
+              return (
+                <div key={group}>
+                  <div style={{ padding: '14px 16px 4px', fontSize: 9, fontWeight: 700, color: theme.text.disabled, letterSpacing: 1.2, textTransform: 'uppercase', userSelect: 'none' }}>{groupLabel}</div>
+                  {groupSections.map(s => (
+                    <div
+                      key={s.id}
+                      onClick={() => setSection(s.id as Section)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '8px 16px', cursor: 'pointer',
+                        color: section === s.id ? theme.text.primary : theme.text.disabled,
+                        background: section === s.id ? theme.surface.selection : 'transparent',
+                        fontSize: fonts.size, userSelect: 'none',
+                        transition: 'color 0.1s'
+                      }}
+                      onMouseEnter={e => { if (section !== s.id) e.currentTarget.style.color = theme.text.muted }}
+                      onMouseLeave={e => { if (section !== s.id) e.currentTarget.style.color = theme.text.disabled }}
+                    >
+                      <span style={{ opacity: section === s.id ? 1 : 0.5 }}>{s.icon}</span>
+                      {s.label}
+                    </div>
+                  ))}
+                </div>
+              )
+            })}
+            {/* Extension panels pinned to settings */}
+            {(() => {
+              const panelExts = extensionsList
+                .filter(e => (settings.settingsPanelExtIds ?? []).includes(e.id))
+                .sort((a, b) => a.name.localeCompare(b.name))
+              if (panelExts.length === 0) return null
+              return (
+                <div>
+                  <div style={{ padding: '14px 16px 4px', fontSize: 9, fontWeight: 700, color: theme.text.disabled, letterSpacing: 1.2, textTransform: 'uppercase', userSelect: 'none' }}>Extensions</div>
+                  {panelExts.map(e => {
+                    const sid = `ext:${e.id}` as Section
+                    return (
+                      <div
+                        key={e.id}
+                        onClick={() => setSection(sid)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '8px 16px', cursor: 'pointer',
+                          color: section === sid ? theme.text.primary : theme.text.disabled,
+                          background: section === sid ? theme.surface.selection : 'transparent',
+                          fontSize: fonts.size, userSelect: 'none', transition: 'color 0.1s',
+                        }}
+                        onMouseEnter={e2 => { if (section !== sid) e2.currentTarget.style.color = theme.text.muted }}
+                        onMouseLeave={e2 => { if (section !== sid) e2.currentTarget.style.color = theme.text.disabled }}
+                      >
+                        <span style={{ opacity: 0.6 }}>
+                          <svg width="15" height="15" viewBox="0 0 14 14" fill="none"><path d="M6 1.5h2a.5.5 0 01.5.5v1.5H8a1 1 0 00-1 1 1 1 0 001 1h.5V7a.5.5 0 01-.5.5H6V7a1 1 0 00-1-1 1 1 0 00-1 1v.5H2.5A.5.5 0 012 7V5.5h.5a1 1 0 001-1 1 1 0 00-1-1H2V2a.5.5 0 01.5-.5H6z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round"/></svg>
+                        </span>
+                        {e.name}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
           </div>
 
           {/* Version */}
-          <div style={{ padding: '0 16px', fontSize: 11, color: theme.text.disabled }}>
+          <div style={{ padding: '0 16px', fontSize: fonts.secondarySize, color: theme.text.disabled }}>
             v{__VERSION__}
           </div>
         </div>
@@ -898,7 +1519,7 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
           {/* Section header */}
           <div style={{ padding: '28px 28px 0' }}>
             <div style={{ fontSize: 22, fontWeight: 700, color: theme.text.primary, marginBottom: 4 }}>{active.label}</div>
-            <div style={{ fontSize: 14, color: theme.text.disabled }}>{active.description}</div>
+            <div style={{ fontSize: fonts.size, color: theme.text.disabled }}>{active.description}</div>
           </div>
 
           {/* Content */}
@@ -913,80 +1534,17 @@ export function SettingsPanel({ onClose, onSettingsChange, workspaces = [] }: Pr
 
 // ─── Font token categories for the reference table ──────────────────────────
 
-const FONT_TOKEN_GROUPS: { label: string; tokens: { key: keyof FontSettings; description: string }[] }[] = [
-  { label: 'Base', tokens: [
-    { key: 'sans', description: 'Default sans-serif for all UI' },
-    { key: 'mono', description: 'Default monospace for code/data' },
-  ]},
-  { label: 'Headings', tokens: [
-    { key: 'title', description: 'Tile title bars, panel headers' },
-    { key: 'sectionLabel', description: 'Section labels (ACTIVITY, BUILT-IN, etc.)' },
-    { key: 'subtitle', description: 'Descriptions, hints, secondary text' },
-  ]},
-  { label: 'Sidebar', tokens: [
-    { key: 'sidebarFileList', description: 'File/folder names in sidebar' },
-    { key: 'sidebarHeader', description: 'Sidebar section headers' },
-    { key: 'sidebarPath', description: 'Path breadcrumbs, workspace path' },
-  ]},
-  { label: 'Terminal & Code', tokens: [
-    { key: 'terminal', description: 'Terminal emulator (xterm)' },
-    { key: 'codeEditor', description: 'Code editor (Monaco)' },
-    { key: 'inlineCode', description: 'Inline code, <code> tags' },
-    { key: 'commandPreview', description: 'CLI command previews' },
-  ]},
-  { label: 'Chat', tokens: [
-    { key: 'chatMessage', description: 'Chat message body' },
-    { key: 'chatInput', description: 'Chat input textarea' },
-    { key: 'chatToolbar', description: 'Model/provider dropdown labels' },
-    { key: 'chatMeta', description: 'Model IDs, cost, session info' },
-    { key: 'chatThinking', description: 'Thinking block content' },
-  ]},
-  { label: 'Kanban', tokens: [
-    { key: 'kanbanCardTitle', description: 'Kanban card titles' },
-    { key: 'kanbanBadge', description: 'Agent pills, status badges' },
-    { key: 'kanbanTab', description: 'Tab labels' },
-  ]},
-  { label: 'Data Display', tokens: [
-    { key: 'dataUrl', description: 'URLs, endpoints' },
-    { key: 'dataPath', description: 'File/directory paths' },
-    { key: 'dataKeyValue', description: 'Key-value pairs, env vars' },
-    { key: 'dataTimestamp', description: 'Timestamps, dates' },
-    { key: 'dataNumeric', description: 'Costs, counts, numbers' },
-    { key: 'dataBadge', description: 'Tags, chips, tool names' },
-  ]},
-  { label: 'Controls', tokens: [
-    { key: 'button', description: 'Buttons, clickable text' },
-    { key: 'formLabel', description: 'Form labels (URL, DESCRIPTION)' },
-    { key: 'formInput', description: 'Text inputs, selects' },
-  ]},
-  { label: 'Settings', tokens: [
-    { key: 'settingsHeader', description: 'Settings section headers' },
-    { key: 'settingsLabel', description: 'Settings field labels' },
-  ]},
-]
-
-const SANS_TOKEN_KEYS = new Set<keyof FontSettings>([
-  'sans', 'title', 'sectionLabel', 'subtitle',
-  'sidebarFileList', 'sidebarHeader',
-  'chatMessage', 'chatInput', 'chatToolbar',
-  'kanbanCardTitle', 'kanbanBadge', 'kanbanTab',
-  'dataBadge', 'button', 'formLabel', 'formInput',
-  'settingsHeader', 'settingsLabel',
-])
-
-const MONO_TOKEN_KEYS = new Set<keyof FontSettings>([
-  'mono', 'sidebarPath', 'terminal', 'codeEditor', 'inlineCode', 'commandPreview',
-  'chatMeta', 'chatThinking',
-  'dataUrl', 'dataPath', 'dataKeyValue', 'dataTimestamp', 'dataNumeric',
-])
+// Simplified: only 3 font tokens now
 
 function buildDisplayJson(settings: AppSettings): string {
   return JSON.stringify({
+    appearance: settings.appearance,
     themeId: settings.themeId,
-    primaryFont: settings.primaryFont,
-    secondaryFont: settings.secondaryFont,
-    monoFont: settings.monoFont,
-    fonts: settings.fonts,
+    fonts: {
+      primary: settings.fonts.primary,
+      secondary: settings.fonts.secondary,
+      mono: settings.fonts.mono,
+    },
   }, null, 2)
 }
 
@@ -1011,22 +1569,20 @@ function validateDisplayJson(value: string): { ok: true; parsed: Partial<AppSett
       return { ok: false, error: 'Must be a JSON object' }
     }
 
-    const topLevel = new Set(['themeId', 'primaryFont', 'secondaryFont', 'monoFont', 'fonts'])
+    const topLevel = new Set(['appearance', 'themeId', 'fonts'])
     const invalidTopLevel = Object.keys(parsed).filter(key => !topLevel.has(key))
     if (invalidTopLevel.length > 0) {
       return { ok: false, error: `Unknown key${invalidTopLevel.length > 1 ? 's' : ''}: ${invalidTopLevel.join(', ')}` }
     }
 
     const config = parsed as Record<string, unknown>
+    if (config.appearance !== undefined) {
+      if (config.appearance !== 'dark' && config.appearance !== 'light' && config.appearance !== 'system') {
+        return { ok: false, error: 'appearance must be "dark", "light", or "system"' }
+      }
+    }
     if (config.themeId !== undefined && typeof config.themeId !== 'string') {
       return { ok: false, error: 'themeId must be a string' }
-    }
-
-    for (const key of ['primaryFont', 'secondaryFont', 'monoFont'] as const) {
-      if (config[key] !== undefined) {
-        const error = validateTokenLike(config[key], key)
-        if (error) return { ok: false, error }
-      }
     }
 
     if (config.fonts !== undefined) {
@@ -1058,6 +1614,7 @@ function SliderField({ value, min, max, step, onChange, format }: {
   onChange: (value: number) => void
   format?: (value: number) => string
 }): React.JSX.Element {
+  const theme = useTheme()
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
       <input
@@ -1069,7 +1626,7 @@ function SliderField({ value, min, max, step, onChange, format }: {
         onChange={e => onChange(Number(e.target.value))}
         style={{ width: '100%', minWidth: 0 }}
       />
-      <span style={{ width: 32, textAlign: 'right', fontSize: 10, color: '#888', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+      <span style={{ width: 32, textAlign: 'right', fontSize: 10, color: theme.text.secondary, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
         {format ? format(value) : value}
       </span>
     </div>
@@ -1083,6 +1640,8 @@ function CompactFontRow({ label, description, token, fontOptions, onChange }: {
   fontOptions: string[]
   onChange: (next: FontToken) => void
 }): React.JSX.Element {
+  const theme = useTheme()
+  const fonts = useAppFonts()
   return (
     <div style={{
       display: 'grid',
@@ -1090,13 +1649,13 @@ function CompactFontRow({ label, description, token, fontOptions, onChange }: {
       gap: 12,
       alignItems: 'start',
       padding: '10px 12px',
-      background: '#141414',
-      border: '1px solid #1f1f1f',
+      background: theme.surface.panelMuted,
+      border: `1px solid ${theme.border.subtle}`,
       borderRadius: 10,
     }}>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 12, color: '#e6e6e6', fontWeight: 600 }}>{label}</div>
-        <div style={{ fontSize: 11, color: '#555', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{description}</div>
+        <div style={{ fontSize: fonts.size, color: theme.text.primary, fontWeight: 600 }}>{label}</div>
+        <div style={{ fontSize: fonts.secondarySize, color: theme.text.disabled, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{description}</div>
       </div>
       <div style={{ display: 'grid', gap: 8 }}>
         <FontSelect value={token.family} onChange={family => onChange({ ...token, family })} fonts={fontOptions} />
@@ -1124,6 +1683,7 @@ function DisplaySettingsEditor({
   onDownloadUpdate: () => void
 }): React.JSX.Element {
   const fonts = useAppFonts()
+  const theme = useTheme()
   const [view, setView] = useState<'display' | 'json'>('display')
   const [rawJson, setRawJson] = useState(() => buildDisplayJson(settings))
   const [jsonError, setJsonError] = useState<string | null>(null)
@@ -1156,26 +1716,15 @@ function DisplaySettingsEditor({
     }
   }, [rawJson])
 
-  const updateBaseFont = useCallback((key: 'primaryFont' | 'secondaryFont' | 'monoFont', tokenKey: keyof FontSettings, next: FontToken) => {
+  const updateFont = useCallback((key: 'primary' | 'secondary' | 'mono', next: FontToken) => {
     onApply({
-      [key]: next,
-      fonts: { ...settings.fonts, [tokenKey]: next },
-    } as Partial<AppSettings>)
-  }, [onApply, settings.fonts])
-
-  const updateToken = useCallback((key: keyof FontSettings, next: FontToken) => {
-    const patch: Partial<AppSettings> = {
       fonts: { ...settings.fonts, [key]: next },
-    }
-    if (key === 'sans') patch.primaryFont = next
-    if (key === 'subtitle') patch.secondaryFont = next
-    if (key === 'mono') patch.monoFont = next
-    onApply(patch)
+    } as Partial<AppSettings>)
   }, [onApply, settings.fonts])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #1a1a1a', paddingBottom: 8 }}>
+      <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${theme.border.default}`, paddingBottom: 8 }}>
         {[
           { id: 'display' as const, label: 'Display', icon: <FormInput size={14} /> },
           { id: 'json' as const, label: 'JSON', icon: <Code2 size={14} /> },
@@ -1190,11 +1739,11 @@ function DisplaySettingsEditor({
                 height: 28,
                 padding: '0 11px',
                 borderRadius: 7,
-                border: `1px solid ${isActive ? '#30363d' : 'transparent'}`,
-                background: isActive ? '#21262d' : 'transparent',
-                color: isActive ? '#58a6ff' : '#6f7782',
+                border: `1px solid ${isActive ? theme.border.strong : 'transparent'}`,
+                background: isActive ? theme.surface.panelElevated : 'transparent',
+                color: isActive ? theme.accent.base : theme.text.muted,
                 cursor: 'pointer',
-                fontSize: 11,
+                fontSize: fonts.secondarySize,
                 fontWeight: isActive ? 700 : 500,
                 letterSpacing: 0.3,
                 textTransform: 'uppercase',
@@ -1202,15 +1751,15 @@ function DisplaySettingsEditor({
               }}
               onMouseEnter={e => {
                 if (!isActive) {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
-                  e.currentTarget.style.color = '#aeb8c4'
-                  e.currentTarget.style.borderColor = '#2a2f38'
+                  e.currentTarget.style.background = theme.surface.hover
+                  e.currentTarget.style.color = theme.text.secondary
+                  e.currentTarget.style.borderColor = theme.border.default
                 }
               }}
               onMouseLeave={e => {
                 if (!isActive) {
                   e.currentTarget.style.background = 'transparent'
-                  e.currentTarget.style.color = '#6f7782'
+                  e.currentTarget.style.color = theme.text.muted
                   e.currentTarget.style.borderColor = 'transparent'
                 }
               }}
@@ -1224,34 +1773,16 @@ function DisplaySettingsEditor({
 
       {view === 'display' ? (
         <>
-          <SectionLabel label="Base Styles" />
+          <SectionLabel label="Fonts" />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <CompactFontRow label="Primary" description="Main UI font" token={settings.primaryFont} fontOptions={SANS_FONTS} onChange={next => updateBaseFont('primaryFont', 'sans', next)} />
-            <CompactFontRow label="Secondary" description="Secondary / metadata font" token={settings.secondaryFont} fontOptions={SANS_FONTS} onChange={next => updateBaseFont('secondaryFont', 'subtitle', next)} />
-            <CompactFontRow label="Monospace" description="Code and data font" token={settings.monoFont} fontOptions={MONO_FONTS} onChange={next => updateBaseFont('monoFont', 'mono', next)} />
+            <CompactFontRow label="Primary" description="Main UI text, headings, chat messages" token={settings.fonts.primary} fontOptions={SANS_FONTS} onChange={next => updateFont('primary', next)} />
+            <CompactFontRow label="Secondary" description="Metadata, subtitles, labels, smaller text" token={settings.fonts.secondary} fontOptions={SANS_FONTS} onChange={next => updateFont('secondary', next)} />
+            <CompactFontRow label="Monospace" description="Terminal, code editor, data display" token={settings.fonts.mono} fontOptions={MONO_FONTS} onChange={next => updateFont('mono', next)} />
           </div>
-
-          {FONT_TOKEN_GROUPS.map(group => (
-            <div key={group.label}>
-              <SectionLabel label={group.label} />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {group.tokens.map(({ key, description }) => (
-                  <CompactFontRow
-                    key={key}
-                    label={key}
-                    description={description}
-                    token={settings.fonts[key]}
-                    fontOptions={MONO_TOKEN_KEYS.has(key) ? MONO_FONTS : SANS_TOKEN_KEYS.has(key) ? SANS_FONTS : [...SANS_FONTS, ...MONO_FONTS]}
-                    onChange={next => updateToken(key, next)}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
 
           <SectionLabel label="Updates" />
           <SettingRow label="Current version" description="Installed desktop build version">
-            <span style={{ fontSize: 12, color: '#aaa', fontFamily: fonts.mono }}>{updateState.result?.currentVersion ?? __VERSION__}</span>
+            <span style={{ fontSize: fonts.secondarySize, color: theme.text.muted, fontFamily: fonts.mono }}>{updateState.result?.currentVersion ?? __VERSION__}</span>
           </SettingRow>
           <SettingRow label="Check for updates" description="Look for a newer GitHub release and show install actions here">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1260,10 +1791,10 @@ function DisplaySettingsEditor({
                 disabled={updateState.checking}
                 style={{
                   padding: '7px 12px',
-                  fontSize: 12,
-                  background: updateState.checking ? '#1a1a1a' : '#222',
-                  color: updateState.checking ? '#666' : '#ddd',
-                  border: '1px solid #333',
+                  fontSize: fonts.secondarySize,
+                  background: updateState.checking ? theme.surface.panelMuted : theme.surface.panelElevated,
+                  color: updateState.checking ? theme.text.disabled : theme.text.secondary,
+                  border: `1px solid ${theme.border.default}`,
                   borderRadius: 8,
                   cursor: updateState.checking ? 'default' : 'pointer'
                 }}
@@ -1276,10 +1807,10 @@ function DisplaySettingsEditor({
                   disabled={updateState.downloading}
                   style={{
                     padding: '7px 12px',
-                    fontSize: 12,
-                    background: updateState.downloading ? '#1a1a1a' : '#2a2416',
-                    color: updateState.downloading ? '#666' : '#f0d28a',
-                    border: '1px solid #4a3a16',
+                    fontSize: fonts.secondarySize,
+                    background: updateState.downloading ? theme.surface.panelMuted : theme.surface.panelElevated,
+                    color: updateState.downloading ? theme.text.disabled : theme.status.warning,
+                    border: `1px solid ${theme.border.default}`,
                     borderRadius: 8,
                     cursor: updateState.downloading ? 'default' : 'pointer'
                   }}
@@ -1292,10 +1823,10 @@ function DisplaySettingsEditor({
                   onClick={() => window.electron.updater.quitAndInstall()}
                   style={{
                     padding: '7px 12px',
-                    fontSize: 12,
-                    background: '#16261a',
-                    color: '#8fdb9a',
-                    border: '1px solid #23482a',
+                    fontSize: fonts.secondarySize,
+                    background: theme.surface.panelElevated,
+                    color: theme.status.success,
+                    border: `1px solid ${theme.border.default}`,
                     borderRadius: 8,
                     cursor: 'pointer'
                   }}
@@ -1306,8 +1837,8 @@ function DisplaySettingsEditor({
             </div>
           </SettingRow>
           {updateState.result && (
-            <div style={{ marginBottom: 8, padding: '12px 16px', background: '#0d0d0d', borderRadius: 10, border: '1px solid #1a1a1a' }}>
-              <div style={{ fontSize: 12, color: updateState.result.ok ? '#777' : '#c77' }}>
+            <div style={{ marginBottom: 8, padding: '12px 16px', background: theme.surface.panel, borderRadius: 10, border: `1px solid ${theme.border.default}` }}>
+              <div style={{ fontSize: fonts.secondarySize, color: updateState.result.ok ? '#777' : '#c77' }}>
                 {updateState.result.updateAvailable
                   ? `Update available${updateState.result.updateInfo?.version ? `: ${updateState.result.updateInfo.version}` : ''}`
                   : updateState.result.status === 'up-to-date'
@@ -1315,7 +1846,7 @@ function DisplaySettingsEditor({
                     : updateState.result.status}
               </div>
               {updateState.result.updateInfo?.releaseDate && (
-                <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>
+                <div style={{ fontSize: fonts.secondarySize, color: theme.text.disabled, marginTop: 4 }}>
                   Released {new Date(updateState.result.updateInfo.releaseDate).toLocaleString()}
                 </div>
               )}
@@ -1326,10 +1857,10 @@ function DisplaySettingsEditor({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Code2 size={14} color="#555" />
-            <span style={{ fontSize: 10, color: '#555', fontFamily: fonts.mono }}>{configPath || 'settings.json'}</span>
+            <span style={{ fontSize: 10, color: theme.text.disabled, fontFamily: fonts.mono }}>{configPath || 'settings.json'}</span>
             <span style={{ fontSize: 9, color: '#388bfd', fontFamily: fonts.mono }}>settings.display</span>
             {jsonError && (
-              <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, color: '#ff7b72', fontSize: 11 }}>
+              <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, color: '#ff7b72', fontSize: fonts.secondarySize }}>
                 <AlertTriangle size={12} />
                 {jsonError}
               </span>
@@ -1342,15 +1873,15 @@ function DisplaySettingsEditor({
             style={{
               width: '100%', minHeight: 520,
               padding: '12px 14px', borderRadius: 10,
-              background: '#0a0a0a', color: jsonError ? '#ff9080' : '#c9d1d9',
-              border: `1px solid ${jsonError ? '#ff7b7244' : '#1a1a1a'}`,
+              background: theme.surface.panelMuted, color: jsonError ? '#ff9080' : '#c9d1d9',
+              border: `1px solid ${jsonError ? '#ff7b7244' : theme.surface.panelMuted}`,
               outline: 'none', resize: 'vertical',
-              fontFamily: fonts.mono, fontSize: 12, lineHeight: 1.6,
+              fontFamily: fonts.mono, fontSize: fonts.secondarySize, lineHeight: 1.6,
               tabSize: 2, boxSizing: 'border-box',
             }}
           />
-          <div style={{ fontSize: 11, color: '#555', lineHeight: 1.6 }}>
-            Edit the display settings as JSON. Valid top-level keys: <span style={{ fontFamily: fonts.mono }}>primaryFont</span>, <span style={{ fontFamily: fonts.mono }}>secondaryFont</span>, <span style={{ fontFamily: fonts.mono }}>monoFont</span>, <span style={{ fontFamily: fonts.mono }}>fonts</span>. The form and JSON stay in sync when the JSON is valid.
+          <div style={{ fontSize: fonts.secondarySize, color: theme.text.disabled, lineHeight: 1.6 }}>
+            Edit the display settings as JSON. Valid top-level keys: <span style={{ fontFamily: fonts.mono }}>appearance</span>, <span style={{ fontFamily: fonts.mono }}>themeId</span>, <span style={{ fontFamily: fonts.mono }}>fonts</span> (with <span style={{ fontFamily: fonts.mono }}>primary</span>, <span style={{ fontFamily: fonts.mono }}>secondary</span>, <span style={{ fontFamily: fonts.mono }}>mono</span>). The form and JSON stay in sync when the JSON is valid.
           </div>
         </div>
       )}
@@ -1370,6 +1901,7 @@ export function FontTokenEditor({ settings, onSettingsChange }: {
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
   const fonts = useAppFonts()
+  const theme = useTheme()
   const [view, setView] = useState<'editor' | 'reference'>('editor')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -1506,7 +2038,7 @@ export function FontTokenEditor({ settings, onSettingsChange }: {
     navigator.clipboard.writeText(JSON.stringify(DEFAULT_FONTS, null, 2))
   }, [])
 
-  const insertToken = useCallback((key: keyof FontSettings) => {
+  const insertToken = useCallback((key: 'primary' | 'secondary' | 'mono') => {
     try {
       const current = JSON.parse(rawJson || '{}')
       if (!current[key]) {
@@ -1521,7 +2053,7 @@ export function FontTokenEditor({ settings, onSettingsChange }: {
   }, [rawJson, handleChange])
 
   if (loading) {
-    return <div style={{ fontSize: 12, color: '#555', padding: 20 }}>Loading config...</div>
+    return <div style={{ fontSize: fonts.secondarySize, color: theme.text.disabled, padding: 20 }}>Loading config...</div>
   }
 
   const monoFont = fonts.mono
@@ -1531,7 +2063,7 @@ export function FontTokenEditor({ settings, onSettingsChange }: {
       {/* Config file path */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <FileJson size={13} color="#555" />
-        <span style={{ fontSize: 10, color: '#555', fontFamily: monoFont }}>{configPath}</span>
+        <span style={{ fontSize: 10, color: theme.text.disabled, fontFamily: monoFont }}>{configPath}</span>
         <span style={{ fontSize: 9, color: '#388bfd', fontFamily: monoFont }}>settings.fonts</span>
       </div>
 
@@ -1539,9 +2071,9 @@ export function FontTokenEditor({ settings, onSettingsChange }: {
       <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #1a1a1a' }}>
         {(['editor', 'reference'] as const).map(v => (
           <button key={v} onClick={() => setView(v)} style={{
-            padding: '6px 14px', fontSize: 11, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-            background: view === v ? '#1a1a1a' : 'transparent',
-            color: view === v ? '#e6edf3' : '#555',
+            padding: '6px 14px', fontSize: fonts.secondarySize, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+            background: view === v ? theme.surface.panelMuted : 'transparent',
+            color: view === v ? theme.text.primary : '#555',
             borderBottom: view === v ? '2px solid #388bfd' : '2px solid transparent',
           }}>
             {v === 'editor' ? 'JSON Editor' : 'Token Reference'}
@@ -1556,19 +2088,19 @@ export function FontTokenEditor({ settings, onSettingsChange }: {
             <button onClick={handleSave} disabled={!!error}
               style={{
                 padding: '4px 12px', borderRadius: 5, fontSize: 10, cursor: error ? 'not-allowed' : 'pointer',
-                background: error ? '#1a1a1a' : saved ? '#0d2a1a' : '#1f6feb',
-                color: error ? '#444' : saved ? '#3fb950' : '#fff',
+                background: error ? theme.surface.panelMuted : saved ? theme.surface.panelElevated : theme.accent.base,
+                color: error ? '#444' : saved ? theme.status.success : '#fff',
                 border: 'none', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 4,
               }}>
               {saved ? <><Check size={10} /> Saved</> : 'Save'}
             </button>
             <button onClick={handleReset}
-              style={{ padding: '4px 10px', borderRadius: 5, fontSize: 10, cursor: 'pointer', background: '#1a1a1a', color: '#888', border: 'none', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 4 }}
+              style={{ padding: '4px 10px', borderRadius: 5, fontSize: 10, cursor: 'pointer', background: theme.surface.panelMuted, color: theme.text.secondary, border: 'none', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 4 }}
               title="Reset to defaults (remove all overrides)">
               <RotateCcw size={9} /> Reset
             </button>
             <button onClick={handleCopyDefaults}
-              style={{ padding: '4px 10px', borderRadius: 5, fontSize: 10, cursor: 'pointer', background: '#1a1a1a', color: '#888', border: 'none', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 4 }}
+              style={{ padding: '4px 10px', borderRadius: 5, fontSize: 10, cursor: 'pointer', background: theme.surface.panelMuted, color: theme.text.secondary, border: 'none', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 4 }}
               title="Copy all default tokens to clipboard">
               <Copy size={9} /> Copy Defaults
             </button>
@@ -1605,73 +2137,47 @@ export function FontTokenEditor({ settings, onSettingsChange }: {
             style={{
               width: '100%', minHeight: 260, maxHeight: 380,
               padding: '12px 14px', borderRadius: 8,
-              background: '#0a0a0a', color: error ? '#ff9080' : '#c9d1d9',
-              border: `1px solid ${error ? '#ff7b7244' : '#1a1a1a'}`,
+              background: theme.surface.panelMuted, color: error ? '#ff9080' : '#c9d1d9',
+              border: `1px solid ${error ? '#ff7b7244' : theme.surface.panelMuted}`,
               outline: 'none', resize: 'vertical',
-              fontFamily: monoFont, fontSize: 12, lineHeight: 1.6,
+              fontFamily: monoFont, fontSize: fonts.secondarySize, lineHeight: 1.6,
               tabSize: 2, boxSizing: 'border-box',
             }}
           />
 
           {/* Hint */}
-          <div style={{ fontSize: 10, color: '#333', lineHeight: 1.6 }}>
-            Override only the tokens you want. Properties: <span style={{ color: '#555', fontFamily: monoFont }}>family</span>, <span style={{ color: '#555', fontFamily: monoFont }}>size</span>, <span style={{ color: '#555', fontFamily: monoFont }}>lineHeight</span>, <span style={{ color: '#555', fontFamily: monoFont }}>weight</span>, <span style={{ color: '#555', fontFamily: monoFont }}>letterSpacing</span>.
-            Unset tokens inherit from General. <span style={{ color: '#555' }}>Cmd+S</span> to save.
+          <div style={{ fontSize: 10, color: theme.text.disabled, lineHeight: 1.6 }}>
+            Override only the tokens you want. Properties: <span style={{ color: theme.text.disabled, fontFamily: monoFont }}>family</span>, <span style={{ color: theme.text.disabled, fontFamily: monoFont }}>size</span>, <span style={{ color: theme.text.disabled, fontFamily: monoFont }}>lineHeight</span>, <span style={{ color: theme.text.disabled, fontFamily: monoFont }}>weight</span>, <span style={{ color: theme.text.disabled, fontFamily: monoFont }}>letterSpacing</span>.
+            Unset tokens inherit from General. <span style={{ color: theme.text.disabled }}>Cmd+S</span> to save.
           </div>
         </>
       ) : (
         /* Token reference */
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 360, overflowY: 'auto' }}>
-          {FONT_TOKEN_GROUPS.map(group => (
-            <div key={group.label}>
-              <div style={{ fontSize: 9, color: '#388bfd', fontFamily: 'inherit', letterSpacing: 1, fontWeight: 700, marginBottom: 6, textTransform: 'uppercase' }}>
-                {group.label}
+          {(['primary', 'secondary', 'mono'] as const).map(key => {
+            const token = settings.fonts?.[key] ?? DEFAULT_FONTS[key]
+            const desc = key === 'primary' ? 'Main UI text' : key === 'secondary' ? 'Metadata & labels' : 'Terminal & code'
+            return (
+              <div key={key}
+                onClick={() => insertToken(key)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
+                  background: theme.surface.panelMuted,
+                  border: '1px solid #151515',
+                  transition: 'background 0.1s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = theme.surface.hover}
+                onMouseLeave={e => e.currentTarget.style.background = theme.surface.panelMuted}
+                title={`Click to add "${key}" to editor`}
+              >
+                <span style={{ fontSize: fonts.secondarySize, color: theme.text.secondary, fontFamily: monoFont, width: 100, flexShrink: 0 }}>{key}</span>
+                <span style={{ fontSize: 10, color: theme.text.disabled, flex: 1 }}>{desc}</span>
+                <span style={{ fontSize: 9, color: theme.text.muted, fontFamily: monoFont, flexShrink: 0 }}>{token.size}px</span>
+                <span style={{ fontSize: Math.min(token.size, 14), color: theme.text.secondary, fontFamily: token.family, fontWeight: token.weight, flexShrink: 0 }} title={token.family}>Abc</span>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                {group.tokens.map(({ key, description }) => {
-                  const token = settings.fonts?.[key] ?? DEFAULT_FONTS[key]
-                  let isOverridden = false
-                  try { isOverridden = !!(rawJson && rawJson !== '{}' && JSON.parse(rawJson)[key]) } catch { /* ignore */ }
-                  return (
-                    <div key={key}
-                      onClick={() => insertToken(key)}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
-                        background: isOverridden ? '#0d2137' : '#0d0d0d',
-                        border: `1px solid ${isOverridden ? '#1f3a5f' : '#151515'}`,
-                        transition: 'background 0.1s',
-                      }}
-                      onMouseEnter={e => { if (!isOverridden) e.currentTarget.style.background = '#111' }}
-                      onMouseLeave={e => { if (!isOverridden) e.currentTarget.style.background = '#0d0d0d' }}
-                      title={`Click to add "${key}" to editor`}
-                    >
-                      <span style={{ fontSize: 11, color: isOverridden ? '#58a6ff' : '#c9d1d9', fontFamily: monoFont, width: 140, flexShrink: 0 }}>
-                        {key}
-                      </span>
-                      <span style={{ fontSize: 10, color: '#555', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {description}
-                      </span>
-                      <span style={{ fontSize: 9, color: '#444', fontFamily: monoFont, flexShrink: 0 }}>
-                        {token.size}px
-                      </span>
-                      <span
-                        style={{
-                          fontSize: token.size > 14 ? 14 : token.size,
-                          color: '#888', fontFamily: token.family,
-                          fontWeight: token.weight, maxWidth: 60, flexShrink: 0,
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        }}
-                        title={token.family}
-                      >
-                        Abc
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

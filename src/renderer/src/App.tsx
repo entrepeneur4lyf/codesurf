@@ -1,12 +1,15 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo, Suspense } from 'react'
-import { Ungroup, Grid2x2X, Scissors, ClipboardPaste } from 'lucide-react'
-import type { TileState, GroupState, CanvasState, Workspace, AppSettings, TileType } from '../../shared/types'
+import { Ungroup, Grid2x2X, Scissors, ClipboardPaste, Maximize2, LayoutGrid } from 'lucide-react'
+import morphLogo from './assets/morph.png'
+import type { TileState, GroupState, CanvasState, Workspace, AppSettings, TileType, LockedConnection } from '../../shared/types'
+import { TileColorProvider } from './TileColorContext'
 import { withDefaultSettings, DEFAULT_SETTINGS } from '../../shared/types'
 import type { MenuItem } from './components/ContextMenu'
 import { useExtensions } from './hooks/useExtensions'
+import { getTileNodeTools, withCapabilityPrefix, stripCapabilityPrefix, getAllNodeTools } from '../../shared/nodeTools'
 import { FontProvider, FontTokenProvider, SANS_DEFAULT, MONO_DEFAULT } from './FontContext'
 import { ThemeProvider } from './ThemeContext'
-import { getThemeById } from './theme'
+import { DEFAULT_THEME_ID, getThemeById, resolveEffectiveThemeId, registerCustomTheme, unregisterCustomTheme } from './theme'
 import type { PanelNode } from './components/PanelLayout'
 import { createLeaf, removeTileFromTree, addTabToLeaf, getAllTileIds, splitLeaf, closeOthersInLeaf, closeToRightInLeaf, findLeafById } from './components/PanelLayout'
 import { getDroppedPaths } from './utils/dnd'
@@ -28,6 +31,30 @@ const Icon = ({ glyph, size = 15 }: { glyph: string; size?: number }): JSX.Eleme
   <span style={textIconStyle(size)}>{glyph}</span>
 )
 
+type SidebarSessionEntry = {
+  id: string
+  source: 'codesurf' | 'claude' | 'codex' | 'cursor' | 'openclaw' | 'opencode'
+  scope: 'workspace' | 'project' | 'user'
+  tileId: string | null
+  sessionId: string | null
+  provider: string
+  model: string
+  messageCount: number
+  lastMessage: string | null
+  updatedAt: number
+  filePath?: string
+  title: string
+  projectPath?: string | null
+  sourceLabel: string
+  sourceDetail?: string
+  canOpenInChat?: boolean
+  canOpenInApp?: boolean
+  resumeBin?: string
+  resumeArgs?: string[]
+  relatedGroupId?: string | null
+  nestingLevel?: number
+}
+
 const LazyTileChrome = React.lazy(() => import('./components/TileChrome').then(m => ({ default: m.TileChrome })))
 const LazySidebar = React.lazy(() => import('./components/Sidebar').then(m => ({ default: m.Sidebar })))
 const LazySidebarFooter = React.lazy(() => import('./components/Sidebar').then(m => ({ default: m.SidebarFooter })))
@@ -42,8 +69,11 @@ const LazySettingsPanel = React.lazy(() => import('./components/SettingsPanel').
 const LazyTerminalTile = React.lazy(() => import('./components/TerminalTile').then(m => ({ default: m.TerminalTile })))
 const LazyCodeTile = React.lazy(() => import('./components/CodeTile').then(m => ({ default: m.CodeTile })))
 const LazyNoteTile = React.lazy(() => import('./components/NoteTile').then(m => ({ default: m.NoteTile })))
+const LazyStickyColorPicker = React.lazy(() => import('./components/NoteTile').then(m => ({ default: m.StickyColorPicker })))
 const LazyChatTile = React.lazy(() => import('./components/ChatTile').then(m => ({ default: m.ChatTile })))
 const LazyFileTile = React.lazy(() => import('./components/FileTile').then(m => ({ default: m.FileTile })))
+const LazyFileExplorerTile = React.lazy(() => import('./components/FileExplorerTile'))
+const LazyConnectionPill = React.lazy(() => import('./components/ConnectionPill').then(m => ({ default: m.ConnectionPill })))
 const LazyExtensionTile = React.lazy(() => import('./components/ExtensionTile').then(m => ({ default: m.ExtensionTile })))
 const LazyClusoWidgetMount = React.lazy(() => import('./components/ClusoWidgetMount').then(m => ({ default: m.ClusoWidgetMount })))
 const LazyAgentSetup = React.lazy(() => import('./components/AgentSetup').then(m => ({ default: m.AgentSetup })))
@@ -54,7 +84,7 @@ type DragState =
   | { type: 'tile'; tileId: string; startX: number; startY: number; initX: number; initY: number; groupSnapshots: { id: string; x: number; y: number }[] }
   | { type: 'resize'; tileId: string; dir: 'e' | 's' | 'se' | 'w' | 'n' | 'nw' | 'ne' | 'sw'; startX: number; startY: number; initX: number; initY: number; initW: number; initH: number }
   | { type: 'select'; startWx: number; startWy: number; curWx: number; curWy: number }
-  | { type: 'group'; groupId: string; startX: number; startY: number; snapshots: { id: string; x: number; y: number }[] }
+  | { type: 'group'; groupId: string; startX: number; startY: number; snapshots: { id: string; x: number; y: number }[]; initLayoutBounds?: { x: number; y: number; w: number; h: number } }
   | { type: 'group-resize'; groupId: string; dir: 'e' | 's' | 'se' | 'w' | 'n' | 'nw' | 'ne' | 'sw'; startX: number; startY: number; initBounds: { x: number; y: number; w: number; h: number }; snapshots: { id: string; x: number; y: number; width: number; height: number }[] }
 
 const GRID = 20 // default, overridden by settings at runtime
@@ -87,14 +117,29 @@ function sanitizePanelLayout(root: PanelNode | null | undefined, tileIds: string
   }
 }
 
+const CODE_EXTENSIONS = new Set(['ts', 'tsx', 'js', 'jsx', 'json', 'py', 'rs', 'go', 'cpp', 'c', 'java', 'css', 'html', 'sh', 'bash', 'yaml', 'yml', 'toml', 'xml'])
+const NOTE_EXTENSIONS = new Set(['md', 'txt', 'markdown', 'mdx'])
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'])
+
 function extToType(filePath: string): TileState['type'] {
   const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
-  if (['ts', 'tsx', 'js', 'jsx', 'json', 'py', 'rs', 'go', 'cpp', 'c', 'java', 'css', 'html', 'sh', 'bash', 'yaml', 'yml', 'toml', 'xml'].includes(ext)) return 'code'
-  if (['md', 'txt', 'markdown', 'mdx'].includes(ext)) return 'note'
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) return 'image'
-  // Files with no extension or unrecognized extensions default to code editor
+  if (CODE_EXTENSIONS.has(ext)) return 'code'
+  if (NOTE_EXTENSIONS.has(ext)) return 'note'
+  if (IMAGE_EXTENSIONS.has(ext)) return 'image'
   if (!filePath.includes('.')) return 'code'
   return 'terminal'
+}
+
+async function resolveFileTileType(filePath: string): Promise<TileState['type']> {
+  const byExtension = extToType(filePath)
+  if (byExtension !== 'terminal') return byExtension
+
+  try {
+    const isText = await window.electron.fs.isProbablyTextFile(filePath)
+    return isText ? 'code' : 'terminal'
+  } catch {
+    return byExtension
+  }
 }
 
 function withAlpha(color: string, alpha: number): string {
@@ -136,6 +181,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 function getMinTileWidth(tileOrType: TileState | TileState['type']): number {
   const type = typeof tileOrType === 'string' ? tileOrType : tileOrType.type
   if (type === 'chat') return 450
+  if (type === 'files') return 250
   if (type === 'file') return 200
   if (type.startsWith('ext:')) return 150
   return 200
@@ -143,14 +189,446 @@ function getMinTileWidth(tileOrType: TileState | TileState['type']): number {
 
 function getMinTileHeight(tileOrType: TileState | TileState['type']): number {
   const type = typeof tileOrType === 'string' ? tileOrType : tileOrType.type
+  if (type === 'files') return 300
   if (type === 'file') return 200
   if (type.startsWith('ext:')) return 100
   return 150
 }
 
+type AnchorSide = 'top' | 'right' | 'bottom' | 'left'
+
+type TileCapabilitySet = {
+  provides: string[]
+  accepts: string[]
+  tools?: string[]
+}
+
+type AnchorPoint = {
+  side: AnchorSide
+  x: number
+  y: number
+  gridX: number
+  gridY: number
+}
+
+type TileSpatialReference = {
+  tileId: string
+  bounds: { left: number; top: number; right: number; bottom: number }
+  gridBounds: { left: number; top: number; right: number; bottom: number }
+  anchors: AnchorPoint[]
+  capabilities: TileCapabilitySet
+}
+
+type DiscoveryMatch = {
+  tile: TileState
+  route: { x: number; y: number }[]
+  distance: number
+  matchLabels: string[]
+  targetRef: TileSpatialReference
+}
+
+type DiscoveryPulse = {
+  id: string
+  sourceTileId: string
+  targetTileId: string
+  route: { x: number; y: number }[]
+  startedAt: number
+  durationMs: number
+  matchLabels: string[]
+  sourceGridLabel: string
+  targetGridLabel: string
+}
+
+type DiscoveryCapabilityLink = {
+  peerId: string
+  peerType: TileType
+  distance: number
+  route: { x: number; y: number }[]
+  capabilities: string[]
+  lastSeen: number
+}
+
+type DiscoveryState = {
+  connectedTileIds: Set<string>
+  byTile: Map<string, DiscoveryCapabilityLink[]>
+}
+
+const DISCOVERY_PULSE_DURATION_MS = 1100
+const SETTINGS_CACHE_KEY = 'contex:settings-cache'
+const BRAND_WORDMARK_CACHE_KEY = 'contex:brand-wordmark-index'
+const BRAND_WORDMARK_PALETTE_CACHE_KEY = 'contex:brand-wordmark-palette-index'
+
+function readCachedSettings(): AppSettings {
+  if (typeof window === 'undefined') return DEFAULT_SETTINGS
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_CACHE_KEY)
+    return raw ? withDefaultSettings(JSON.parse(raw)) : DEFAULT_SETTINGS
+  } catch {
+    return DEFAULT_SETTINGS
+  }
+}
+
+function getDiscoveryMaxDistance(largeGridStep: number): number {
+  return Math.max(largeGridStep * 3, largeGridStep)
+}
+
+function uniq<T>(items: T[]): T[] {
+  return Array.from(new Set(items))
+}
+
+// Extension action registry — extensions register actions at runtime; these become
+// tool capabilities so connected peers (especially chat tiles) can discover them.
+const extensionActionRegistry = new Map<string, Array<{ name: string; description: string }>>()
+
+function getTileCapabilities(tile: TileState): TileCapabilitySet {
+  const base: TileCapabilitySet = (() => {
+    if (tile.type === 'terminal') return { provides: ['output', 'task', 'reference'], accepts: ['file', 'task', 'reference'] }
+    if (tile.type === 'code' || tile.type === 'note' || tile.type === 'file') return { provides: ['file', 'text', 'reference'], accepts: ['task', 'output', 'reference'] }
+    if (tile.type === 'browser') return { provides: ['url', 'web', 'reference'], accepts: ['text', 'task', 'reference'] }
+    if (tile.type === 'chat') return { provides: ['task', 'text', 'reference'], accepts: ['file', 'output', 'reference'] }
+    if (tile.type === 'files') return { provides: ['file', 'reference'], accepts: ['task', 'reference'] }
+
+    if (tile.type === 'kanban') return { provides: ['task', 'reference'], accepts: ['task', 'text', 'reference'] }
+    if (tile.type === 'image') return { provides: ['image', 'reference'], accepts: ['text', 'reference'] }
+    if (tile.type.startsWith('ext:')) return { provides: ['task', 'reference'], accepts: ['task', 'text', 'reference'] }
+    return { provides: ['reference'], accepts: ['reference'] }
+  })()
+
+  const toolNames = getTileNodeTools(tile.type).map(tool => tool.name)
+
+  // Include dynamically registered extension actions as tool capabilities
+  if (tile.type.startsWith('ext:')) {
+    const extActions = extensionActionRegistry.get(tile.id)
+    if (extActions) {
+      for (const action of extActions) toolNames.push(action.name)
+    }
+  }
+
+  return {
+    ...base,
+    tools: toolNames.map(withCapabilityPrefix),
+  }
+}
+
+function getTileGridBounds(tile: TileState, grid: number): TileSpatialReference['gridBounds'] {
+  return {
+    left: Math.round(tile.x / grid),
+    top: Math.round(tile.y / grid),
+    right: Math.round((tile.x + tile.width) / grid),
+    bottom: Math.round((tile.y + tile.height) / grid),
+  }
+}
+
+function makeAnchor(side: AnchorSide, x: number, y: number, grid: number): AnchorPoint {
+  const snappedX = snap(x, grid)
+  const snappedY = snap(y, grid)
+  return {
+    side,
+    x: snappedX,
+    y: snappedY,
+    gridX: Math.round(snappedX / grid),
+    gridY: Math.round(snappedY / grid),
+  }
+}
+
+function getTileSpatialReference(tile: TileState, grid: number): TileSpatialReference {
+  return {
+    tileId: tile.id,
+    bounds: {
+      left: tile.x,
+      top: tile.y,
+      right: tile.x + tile.width,
+      bottom: tile.y + tile.height,
+    },
+    gridBounds: getTileGridBounds(tile, grid),
+    anchors: [
+      makeAnchor('top', tile.x + tile.width / 2, tile.y, grid),
+      makeAnchor('right', tile.x + tile.width, tile.y + tile.height / 2, grid),
+      makeAnchor('bottom', tile.x + tile.width / 2, tile.y + tile.height, grid),
+      makeAnchor('left', tile.x, tile.y + tile.height / 2, grid),
+    ],
+    capabilities: getTileCapabilities(tile),
+  }
+}
+
+function getCapabilityMatches(source: TileCapabilitySet, target: TileCapabilitySet): string[] {
+  return uniq([
+    ...source.provides.filter(value => target.accepts.includes(value)),
+    ...target.provides.filter(value => source.accepts.includes(value)),
+  ])
+}
+
+function findDiscoveryConnections(
+  tileList: TileState[],
+  hiddenTileIds: Set<string>,
+  gridStep: number,
+  maxDistance: number
+): DiscoveryState {
+  const connectedTileIds = new Set<string>()
+  const byTile = new Map<string, DiscoveryCapabilityLink[]>()
+  const refs = tileList
+    .filter(tile => !hiddenTileIds.has(tile.id))
+    .map(tile => ({ tile, ref: getTileSpatialReference(tile, gridStep) }))
+
+  for (let i = 0; i < refs.length; i += 1) {
+    const source = refs[i]
+    for (let j = i + 1; j < refs.length; j += 1) {
+      const target = refs[j]
+
+      if (source.tile.id === target.tile.id) continue
+
+      const sourceRect = { x: source.tile.x, y: source.tile.y, w: source.tile.width, h: source.tile.height }
+      const targetRect = { x: target.tile.x, y: target.tile.y, w: target.tile.width, h: target.tile.height }
+      if (rectsOverlap(sourceRect, targetRect)) continue
+
+      const anchorPair = findBestAnchorPair(source.ref.anchors, target.ref.anchors)
+      if (!anchorPair || anchorPair.distance > maxDistance) continue
+
+      const sharedCaps = getCapabilityMatches(source.ref.capabilities, target.ref.capabilities)
+      const route = getOrthogonalRoute(anchorPair.source, anchorPair.target, gridStep)
+      const sourceTools = source.ref.capabilities.tools ?? []
+      const targetTools = target.ref.capabilities.tools ?? []
+
+      if (sharedCaps.length > 0) {
+        const sourceLink: DiscoveryCapabilityLink = {
+          peerId: target.tile.id,
+          peerType: target.tile.type,
+          distance: anchorPair.distance,
+          route,
+          capabilities: uniq([...targetTools, ...sharedCaps]),
+          lastSeen: Date.now(),
+        }
+        const targetLink: DiscoveryCapabilityLink = {
+          peerId: source.tile.id,
+          peerType: source.tile.type,
+          distance: anchorPair.distance,
+          route: route.slice().reverse(),
+          capabilities: uniq([...sourceTools, ...sharedCaps]),
+          lastSeen: Date.now(),
+        }
+
+        const nextSource = byTile.get(source.tile.id) ?? []
+        const nextTarget = byTile.get(target.tile.id) ?? []
+        nextSource.push(sourceLink)
+        nextTarget.push(targetLink)
+        byTile.set(source.tile.id, nextSource)
+        byTile.set(target.tile.id, nextTarget)
+        connectedTileIds.add(source.tile.id)
+        connectedTileIds.add(target.tile.id)
+      }
+    }
+  }
+
+  return { connectedTileIds, byTile }
+}
+
+function findBestAnchorPair(sourceAnchors: AnchorPoint[], targetAnchors: AnchorPoint[]): { source: AnchorPoint; target: AnchorPoint; distance: number } | null {
+  let best: { source: AnchorPoint; target: AnchorPoint; distance: number } | null = null
+  for (const source of sourceAnchors) {
+    for (const target of targetAnchors) {
+      const distance = Math.abs(source.x - target.x) + Math.abs(source.y - target.y)
+      if (!best || distance < best.distance) best = { source, target, distance }
+    }
+  }
+  return best
+}
+
+function stepOutFromAnchor(anchor: AnchorPoint, step: number): { x: number; y: number } {
+  if (anchor.side === 'left') return { x: anchor.x - step, y: anchor.y }
+  if (anchor.side === 'right') return { x: anchor.x + step, y: anchor.y }
+  if (anchor.side === 'top') return { x: anchor.x, y: anchor.y - step }
+  return { x: anchor.x, y: anchor.y + step }
+}
+
+function simplifyRoute(points: { x: number; y: number }[]): { x: number; y: number }[] {
+  const deduped = points.filter((point, index) => index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y)
+  if (deduped.length <= 2) return deduped
+
+  const simplified = [deduped[0]]
+  for (let i = 1; i < deduped.length - 1; i += 1) {
+    const prev = simplified[simplified.length - 1]
+    const current = deduped[i]
+    const next = deduped[i + 1]
+    const collinear = (prev.x === current.x && current.x === next.x) || (prev.y === current.y && current.y === next.y)
+    if (!collinear) simplified.push(current)
+  }
+  simplified.push(deduped[deduped.length - 1])
+  return simplified
+}
+
+function getOrthogonalRoute(source: AnchorPoint, target: AnchorPoint, step: number): { x: number; y: number }[] {
+  const sourceLead = stepOutFromAnchor(source, step)
+  const targetLead = stepOutFromAnchor(target, step)
+  const points: { x: number; y: number }[] = [
+    { x: source.x, y: source.y },
+    sourceLead,
+  ]
+
+  if (sourceLead.x !== targetLead.x && sourceLead.y !== targetLead.y) {
+    const horizontalFirst = source.side === 'left' || source.side === 'right'
+    points.push(horizontalFirst
+      ? { x: targetLead.x, y: sourceLead.y }
+      : { x: sourceLead.x, y: targetLead.y })
+  }
+
+  points.push(targetLead, { x: target.x, y: target.y })
+  return simplifyRoute(points)
+}
+
+function routeToSvgPath(points: { x: number; y: number }[]): string {
+  return points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')
+}
+
+function rectsOverlap(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+}
+
+function findClearPosition(
+  preferredX: number,
+  preferredY: number,
+  width: number,
+  height: number,
+  tiles: TileState[],
+  blockedTileIds: Set<string>,
+  step: number
+): { x: number; y: number } {
+  const overlapsExisting = (x: number, y: number) => {
+    const candidate = { x, y, w: width, h: height }
+    return tiles.some(tile => !blockedTileIds.has(tile.id) && rectsOverlap(candidate, { x: tile.x, y: tile.y, w: tile.width, h: tile.height }))
+  }
+
+  let x = preferredX
+  let y = preferredY
+  if (!overlapsExisting(x, y)) return { x, y }
+
+  const maxRings = 120
+  for (let ring = 1; ring <= maxRings; ring += 1) {
+    for (let dx = -ring; dx <= ring; dx += 1) {
+      const dy = ring - Math.abs(dx)
+      const candidates = dy === 0
+        ? [{ dx: dx * step, dy: 0 }]
+        : [{ dx: dx * step, dy: dy * step }, { dx: dx * step, dy: -dy * step }]
+
+      for (const cand of candidates) {
+        x = preferredX + cand.dx
+        y = preferredY + cand.dy
+        if (!overlapsExisting(x, y)) {
+          return { x, y }
+        }
+      }
+    }
+  }
+
+  return { x, y }
+}
+
+function getRouteSegments(points: { x: number; y: number }[], thickness = 3): Array<{ left: number; top: number; width: number; height: number; horizontal: boolean }> {
+  const segments: Array<{ left: number; top: number; width: number; height: number; horizontal: boolean }> = []
+
+  for (let i = 1; i < points.length; i += 1) {
+    const start = points[i - 1]
+    const end = points[i]
+    const horizontal = start.y === end.y
+    if (horizontal) {
+      segments.push({
+        left: Math.min(start.x, end.x),
+        top: start.y - thickness / 2,
+        width: Math.max(Math.abs(end.x - start.x), thickness),
+        height: thickness,
+        horizontal: true,
+      })
+    } else {
+      segments.push({
+        left: start.x - thickness / 2,
+        top: Math.min(start.y, end.y),
+        width: thickness,
+        height: Math.max(Math.abs(end.y - start.y), thickness),
+        horizontal: false,
+      })
+    }
+  }
+
+  return segments
+}
+
+function getRouteMidpoint(points: { x: number; y: number }[]): { x: number; y: number } {
+  if (points.length <= 1) return points[0] ?? { x: 0, y: 0 }
+
+  let total = 0
+  for (let i = 1; i < points.length; i += 1) {
+    total += Math.abs(points[i].x - points[i - 1].x) + Math.abs(points[i].y - points[i - 1].y)
+  }
+
+  let remaining = total / 2
+  for (let i = 1; i < points.length; i += 1) {
+    const start = points[i - 1]
+    const end = points[i]
+    const segment = Math.abs(end.x - start.x) + Math.abs(end.y - start.y)
+    if (remaining <= segment) {
+      if (start.x === end.x) {
+        const direction = end.y >= start.y ? 1 : -1
+        return { x: start.x, y: start.y + remaining * direction }
+      }
+      const direction = end.x >= start.x ? 1 : -1
+      return { x: start.x + remaining * direction, y: start.y }
+    }
+    remaining -= segment
+  }
+
+  return points[points.length - 1]
+}
+
+function formatGridBounds(bounds: TileSpatialReference['gridBounds']): string {
+  return `${bounds.left},${bounds.top} → ${bounds.right},${bounds.bottom}`
+}
+
+function findDiscoveryMatch(sourceTileId: string, tileList: TileState[], hiddenTileIds: Set<string>, gridStep: number, maxDistance: number): { sourceRef: TileSpatialReference; match: DiscoveryMatch | null } | null {
+  const sourceTile = tileList.find(tile => tile.id === sourceTileId)
+  if (!sourceTile || hiddenTileIds.has(sourceTile.id)) return null
+
+  const sourceRef = getTileSpatialReference(sourceTile, gridStep)
+  let bestCompatible: DiscoveryMatch | null = null
+  let bestFallback: DiscoveryMatch | null = null
+
+  for (const candidate of tileList) {
+    if (candidate.id === sourceTileId || hiddenTileIds.has(candidate.id)) continue
+    const sourceRect = { x: sourceTile.x, y: sourceTile.y, w: sourceTile.width, h: sourceTile.height }
+    const targetRect = { x: candidate.x, y: candidate.y, w: candidate.width, h: candidate.height }
+    if (rectsOverlap(sourceRect, targetRect)) continue
+
+    const targetRef = getTileSpatialReference(candidate, gridStep)
+    const anchorPair = findBestAnchorPair(sourceRef.anchors, targetRef.anchors)
+    if (!anchorPair || anchorPair.distance > maxDistance) continue
+
+    const candidateMatch: DiscoveryMatch = {
+      tile: candidate,
+      route: getOrthogonalRoute(anchorPair.source, anchorPair.target, gridStep),
+      distance: anchorPair.distance,
+      matchLabels: getCapabilityMatches(sourceRef.capabilities, targetRef.capabilities),
+      targetRef,
+    }
+
+    if (!bestFallback || candidateMatch.distance < bestFallback.distance) {
+      bestFallback = candidateMatch
+    }
+
+    if (candidateMatch.matchLabels.length && (!bestCompatible || candidateMatch.distance < bestCompatible.distance)) {
+      bestCompatible = candidateMatch
+    }
+  }
+
+  const match = bestCompatible ?? (bestFallback ? {
+    ...bestFallback,
+    matchLabels: bestFallback.matchLabels.length ? bestFallback.matchLabels : ['nearest'],
+  } : null)
+
+  return { sourceRef, match }
+}
+
 function App(): JSX.Element {
   const [tiles, setTiles] = useState<TileState[]>([])
   const [groups, setGroups] = useState<GroupState[]>([])
+  const [lockedConnections, setLockedConnections] = useState<Array<{ sourceTileId: string; targetTileId: string }>>([])
   const [viewport, setViewport] = useState({ tx: 0, ty: 0, zoom: 1 })
   const prevZoomRef = React.useRef(1)
   const panVelocityRef = useRef({ vx: 0, vy: 0 })
@@ -163,16 +641,21 @@ function App(): JSX.Element {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [dragState, setDragState] = useState<DragState>({ type: null })
   const [showMCP, setShowMCP] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
+  const [showSettings, setShowSettings] = useState<string | false>(false)
   const [showMinimap, setShowMinimap] = useState(false)
   const [expandedTileId, setExpandedTileId] = useState<string | null>(null)
   const [panelLayout, setPanelLayout] = useState<PanelNode | null>(null)
+  const [extActionsVersion, setExtActionsVersion] = useState(0)
   const [activePanelId, setActivePanelId] = useState<string | null>(null)
+  const [expandLayoutGroupId, setExpandLayoutGroupId] = useState<string | null>(null)
+  const expandLayoutGroupIdRef = useRef<string | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const persistCanvasStateRef = useRef<((...args: any[]) => void) | null>(null)
   const savedLayoutRef = useRef<PanelNode | null>(null)
   const panelLayoutRef = useRef<PanelNode | null>(null)
   const activePanelIdRef = useRef<string | null>(null)
   const expandedTileIdRef = useRef<string | null>(null)
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
+  const [settings, setSettings] = useState<AppSettings>(() => readCachedSettings())
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const [sidebarResizing, setSidebarResizing] = useState(false)
@@ -180,8 +663,13 @@ function App(): JSX.Element {
   const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | null>(null)
   const [canvasArrangeMode, setCanvasArrangeMode] = useState<'grid' | 'column' | 'row' | null>(null)
   const [guides, setGuides] = useState<{ x?: number; y?: number }[]>([])
+  const [discoveryPulses, setDiscoveryPulses] = useState<DiscoveryPulse[]>([])
   const [showAgentSetup, setShowAgentSetup] = useState(false)
-  const { extensionTiles } = useExtensions()
+  const { extensionTiles } = useExtensions(workspace?.path ?? null)
+  const [systemPrefersDark, setSystemPrefersDark] = useState(true)
+  const [brandWordmarkIndex, setBrandWordmarkIndex] = useState(1)
+  const [brandPaletteIndex, setBrandPaletteIndex] = useState(0)
+  const [brandPrefsReadyTheme, setBrandPrefsReadyTheme] = useState<string | null>(null)
 
   useEffect(() => { panelLayoutRef.current = panelLayout }, [panelLayout])
   useEffect(() => { activePanelIdRef.current = activePanelId }, [activePanelId])
@@ -231,6 +719,110 @@ function App(): JSX.Element {
     if (workspace?.id) setOpenWorkspaceIds(prev => prev.includes(workspace.id) ? prev : [...prev, workspace.id])
   }, [workspace?.id])
 
+  // ─── Auto Agent Mode Effect ───────────────────────────────────────────────
+  // Automatically enables agentMode on chat tiles when they get close to compatible tiles
+  useEffect(() => {
+    if (!workspace?.id) return
+    // Skip during drag operations to avoid lag
+    if (dragState.type !== null) return
+
+    const gridStep = Math.max(8, settings.gridSize || settings.gridSpacingSmall || GRID)
+    const maxDistance = getDiscoveryMaxDistance(settings.gridSpacingLarge || DEFAULT_SETTINGS.gridSpacingLarge)
+    const enableThreshold = maxDistance * PROXIMITY_ENABLE_DISTANCE
+    const disableThreshold = maxDistance * PROXIMITY_DISABLE_DISTANCE
+
+    // Find all chat tiles and their proximity status
+    const chatTileProximities = new Map<string, { hasMatch: boolean; distance: number }>()
+    
+    for (const tile of tiles) {
+      if (tile.type !== 'chat') continue
+      
+      const discovery = findDiscoveryMatch(tile.id, tiles, panelTileIdsRef.current, gridStep, maxDistance)
+      const hasCompatibleMatch = Boolean(
+        discovery?.match && discovery.match.matchLabels.length > 0
+          && !(discovery.match.matchLabels.length === 1 && discovery.match.matchLabels[0] === 'nearest')
+      )
+      if (!hasCompatibleMatch) {
+        chatTileProximities.set(tile.id, { hasMatch: false, distance: Infinity })
+      } else {
+        chatTileProximities.set(tile.id, { hasMatch: true, distance: discovery.match.distance })
+      }
+    }
+
+    // Clear existing debounce timer
+    if (proximityDebounceTimerRef.current) {
+      window.clearTimeout(proximityDebounceTimerRef.current)
+    }
+
+    // Debounce the state changes
+    proximityDebounceTimerRef.current = window.setTimeout(() => {
+      const autoEnabled = autoAgentModeTilesRef.current
+      const timers = autoAgentModeTimersRef.current
+      const now = Date.now()
+      let hasChanges = false
+      const newAutoEnabled = new Set(autoEnabled)
+
+      for (const [tileId, proximity] of chatTileProximities) {
+        const isAutoEnabled = autoEnabled.has(tileId)
+        const lastChange = timers.get(tileId) || 0
+        const timeSinceChange = now - lastChange
+
+        // Minimum time between toggles to prevent thrashing (1 second)
+        if (timeSinceChange < 1000) continue
+
+        if (!isAutoEnabled && proximity.hasMatch && proximity.distance <= enableThreshold) {
+          // Auto-enable agentMode
+          newAutoEnabled.add(tileId)
+          timers.set(tileId, now)
+          hasChanges = true
+          
+          // Update tile state
+          setTiles(prev => prev.map(t => {
+            if (t.id !== tileId) return t
+            return { ...t, autoAgentMode: true }
+          }))
+          
+          // Save tile state
+          void window.electron.canvas.saveTileState(workspace.id, tileId, {
+            agentMode: true,
+            autoAgentMode: true,
+          })
+          
+          console.log(`[AutoAgent] Enabled agentMode for ${tileId} (distance: ${Math.round(proximity.distance)}px)`)
+        } else if (isAutoEnabled && (!proximity.hasMatch || proximity.distance > disableThreshold)) {
+          // Auto-disable agentMode
+          newAutoEnabled.delete(tileId)
+          timers.set(tileId, now)
+          hasChanges = true
+          
+          // Update tile state
+          setTiles(prev => prev.map(t => {
+            if (t.id !== tileId) return t
+            return { ...t, autoAgentMode: false }
+          }))
+          
+          // Save tile state
+          void window.electron.canvas.saveTileState(workspace.id, tileId, {
+            agentMode: false,
+            autoAgentMode: false,
+          })
+          
+          console.log(`[AutoAgent] Disabled agentMode for ${tileId}`)
+        }
+      }
+
+      if (hasChanges) {
+        autoAgentModeTilesRef.current = newAutoEnabled
+      }
+    }, PROXIMITY_DEBOUNCE_MS)
+
+    return () => {
+      if (proximityDebounceTimerRef.current) {
+        window.clearTimeout(proximityDebounceTimerRef.current)
+      }
+    }
+  }, [tiles, dragState.type, settings.gridSize, settings.gridSpacingSmall, settings.gridSpacingLarge, workspace?.id])
+
   // Internal clipboard — stores tile snapshots (not OS clipboard)
   const clipboard = useRef<TileState[]>([])
   const isCut = useRef(false)
@@ -251,6 +843,11 @@ function App(): JSX.Element {
   // Refs that always reflect the latest tiles/groups state (for use in keyboard handlers)
   const tilesRef = useRef<TileState[]>(tiles)
   const groupsRef = useRef<GroupState[]>(groups)
+  const lockedConnectionsRef = useRef(lockedConnections)
+  useEffect(() => { lockedConnectionsRef.current = lockedConnections }, [lockedConnections])
+  const [suppressedConnections, setSuppressedConnections] = useState<Set<string>>(new Set())
+  const suppressedConnectionsRef = useRef(suppressedConnections)
+  useEffect(() => { suppressedConnectionsRef.current = suppressedConnections }, [suppressedConnections])
 
   const viewportRef = useRef(viewport)
   const nextZIndexRef = useRef(nextZIndex)
@@ -269,12 +866,31 @@ function App(): JSX.Element {
   const canvasRef = useRef<HTMLDivElement>(null)
   const dotGlowSmallRef = useRef<HTMLDivElement>(null)
   const dotGlowLargeRef = useRef<HTMLDivElement>(null)
+  const discoveryGlowRef = useRef<HTMLDivElement>(null)
+  const discoveryTimeoutsRef = useRef<number[]>([])
+
+  // ─── Auto Agent Mode (proximity-based tile discovery) ─────────────────────
+  // Tracks which chat tiles have auto-enabled agentMode due to proximity
+  const autoAgentModeTilesRef = useRef<Set<string>>(new Set())
+  // Tracks timestamps for hysteresis (prevent rapid toggle at boundary)
+  const autoAgentModeTimersRef = useRef<Map<string, number>>(new Map())
+  // Debounce timer for batching proximity changes
+  const proximityDebounceTimerRef = useRef<number | null>(null)
+  // HYSTERESIS_GAP: disable threshold is larger than enable threshold to prevent thrashing
+  const PROXIMITY_ENABLE_DISTANCE = 0.8 // 80% of max distance
+  const PROXIMITY_DISABLE_DISTANCE = 1.0 // 100% of max distance
+  const PROXIMITY_DEBOUNCE_MS = 300
+  const panelTileIdsRef = useRef<Set<string>>(new Set())
   const canvasGlowRafRef = useRef<number | null>(null)
   const canvasGlowPointRef = useRef<{ clientX: number; clientY: number } | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const spaceHeld = useRef(false)
   const skipHistory = useRef(false)
   const canvasGlowEnabled = settings.canvasGlowEnabled
+  const canvasGlowRadius = Math.max(50, Math.min(200, settings.canvasGlowRadius ?? 120))
+  const cursorGlowBrightnessScale = 1 + ((viewport.zoom - 1) / 0.2) * 0.1
+  const cursorGlowOpacity = Math.max(0, Math.min(1, cursorGlowBrightnessScale))
+  const cursorGlowFilterBrightness = Math.max(1, cursorGlowBrightnessScale)
   const snapValue = React.useCallback((value: number) => (
     settings.snapToGrid ? snap(value, settings.gridSize) : value
   ), [settings.snapToGrid, settings.gridSize])
@@ -285,8 +901,15 @@ function App(): JSX.Element {
       canvasGlowRafRef.current = null
     }
     canvasGlowPointRef.current = null
-    if (dotGlowSmallRef.current) dotGlowSmallRef.current.style.opacity = '0'
-    if (dotGlowLargeRef.current) dotGlowLargeRef.current.style.opacity = '0'
+    if (dotGlowSmallRef.current) {
+      dotGlowSmallRef.current.style.opacity = '0'
+      dotGlowSmallRef.current.style.filter = 'brightness(1)'
+    }
+    if (dotGlowLargeRef.current) {
+      dotGlowLargeRef.current.style.opacity = '0'
+      dotGlowLargeRef.current.style.filter = 'brightness(1)'
+    }
+    if (discoveryGlowRef.current) discoveryGlowRef.current.style.opacity = '0'
   }, [])
 
   const updateCanvasGlow = React.useCallback((clientX: number, clientY: number) => {
@@ -305,31 +928,65 @@ function App(): JSX.Element {
         hideCanvasGlow()
         return
       }
-      const mask = `radial-gradient(circle at ${x}px ${y}px, rgba(0,0,0,1) 0px, rgba(0,0,0,1) 130px, rgba(0,0,0,0) 260px)`
-      dotGlowSmallRef.current.style.opacity = '1'
-      dotGlowLargeRef.current.style.opacity = '1'
+      const innerGlowRadius = Math.round(canvasGlowRadius * 0.5)
+      const mask = `radial-gradient(circle at ${x}px ${y}px, rgba(0,0,0,1) 0px, rgba(0,0,0,1) ${innerGlowRadius}px, rgba(0,0,0,0) ${canvasGlowRadius}px)`
+      dotGlowSmallRef.current.style.opacity = String(cursorGlowOpacity)
+      dotGlowLargeRef.current.style.opacity = String(cursorGlowOpacity)
+      dotGlowSmallRef.current.style.filter = `brightness(${cursorGlowFilterBrightness})`
+      dotGlowLargeRef.current.style.filter = `brightness(${cursorGlowFilterBrightness})`
       dotGlowSmallRef.current.style.maskImage = mask
       dotGlowSmallRef.current.style.webkitMaskImage = mask
       dotGlowLargeRef.current.style.maskImage = mask
       dotGlowLargeRef.current.style.webkitMaskImage = mask
+      if (discoveryGlowRef.current) {
+        discoveryGlowRef.current.style.opacity = '1'
+        discoveryGlowRef.current.style.maskImage = mask
+        discoveryGlowRef.current.style.webkitMaskImage = mask
+      }
     })
-  }, [canvasGlowEnabled, hideCanvasGlow])
+  }, [canvasGlowEnabled, canvasGlowRadius, cursorGlowFilterBrightness, cursorGlowOpacity, hideCanvasGlow])
+
+  const showEmptyLayoutPage = useCallback(() => {
+    const emptyPanel = createLeaf([])
+    setWorkspace(null)
+    setOpenWorkspaceIds([])
+    setTiles([])
+    setGroups([])
+    setLockedConnections([])
+    setViewport({ tx: 0, ty: 0, zoom: 1 })
+    setNextZIndex(1)
+    savedLayoutRef.current = emptyPanel
+    setPanelLayout(emptyPanel)
+    setActivePanelId(emptyPanel.id)
+    setExpandedTileId(null)
+  }, [])
 
   // ─── Load workspace + canvas state on mount ───────────────────────────────
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(settings))
+    } catch {}
+  }, [settings])
+
   useEffect(() => {
     async function init(): Promise<void> {
       if (!window.electron) {
         console.warn('window.electron not available — preload may not have loaded')
         return
       }
+      const isFresh = await window.electron.window.isFresh()
       const [wsList, active, savedSettings] = await Promise.all([
         window.electron.workspace.list(),
-        window.electron.workspace.getActive(),
+        isFresh ? Promise.resolve(null) : window.electron.workspace.getActive(),
         window.electron.settings?.get()
       ])
       if (savedSettings) setSettings(withDefaultSettings(savedSettings))
       setWorkspaces(wsList)
       setWorkspace(active)
+      if (!active) {
+        showEmptyLayoutPage()
+        return
+      }
       if (active) {
         const saved: CanvasState | null = await window.electron.canvas.load(active.id)
         const savedTiles = saved?.tiles ?? []
@@ -341,6 +998,7 @@ function App(): JSX.Element {
             : sanitizedPanel.fallbackActivePanelId
           setTiles(savedTiles)
           setGroups(saved.groups ?? [])
+          setLockedConnections(saved.lockedConnections ?? [])
           setViewport(saved.viewport
             ? { tx: saved.viewport.tx, ty: saved.viewport.ty, zoom: saved.viewport.zoom }
             : { tx: 0, ty: 0, zoom: 1 })
@@ -364,14 +1022,58 @@ function App(): JSX.Element {
         if (needs) setShowAgentSetup(true)
       }).catch(() => {})
     }
+  }, [showEmptyLayoutPage])
+
+  // ─── Subscribe to custom theme registrations from extensions ─────────────
+  useEffect(() => {
+    const subscriberId = 'app:theme-bus'
+    window.electron.bus?.subscribe('themes', subscriberId, () => {})
+    const unsubEvent = window.electron.bus?.onEvent((event: { channel: string; payload: unknown }) => {
+      if (event?.channel !== 'themes') return
+      const data = event.payload as { action?: string; theme?: unknown; themeId?: string } | null
+      if (!data) return
+      if (data.action === 'register' && data.theme) {
+        try { registerCustomTheme(data.theme as Parameters<typeof registerCustomTheme>[0]) } catch { /* skip invalid */ }
+      }
+      if (data.action === 'apply' && data.theme) {
+        try {
+          registerCustomTheme(data.theme as Parameters<typeof registerCustomTheme>[0])
+          if (data.themeId) setSettings(s => ({ ...s, themeId: data.themeId as string }))
+        } catch { /* skip invalid */ }
+      }
+      if (data.action === 'delete') {
+        const deletedThemeId = typeof (data as { id?: unknown }).id === 'string' ? (data as { id: string }).id : ''
+        if (!deletedThemeId) return
+        unregisterCustomTheme(deletedThemeId)
+        setSettings(s => s.themeId === deletedThemeId ? { ...s, themeId: DEFAULT_THEME_ID } : s)
+      }
+    })
+    return () => {
+      window.electron.bus?.unsubscribeAll(subscriberId)
+      unsubEvent?.()
+    }
   }, [])
 
   // ─── Escape to collapse expanded tile ────────────────────────────────────
   const exitExpandedMode = useCallback(() => {
-    // Save layout before clearing so re-entry can restore it
-    setPanelLayout(prev => { savedLayoutRef.current = prev; return null })
+    const expandingGroup = expandLayoutGroupIdRef.current
+    setPanelLayout(prev => {
+      if (expandingGroup && prev) {
+        // Save layout back to the group instead of the global savedLayoutRef
+        setGroups(grps => {
+          const updated = grps.map(g => g.id === expandingGroup ? { ...g, layout: prev } : g)
+          setTimeout(() => persistCanvasStateRef.current?.(tilesRef.current, viewportRef.current, nextZIndexRef.current, updated), 0)
+          return updated
+        })
+      } else if (!expandingGroup) {
+        savedLayoutRef.current = prev
+      }
+      return null
+    })
     setExpandedTileId(null)
     setActivePanelId(null)
+    setExpandLayoutGroupId(null)
+    expandLayoutGroupIdRef.current = null
   }, [])
 
   const enterExpandedMode = useCallback((tileId: string) => {
@@ -430,7 +1132,7 @@ function App(): JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [exitExpandedMode])
 
   // ─── Space key for pan mode ───────────────────────────────────────────────
   useEffect(() => {
@@ -480,6 +1182,7 @@ function App(): JSX.Element {
         activePanelId: activePanelIdRef.current,
         tabViewActive: Boolean(panelLayoutRef.current),
         expandedTileId: expandedTileIdRef.current,
+        lockedConnections: lockedConnectionsRef.current.length > 0 ? lockedConnectionsRef.current : undefined,
       }
       window.electron.canvas.save(workspace.id, state)
     }, 500)
@@ -521,6 +1224,50 @@ function App(): JSX.Element {
     return screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2)
   }, [screenToWorld])
 
+  const worldToScreenPoint = useCallback((point: { x: number; y: number }) => ({
+    x: point.x * viewport.zoom + viewport.tx,
+    y: point.y * viewport.zoom + viewport.ty,
+  }), [viewport])
+
+  const worldToScreenRect = useCallback((tile: TileState) => ({
+    left: tile.x * viewport.zoom + viewport.tx,
+    top: tile.y * viewport.zoom + viewport.ty,
+    width: tile.width * viewport.zoom,
+    height: tile.height * viewport.zoom,
+  }), [viewport])
+
+  const triggerDiscoveryPulse = useCallback((tileId: string, tileList: TileState[]) => {
+    const gridStep = Math.max(8, settings.gridSize || settings.gridSpacingSmall || GRID)
+    const maxDistance = getDiscoveryMaxDistance(settings.gridSpacingLarge || DEFAULT_SETTINGS.gridSpacingLarge)
+    const discovery = findDiscoveryMatch(tileId, tileList, panelTileIdsRef.current, gridStep, maxDistance)
+    if (!discovery?.match) return
+
+    const sourceTile = tileList.find(tile => tile.id === tileId)
+    if (!sourceTile) return
+
+    const pulse: DiscoveryPulse = {
+      id: `pulse-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      sourceTileId: sourceTile.id,
+      targetTileId: discovery.match.tile.id,
+      route: discovery.match.route,
+      startedAt: Date.now(),
+      durationMs: DISCOVERY_PULSE_DURATION_MS,
+      matchLabels: discovery.match.matchLabels,
+      sourceGridLabel: formatGridBounds(discovery.sourceRef.gridBounds),
+      targetGridLabel: formatGridBounds(discovery.match.targetRef.gridBounds),
+    }
+
+    setDiscoveryPulses(prev => {
+      const next = prev.filter(existing => !(existing.sourceTileId === pulse.sourceTileId && existing.targetTileId === pulse.targetTileId))
+      return [...next, pulse]
+    })
+
+    const timeout = window.setTimeout(() => {
+      setDiscoveryPulses(prev => prev.filter(existing => existing.id !== pulse.id))
+    }, pulse.durationMs + 180)
+    discoveryTimeoutsRef.current.push(timeout)
+  }, [settings.gridSize, settings.gridSpacingSmall, settings.gridSpacingLarge])
+
   const getInitialTileSize = useCallback((type: TileState['type']) => {
     const configured = settings.defaultTileSizes[type]
     if (configured) return configured
@@ -533,22 +1280,33 @@ function App(): JSX.Element {
   }, [settings.defaultTileSizes, extensionTiles])
 
   // ─── Tile creation ────────────────────────────────────────────────────────
-  const addTile = useCallback((type: TileState['type'], filePath?: string, pos?: { x: number; y: number }) => {
+  const addTile = useCallback((type: TileState['type'], filePath?: string, pos?: { x: number; y: number }, initialOptions?: { hideTitlebar?: boolean; hideNavbar?: boolean; launchBin?: string; launchArgs?: string[] }) => {
     const center = pos ?? viewportCenter()
     const { w, h } = getInitialTileSize(type)
     const minW = getMinTileWidth(type)
     const minH = getMinTileHeight(type)
     const width = Math.max(w, minW)
     const height = Math.max(h, minH)
+    const placementStep = Math.max(16, settings.gridSize || settings.gridSpacingSmall || GRID)
+    const preferred = {
+      x: snapValue(center.x - width / 2),
+      y: snapValue(center.y - height / 2),
+    }
+    const position = findClearPosition(preferred.x, preferred.y, width, height, tilesRef.current, panelTileIdsRef.current, placementStep)
+
     const newTile: TileState = {
       id: `tile-${Date.now()}`,
       type,
-      x: snapValue(center.x - width / 2),
-      y: snapValue(center.y - height / 2),
+      x: position.x,
+      y: position.y,
       width,
       height,
       zIndex: nextZIndex,
-      filePath
+      filePath,
+      hideTitlebar: initialOptions?.hideTitlebar,
+      hideNavbar: initialOptions?.hideNavbar,
+      launchBin: initialOptions?.launchBin,
+      launchArgs: initialOptions?.launchArgs,
     }
     const newNZ = nextZIndex + 1
     setTiles(prev => {
@@ -558,12 +1316,15 @@ function App(): JSX.Element {
     })
     setNextZIndex(newNZ)
     setSelectedTileId(newTile.id)
+    window.setTimeout(() => triggerDiscoveryPulse(newTile.id, [...tilesRef.current, newTile]), 40)
 
     // If in expanded/tabbed mode, add as a tab to the active panel
     if (panelLayout && activePanelId) {
       setPanelLayout(prev => prev ? addTabToLeaf(prev, activePanelId, newTile.id) : prev)
     }
-  }, [nextZIndex, viewport, viewportCenter, saveCanvas, panelLayout, activePanelId, getInitialTileSize, snapValue])
+
+    return newTile.id
+  }, [nextZIndex, viewport, viewportCenter, saveCanvas, panelLayout, activePanelId, getInitialTileSize, snapValue, triggerDiscoveryPulse, settings.gridSize, settings.gridSpacingSmall])
 
   useEffect(() => {
     if (!tiles.some(tile => tile.width < getMinTileWidth(tile) || tile.height < getMinTileHeight(tile))) return
@@ -595,7 +1356,7 @@ function App(): JSX.Element {
         addTile((data.type ?? 'note') as TileState['type'], data.filePath, data.x !== undefined ? { x: data.x, y: data.y } : undefined)
       }
       if (event === 'canvas_open_file') {
-        addTile(extToType(data.path), data.path)
+        void resolveFileTileType(data.path).then(type => addTile(type, data.path))
       }
       if (event === 'canvas_pan_to') {
         setViewport(prev => ({ ...prev, tx: data.x, ty: data.y }))
@@ -724,7 +1485,7 @@ function App(): JSX.Element {
     }
     if (selectedTileIds.size >= 2) {
       items.push({ label: '', action: () => {}, divider: true })
-      items.push({ label: `Group ${selectedTileIds.size} tiles`, action: () => groupSelectedTilesRef.current() })
+      items.push({ label: `Group ${selectedTileIds.size} blocks`, action: () => groupSelectedTilesRef.current() })
     }
     setCtxMenu({ x: e.clientX, y: e.clientY, items })
   }, [screenToWorld, addTile, selectedTileIds, groups, panelLayout, extensionTiles])
@@ -851,33 +1612,49 @@ function App(): JSX.Element {
         if (dir.includes('w')) { nw = Math.max(100, ib.w - wdx); nx = ib.x + ib.w - nw }
         if (dir.includes('n')) { nh = Math.max(100, ib.h - wdy); ny = ib.y + ib.h - nh }
 
-        const scaleX = nw / ib.w
-        const scaleY = nh / ib.h
-
-        setTiles(prev => prev.map(t => {
-          const s = snaps.find(s2 => s2.id === t.id)
-          if (!s) return t
-          const minW = getMinTileWidth(t)
-          const minH = getMinTileHeight(t)
-          // Scale position relative to group origin
-          const relX = s.x - ib.x
-          const relY = s.y - ib.y
-          return {
-            ...t,
-            x: snapValue(nx + relX * scaleX),
-            y: snapValue(ny + relY * scaleY),
-            width: Math.max(minW, snapValue(s.width * scaleX)),
-            height: Math.max(minH, snapValue(s.height * scaleY)),
-          }
-        }))
+        // For layout groups, just update layoutBounds directly — no tile scaling
+        const resizingGroup = groupsRef.current.find(g => g.id === dragState.groupId)
+        if (resizingGroup?.layoutMode) {
+          setGroups(prev => prev.map(g => g.id === dragState.groupId
+            ? { ...g, layoutBounds: { x: snapValue(nx), y: snapValue(ny), w: snapValue(nw), h: snapValue(nh) } }
+            : g))
+        } else {
+          const scaleX = nw / ib.w
+          const scaleY = nh / ib.h
+          setTiles(prev => prev.map(t => {
+            const s = snaps.find(s2 => s2.id === t.id)
+            if (!s) return t
+            const minW = getMinTileWidth(t)
+            const minH = getMinTileHeight(t)
+            // Scale position relative to group origin
+            const relX = s.x - ib.x
+            const relY = s.y - ib.y
+            return {
+              ...t,
+              x: snapValue(nx + relX * scaleX),
+              y: snapValue(ny + relY * scaleY),
+              width: Math.max(minW, snapValue(s.width * scaleX)),
+              height: Math.max(minH, snapValue(s.height * scaleY)),
+            }
+          }))
+        }
       } else if (dragState.type === 'group') {
         const wdx = dx / viewport.zoom
         const wdy = dy / viewport.zoom
-        setTiles(prev => prev.map(t => {
-          const snap2 = dragState.snapshots.find(s => s.id === t.id)
-          if (!snap2) return t
-          return { ...t, x: snapValue(snap2.x + wdx), y: snapValue(snap2.y + wdy) }
-        }))
+        if (dragState.initLayoutBounds) {
+          // Layout group — move the stored bounds, not individual tiles
+          const lb = dragState.initLayoutBounds
+          setGroups(prev => prev.map(g => g.id === dragState.groupId ? {
+            ...g,
+            layoutBounds: { ...lb, x: snapValue(lb.x + wdx), y: snapValue(lb.y + wdy) }
+          } : g))
+        } else {
+          setTiles(prev => prev.map(t => {
+            const snap2 = dragState.snapshots.find(s => s.id === t.id)
+            if (!snap2) return t
+            return { ...t, x: snapValue(snap2.x + wdx), y: snapValue(snap2.y + wdy) }
+          }))
+        }
       } else if (dragState.type === 'select') {
         const rect = canvasRef.current?.getBoundingClientRect()
         if (!rect) return
@@ -955,6 +1732,16 @@ function App(): JSX.Element {
 
           // If tile didn't actually move, don't touch group membership
           const didMove = tile.x !== dragState.initX || tile.y !== dragState.initY
+          // Clear suppressed connections for this tile when it moves
+          if (didMove && suppressedConnectionsRef.current.size > 0) {
+            setSuppressedConnections(prev => {
+              const next = new Set(prev)
+              for (const key of prev) {
+                if (key.includes(tile.id)) next.delete(key)
+              }
+              return next.size === prev.size ? prev : next
+            })
+          }
           if (!didMove) { saveCanvas(prev, viewport, nextZIndex); return prev }
 
           const tileCx = tile.x + tile.width / 2
@@ -989,13 +1776,15 @@ function App(): JSX.Element {
           if (newGroupId !== tile.groupId) {
             const updated = prev.map(t => t.id === tile.id ? { ...t, groupId: newGroupId } : t)
             saveCanvas(updated, viewport, nextZIndex)
+            window.setTimeout(() => triggerDiscoveryPulse(tile.id, updated), 40)
             return updated
           }
           saveCanvas(prev, viewport, nextZIndex)
+          window.setTimeout(() => triggerDiscoveryPulse(tile.id, prev), 40)
           return prev
         })
       } else if (dragState.type === 'resize' || dragState.type === 'group' || dragState.type === 'group-resize') {
-        setTiles(prev => { saveCanvas(prev, viewport, nextZIndex); return prev })
+        setTiles(prev => { saveCanvas(prev, viewport, nextZIndex, groupsRef.current); return prev })
       }
       if (dragState.type === 'select') {
         const minX = Math.min(dragState.startWx, dragState.curWx)
@@ -1006,7 +1795,9 @@ function App(): JSX.Element {
         if (size > 10) {
           setTiles(prev => {
             const hit = new Set(
-              prev.filter(t => t.x < maxX && t.x + t.width > minX && t.y < maxY && t.y + t.height > minY)
+              prev
+                .filter(t => !panelTileIdsRef.current.has(t.id))  // exclude layout-group / panel tiles
+                .filter(t => t.x < maxX && t.x + t.width > minX && t.y < maxY && t.y + t.height > minY)
                 .map(t => t.id)
             )
             setSelectedTileIds(hit)
@@ -1039,7 +1830,7 @@ function App(): JSX.Element {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [dragState, viewport, nextZIndex, saveCanvas])
+  }, [dragState, groups, nextZIndex, saveCanvas, triggerDiscoveryPulse, viewport])
 
   // ─── Zoom — native listener needed for { passive: false } ────────────────
   useEffect(() => {
@@ -1099,6 +1890,26 @@ function App(): JSX.Element {
     }
   }, [workspaces])
 
+  const handleDeleteWorkspace = useCallback(async (id: string) => {
+    const wasActive = workspace?.id === id
+    const nextOpenIds = openWorkspaceIds.filter(wsId => wsId !== id)
+
+    await window.electron.workspace.delete(id)
+    const updated = await window.electron.workspace.list()
+    setWorkspaces(updated)
+    setOpenWorkspaceIds(nextOpenIds)
+
+    if (!wasActive) return
+
+    const nextId = nextOpenIds.find(wsId => updated.some(ws => ws.id === wsId)) ?? updated[0]?.id ?? null
+    if (nextId) {
+      await handleSwitchWorkspace(nextId)
+      return
+    }
+
+    showEmptyLayoutPage()
+  }, [workspace?.id, openWorkspaceIds, handleSwitchWorkspace, showEmptyLayoutPage])
+
   const handleNewWorkspace = useCallback(async (name: string) => {
     if (!name.trim()) return
     const ws = await window.electron.workspace.create(name.trim())
@@ -1116,10 +1927,242 @@ function App(): JSX.Element {
     await handleSwitchWorkspace(ws.id)
   }, [handleSwitchWorkspace])
 
+  // Cmd+T → open next available workspace as a pill tab
+  useEffect(() => {
+    return window.electron?.window?.onNewTab?.(() => {
+      const next = workspaces.find(w => !openWorkspaceIds.includes(w.id))
+      if (next) {
+        setOpenWorkspaceIds(prev => [...prev, next.id])
+        handleSwitchWorkspace(next.id)
+      }
+    })
+  }, [workspaces, openWorkspaceIds, handleSwitchWorkspace])
+
+  // Launch a layout template as a new view within the current project
+  const handleLaunchTemplate = useCallback(async (template: import('../../shared/types').LayoutTemplate) => {
+    // Inherit the current workspace's project path so the new view stays in the same project.
+    // Name it "ProjectBase:LayoutName" so the tab bar makes the relationship clear.
+    const currentPath = workspace?.path ?? ''
+    const projectBase = currentPath ? currentPath.split('/').filter(Boolean).pop() ?? '' : ''
+    const viewName = projectBase ? `${projectBase}:${template.name}` : template.name
+    const ws = await window.electron.workspace.createWithPath(viewName, currentPath)
+    const updatedList = await window.electron.workspace.list()
+    setWorkspaces(updatedList)
+
+    // Generate tiles from template tree
+    const generatedTiles: TileState[] = []
+    let zIdx = 1
+    const VW = 1600, VH = 900
+    let counter = 0
+
+    const generateTiles = (node: import('../../shared/types').LayoutTemplateNode, x: number, y: number, w: number, h: number) => {
+      if (node.type === 'leaf') {
+        for (const slot of node.slots) {
+          generatedTiles.push({
+            id: `tile-${Date.now()}-${counter++}`,
+            type: slot.tileType,
+            x: Math.round(x), y: Math.round(y),
+            width: Math.round(w), height: Math.round(h),
+            zIndex: zIdx++,
+            label: slot.label,
+          })
+        }
+        return
+      }
+      const { direction, children, sizes } = node
+      let offset = 0
+      children.forEach((child, i) => {
+        const pct = (sizes[i] ?? 50) / 100
+        if (direction === 'horizontal') {
+          generateTiles(child, x + offset, y, w * pct, h)
+          offset += w * pct
+        } else {
+          generateTiles(child, x, y + offset, w, h * pct)
+          offset += h * pct
+        }
+      })
+    }
+
+    generateTiles(template.tree, 0, 0, VW, VH)
+
+    // Generate PanelNode tree from template
+    const generatePanel = (node: import('../../shared/types').LayoutTemplateNode, tileIdx: { v: number }): PanelNode => {
+      if (node.type === 'leaf') {
+        const tabs = node.slots.map(() => generatedTiles[tileIdx.v++]?.id).filter(Boolean)
+        return { type: 'leaf', id: `panel-${Date.now()}-${tileIdx.v}`, tabs, activeTab: tabs[0] ?? '' }
+      }
+      return {
+        type: 'split',
+        id: `split-${Date.now()}-${tileIdx.v}`,
+        direction: node.direction,
+        children: node.children.map(c => generatePanel(c, tileIdx)),
+        sizes: node.sizes,
+      }
+    }
+
+    const panelTree = generatePanel(template.tree, { v: 0 })
+
+    // Generate locked connections for adjacent tiles
+    const connections: Array<{ sourceTileId: string; targetTileId: string }> = []
+    for (let i = 0; i < generatedTiles.length; i++) {
+      for (let j = i + 1; j < generatedTiles.length; j++) {
+        const a = generatedTiles[i], b = generatedTiles[j]
+        const touchH = (Math.round(a.x + a.width) === b.x || Math.round(b.x + b.width) === a.x) && !(a.y + a.height <= b.y || b.y + b.height <= a.y)
+        const touchV = (Math.round(a.y + a.height) === b.y || Math.round(b.y + b.height) === a.y) && !(a.x + a.width <= b.x || b.x + b.width <= a.x)
+        if (touchH || touchV) {
+          connections.push({ sourceTileId: a.id, targetTileId: b.id })
+        }
+      }
+    }
+
+    // Save canvas state
+    const firstLeafId = panelTree.type === 'leaf' ? panelTree.id
+      : (function findFirst(n: PanelNode): string { return n.type === 'leaf' ? n.id : findFirst(n.children[0]) })(panelTree)
+
+    const state: CanvasState = {
+      tiles: generatedTiles,
+      groups: [],
+      viewport: { tx: 0, ty: 0, zoom: 1 },
+      nextZIndex: zIdx,
+      panelLayout: panelTree,
+      activePanelId: firstLeafId,
+      tabViewActive: true,
+      lockedConnections: connections.length > 0 ? connections : undefined,
+    }
+    await window.electron.canvas.save(ws.id, state)
+
+    // Switch to new workspace — set state directly since the ws is new and not in the old closure
+    await window.electron.workspace.setActive(ws.id)
+    setWorkspace(ws)
+    setTiles(generatedTiles)
+    setGroups([])
+    setLockedConnections(connections)
+    setViewport({ tx: 0, ty: 0, zoom: 1 })
+    setNextZIndex(zIdx)
+    savedLayoutRef.current = panelTree
+    setPanelLayout(panelTree)
+    setActivePanelId(firstLeafId)
+    setExpandedTileId(null)
+    setOpenWorkspaceIds(prev => prev.includes(ws.id) ? prev : [...prev, ws.id])
+  }, [workspace])
+
+  // Launch a new empty view within the current project, defaulting to layout selection
+  const handleNewBlankView = useCallback(async () => {
+    const currentPath = workspace?.path ?? ''
+    const projectBase = currentPath ? currentPath.split('/').filter(Boolean).pop() ?? '' : ''
+    const viewName = projectBase ? `${projectBase}:canvas` : 'canvas'
+    const ws = await window.electron.workspace.createWithPath(viewName, currentPath)
+    const updatedList = await window.electron.workspace.list()
+    setWorkspaces(updatedList)
+    const emptyPanel = createLeaf([])
+    const state: CanvasState = {
+      tiles: [],
+      groups: [],
+      viewport: { tx: 0, ty: 0, zoom: 1 },
+      panelLayout: emptyPanel,
+      activePanelId: emptyPanel.id,
+      tabViewActive: true,
+    }
+    await window.electron.canvas.save(ws.id, state)
+    await window.electron.workspace.setActive(ws.id)
+    setWorkspace(ws)
+    setTiles([])
+    setGroups([])
+    setLockedConnections([])
+    setViewport({ tx: 0, ty: 0, zoom: 1 })
+    savedLayoutRef.current = emptyPanel
+    setPanelLayout(emptyPanel)
+    setActivePanelId(emptyPanel.id)
+    setExpandedTileId(null)
+    setOpenWorkspaceIds(prev => prev.includes(ws.id) ? prev : [...prev, ws.id])
+  }, [workspace])
+
   const handleOpenFile = useCallback((filePath: string) => {
     setSidebarSelectedPath(filePath)
-    addTile(extToType(filePath), filePath)
-  }, [addTile])
+
+    // If this file is already open in a tile, focus it instead of creating a duplicate
+    const existing = tilesRef.current.find(t => t.filePath === filePath)
+    if (existing) {
+      bringToFront(existing.id)
+      // In panel mode, switch to the tab containing this tile
+      if (panelLayout && activePanelId) {
+        // Find which leaf contains this tile and activate it
+        const allIds = getAllTileIds(panelLayout)
+        if (allIds.includes(existing.id)) {
+          // Find the leaf containing this tile and set it as active tab
+          const findLeafContaining = (node: PanelNode, tileId: string): string | null => {
+            if ('tabs' in node) return node.tabs.includes(tileId) ? node.id : null
+            for (const child of node.children) {
+              const found = findLeafContaining(child, tileId)
+              if (found) return found
+            }
+            return null
+          }
+          const leafId = findLeafContaining(panelLayout, existing.id)
+          if (leafId) {
+            setActivePanelId(leafId)
+            setPanelLayout(prev => {
+              if (!prev) return prev
+              const setActiveTab = (node: PanelNode): PanelNode => {
+                if ('tabs' in node) {
+                  return node.id === leafId ? { ...node, activeTab: existing.id } : node
+                }
+                return { ...node, children: node.children.map(setActiveTab) }
+              }
+              return setActiveTab(prev)
+            })
+          }
+        }
+      }
+      return
+    }
+
+    void resolveFileTileType(filePath).then(type => addTile(type, filePath))
+  }, [addTile, bringToFront, panelLayout, activePanelId])
+
+  const openSessionInChat = useCallback(async (session: SidebarSessionEntry) => {
+    if (!workspace?.id) return
+
+    const state = await window.electron.canvas.getSessionState(workspace.id, session.id).catch(() => null)
+    if (!state) {
+      if (session.filePath) handleOpenFile(session.filePath)
+      return
+    }
+
+    const chatTileId = addTile('chat')
+    const provider = typeof state.provider === 'string' ? state.provider : (session.provider || 'claude')
+    const defaultModeByProvider: Record<string, string> = {
+      claude: 'default',
+      codex: 'full-auto',
+      opencode: 'build',
+      openclaw: 'default',
+      hermes: 'full',
+    }
+
+    await window.electron.canvas.saveTileState(workspace.id, chatTileId, {
+      messages: Array.isArray(state.messages) ? state.messages : [],
+      input: '',
+      attachments: [],
+      provider,
+      model: typeof state.model === 'string' ? state.model : (session.model || ''),
+      mcpEnabled: false,
+      mode: defaultModeByProvider[provider] ?? 'default',
+      thinking: 'adaptive',
+      agentMode: false,
+      autoAgentMode: false,
+      sessionId: typeof state.sessionId === 'string' || state.sessionId === null ? state.sessionId : session.sessionId,
+    }).catch(() => {})
+    bringToFront(chatTileId)
+  }, [workspace?.id, addTile, bringToFront, handleOpenFile])
+
+  const openSessionInApp = useCallback((session: SidebarSessionEntry) => {
+    if (!session.resumeBin) return
+    const tileId = addTile('terminal', undefined, undefined, {
+      launchBin: session.resumeBin,
+      launchArgs: session.resumeArgs ?? [],
+    })
+    bringToFront(tileId)
+  }, [addTile, bringToFront])
 
   const importFileToWorkspace = useCallback(async (sourcePath: string, tileId?: string) => {
     if (!workspace?.path) return null
@@ -1342,6 +2385,11 @@ function App(): JSX.Element {
 
   // ─── Group frame bounds (recursive — includes child group tiles) ─────────
   const groupBounds = useCallback((groupId: string): { x: number; y: number; w: number; h: number } | null => {
+    const group = groups.find(g => g.id === groupId)
+    // Layout-mode groups use stored fixed bounds
+    if (group?.layoutMode && group.layoutBounds) {
+      return group.layoutBounds as { x: number; y: number; w: number; h: number }
+    }
     const collectTileIds = (gid: string): string[] => {
       const direct = tiles.filter(t => t.groupId === gid).map(t => t.id)
       const childGroups = groups.filter(g => g.parentGroupId === gid)
@@ -1365,12 +2413,56 @@ function App(): JSX.Element {
     return [...direct, ...childGroups.flatMap(g => collectGroupTileIds(g.id))]
   }, [tiles, groups])
 
+  const convertGroupToLayout = useCallback((groupId: string) => {
+    const memberTileIds = tiles.filter(t => t.groupId === groupId).map(t => t.id)
+    if (memberTileIds.length === 0) return
+    const bounds = groupBounds(groupId)
+    if (!bounds) return
+    const leaf = createLeaf(memberTileIds, memberTileIds[0])
+    setGroups(prev => {
+      const updated = prev.map(g => g.id === groupId ? {
+        ...g,
+        layoutMode: true,
+        layout: leaf,
+        layoutBounds: bounds,
+      } : g)
+      setTiles(t => { saveCanvas(t, viewport, nextZIndex, updated); return t })
+      return updated
+    })
+  }, [tiles, groupBounds, viewport, nextZIndex, saveCanvas])
+
+  const revertLayoutGroup = useCallback((groupId: string) => {
+    setGroups(prev => {
+      const updated = prev.map(g => g.id === groupId ? {
+        ...g,
+        layoutMode: false,
+        layout: undefined,
+        layoutBounds: undefined,
+      } : g)
+      setTiles(t => { saveCanvas(t, viewport, nextZIndex, updated); return t })
+      return updated
+    })
+  }, [viewport, nextZIndex, saveCanvas])
+
+  const expandLayoutGroup = useCallback((groupId: string) => {
+    const g = groupsRef.current.find(gr => gr.id === groupId)
+    if (!g?.layout) return
+    const layout = g.layout as PanelNode
+    setExpandLayoutGroupId(groupId)
+    expandLayoutGroupIdRef.current = groupId
+    setPanelLayout(layout)
+    const firstLeafId = findFirstLeafId(layout)
+    setActivePanelId(firstLeafId)
+    setExpandedTileId(null)
+  }, [])
+
   // Keep action refs in sync so early-defined callbacks can call them safely
   pasteTilesRef.current = pasteTiles
   duplicateTilesRef.current = duplicateTiles
   copyTilesRef.current = copyTiles
   groupSelectedTilesRef.current = groupSelectedTiles
   groupBoundsRef.current = groupBounds
+  persistCanvasStateRef.current = persistCanvasState
   ungroupTilesRef.current = ungroupTiles
   ungroupAllRef.current = ungroupAll
 
@@ -1516,19 +2608,31 @@ function App(): JSX.Element {
             workspaceDir={workspace?.path ?? ''}
             width={tile.width}
             height={tile.height}
-            fontSize={settings.terminalFontSize}
-            fontFamily={settings.terminalFontFamily}
+            fontSize={settings.terminalFontSize || appFonts.monoSize}
+            fontFamily={settings.terminalFontFamily || appFonts.mono}
+            launchBin={tile.launchBin}
+            launchArgs={tile.launchArgs}
           />
         )
       case 'code':
         return <LazyCodeTile filePath={tile.filePath} />
       case 'note':
-        return <LazyNoteTile filePath={tile.filePath} />
+        return <LazyNoteTile tileId={tile.id} filePath={tile.filePath} workspacePath={workspace?.path} />
       case 'image':
         return tile.filePath ? <LazyImageTile filePath={tile.filePath} /> : null
       case 'browser':
         return (
-          <LazyBrowserTile tileId={tile.id} workspaceId={workspace?.id ?? ''} initialUrl={tile.filePath ?? ''} width={tile.width} height={tile.height} zIndex={tile.zIndex} isInteracting={isTileInteracting} />
+          <LazyBrowserTile
+            tileId={tile.id}
+            workspaceId={workspace?.id ?? ''}
+            initialUrl={tile.filePath ?? ''}
+            width={tile.width}
+            height={tile.height}
+            zIndex={tile.zIndex}
+            isInteracting={isTileInteracting}
+            connectedPeers={negotiatedDiscoveryState.byTileConnections.get(tile.id)?.map(link => link.peerId) ?? []}
+            hideNavbar={tile.hideNavbar}
+          />
         )
       case 'kanban':
         return (
@@ -1552,7 +2656,17 @@ function App(): JSX.Element {
             }}
           />
         )
-      case 'chat':
+      case 'chat': {
+        const chatPeers = (negotiatedDiscoveryState.byTileConnections.get(tile.id) ?? []).map(peer => {
+          const extActions = extensionActionRegistry.get(peer.peerId)
+          const peerTile = tileByIdMap.get(peer.peerId)
+          return {
+            ...peer,
+            actions: extActions,
+            filePath: peerTile?.filePath,
+            label: peerTile?.label,
+          }
+        })
         return (
           <LazyChatTile
             tileId={tile.id}
@@ -1561,8 +2675,27 @@ function App(): JSX.Element {
             width={tile.width}
             height={tile.height}
             settings={settings}
+            isConnected={negotiatedDiscoveryState.connectedTileIds.has(tile.id)}
+            isAutoConnected={tile.autoAgentMode && negotiatedDiscoveryState.connectedTileIds.has(tile.id)}
+            connectedPeers={chatPeers}
           />
         )
+      }
+      case 'files': {
+        const fileLinks = negotiatedDiscoveryState.byTileConnections.get(tile.id) ?? []
+        const terminalPeerIds = fileLinks.filter(l => l.peerType === 'terminal').map(l => l.peerId)
+        return (
+          <LazyFileExplorerTile
+            tileId={tile.id}
+            workspacePath={workspace?.path ?? ''}
+            width={tile.width}
+            height={tile.height}
+            onOpenFile={handleOpenFile}
+            selectedFilePath={sidebarSelectedPath}
+            connectedTerminalIds={terminalPeerIds}
+          />
+        )
+      }
       default:
         if (tile.type.startsWith('ext:')) {
           return (
@@ -1573,6 +2706,15 @@ function App(): JSX.Element {
               height={tile.height}
               workspaceId={workspace?.id ?? ''}
               workspacePath={workspace?.path ?? ''}
+              isInteracting={isTileInteracting}
+              connectedPeers={negotiatedDiscoveryState.byTileConnections.get(tile.id)?.map(link => link.peerId) ?? []}
+              onCreateTile={(type, opts) => addTile(
+                type as TileType,
+                opts?.filePath,
+                opts?.x !== undefined && opts?.y !== undefined ? { x: opts.x, y: opts.y } : undefined,
+                { hideTitlebar: opts?.hideTitlebar, hideNavbar: opts?.hideNavbar },
+              )}
+              onActionsChanged={(tId, actions) => { console.log('[App] Extension actions registered:', tId, actions.map(a => a.name)); extensionActionRegistry.set(tId, actions); setExtActionsVersion(v => v + 1) }}
             />
           )
         }
@@ -1580,20 +2722,231 @@ function App(): JSX.Element {
     }
   }
 
-  // Set of tile IDs currently in the panel tree — these should not render on canvas
+  // Set of tile IDs that should not render on canvas (in fullscreen panel OR in a layout group)
   const panelTileIds = React.useMemo(() => {
-    if (!panelLayout) return new Set<string>()
-    return new Set(getAllTileIds(panelLayout))
-  }, [panelLayout])
+    const ids = new Set<string>()
+    if (panelLayout) getAllTileIds(panelLayout).forEach(id => ids.add(id))
+    for (const g of groups) {
+      if (g.layoutMode) {
+        tiles.filter(t => t.groupId === g.id).forEach(t => ids.add(t.id))
+      }
+    }
+    return ids
+  }, [panelLayout, groups, tiles])
+
+  useEffect(() => {
+    panelTileIdsRef.current = panelTileIds
+  }, [panelTileIds])
+
+  const tileByIdMap = React.useMemo(() => new Map(tiles.map(tile => [tile.id, tile])), [tiles])
+
+  const discoveryFocusTileId = React.useMemo(() => {
+    if (dragState.type === 'tile' || dragState.type === 'resize') return dragState.tileId
+    return selectedTileId
+  }, [dragState, selectedTileId])
+
+  const discoveryPreview = React.useMemo(() => {
+    if (!discoveryFocusTileId) return null
+    const gridStep = Math.max(8, settings.gridSize || settings.gridSpacingSmall || GRID)
+    const maxDistance = getDiscoveryMaxDistance(settings.gridSpacingLarge || DEFAULT_SETTINGS.gridSpacingLarge)
+    return findDiscoveryMatch(discoveryFocusTileId, tiles, panelTileIds, gridStep, maxDistance)
+  }, [discoveryFocusTileId, panelTileIds, settings.gridSize, settings.gridSpacingSmall, settings.gridSpacingLarge, tiles])
+
+  const negotiatedDiscoveryState = React.useMemo(() => {
+    const gridStep = Math.max(8, settings.gridSize || settings.gridSpacingSmall || GRID)
+    const maxDistance = getDiscoveryMaxDistance(settings.gridSpacingLarge || DEFAULT_SETTINGS.gridSpacingLarge)
+    const routes = new Map<string, { key: string; route: { x: number; y: number }[]; distance: number }>()
+
+    // Pass empty set — panel/layout tiles must stay in the graph so peers keep their tools/connections.
+    // Visual hiding is handled at ambientDiscoveryRoutes level only.
+    const connectionGraph = findDiscoveryConnections(tiles, new Set(), gridStep, maxDistance)
+
+    // Remove suppressed connections (deleted by user, cleared when tiles move)
+    for (const key of suppressedConnections) {
+      const [a, b] = key.split('::')
+      const aLinks = connectionGraph.byTile.get(a)
+      if (aLinks) connectionGraph.byTile.set(a, aLinks.filter(l => l.peerId !== b))
+      const bLinks = connectionGraph.byTile.get(b)
+      if (bLinks) connectionGraph.byTile.set(b, bLinks.filter(l => l.peerId !== a))
+      // Remove route
+      routes.delete(key)
+    }
+
+    // Inject locked connections — these persist even when tiles move apart
+    const tileMap = new Map(tiles.map(t => [t.id, t]))
+    if (lockedConnections.length > 0) console.log('[Discovery] Injecting locked connections:', lockedConnections.length)
+    for (const lc of lockedConnections) {
+      const src = tileMap.get(lc.sourceTileId)
+      const tgt = tileMap.get(lc.targetTileId)
+      if (!src || !tgt) continue
+      // Already connected by proximity — skip
+      const existingLinks = connectionGraph.byTile.get(src.id)
+      if (existingLinks?.some(l => l.peerId === tgt.id)) continue
+      // Add bidirectional link
+      const srcCaps = getTileCapabilities(src)
+      const tgtCaps = getTileCapabilities(tgt)
+      const srcRef = getTileSpatialReference(src, gridStep)
+      const tgtRef = getTileSpatialReference(tgt, gridStep)
+      const pair = findBestAnchorPair(srcRef.anchors, tgtRef.anchors)
+      if (!pair) continue
+      const route = getOrthogonalRoute(pair.source, pair.target, gridStep)
+      const dist = pair.distance
+      const srcLink: DiscoveryCapabilityLink = { peerId: tgt.id, peerType: tgt.type, distance: dist, route, capabilities: [...tgtCaps.provides.map(c => `cap:${c}`), ...srcCaps.accepts.map(c => `accept:${c}`)], lastSeen: Date.now() }
+      const tgtLink: DiscoveryCapabilityLink = { peerId: src.id, peerType: src.type, distance: dist, route: [...route].reverse(), capabilities: [...srcCaps.provides.map(c => `cap:${c}`), ...tgtCaps.accepts.map(c => `accept:${c}`)], lastSeen: Date.now() }
+      connectionGraph.connectedTileIds.add(src.id)
+      connectionGraph.connectedTileIds.add(tgt.id)
+      const srcLinks = connectionGraph.byTile.get(src.id) ?? []
+      srcLinks.push(srcLink)
+      connectionGraph.byTile.set(src.id, srcLinks)
+      const tgtLinks = connectionGraph.byTile.get(tgt.id) ?? []
+      tgtLinks.push(tgtLink)
+      connectionGraph.byTile.set(tgt.id, tgtLinks)
+      // Add route for rendering
+      const key = [src.id, tgt.id].sort().join('::')
+      if (!routes.has(key)) routes.set(key, { key, route, distance: dist })
+    }
+
+    for (const tile of tiles) {
+      const discovery = findDiscoveryMatch(tile.id, tiles, new Set(), gridStep, maxDistance)
+      if (!discovery?.match) continue
+
+      const key = [tile.id, discovery.match.tile.id].sort().join('::')
+      const existing = routes.get(key)
+      if (!existing || discovery.match.distance < existing.distance) {
+        routes.set(key, {
+          key,
+          route: discovery.match.route,
+          distance: discovery.match.distance,
+        })
+      }
+    }
+
+    return {
+      connectedTileIds: connectionGraph.connectedTileIds,
+      byTileConnections: connectionGraph.byTile,
+      ambientRoutes: Array.from(routes.values()).map(({ key, route }) => ({ key, route })),
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelTileIds, settings.gridSize, settings.gridSpacingSmall, settings.gridSpacingLarge, tiles, lockedConnections, suppressedConnections, extActionsVersion])
+
+  // Push peer updates to terminal tiles when discovery state changes
+  const prevTerminalPeersRef = useRef<Map<string, string>>(new Map())
+  useEffect(() => {
+    if (!workspace?.path) return
+    const validTools = new Set(getAllNodeTools().map(t => t.name))
+    const newMap = new Map<string, string>()
+
+    for (const tile of tiles) {
+      if (tile.type !== 'terminal') continue
+      const links = negotiatedDiscoveryState.byTileConnections.get(tile.id)
+      const peers = (links ?? []).map(link => {
+        const tools: string[] = []
+        for (const cap of link.capabilities) {
+          if (!cap.startsWith('tool:')) continue
+          const name = stripCapabilityPrefix(cap)
+          if (name && validTools.has(name)) tools.push(name)
+        }
+        return { peerId: link.peerId, peerType: link.peerType, tools }
+      })
+      // Serialize to detect changes without deep-compare
+      const key = JSON.stringify(peers)
+      newMap.set(tile.id, key)
+
+      if (prevTerminalPeersRef.current.get(tile.id) !== key) {
+        window.electron.terminal.updatePeers(tile.id, workspace.path, peers)
+      }
+    }
+
+    // Clean up peers.md for terminals that lost all peers
+    for (const [tileId, _prev] of prevTerminalPeersRef.current) {
+      if (!newMap.has(tileId)) {
+        window.electron.terminal.updatePeers(tileId, workspace!.path, [])
+      }
+    }
+
+    prevTerminalPeersRef.current = newMap
+  }, [negotiatedDiscoveryState.byTileConnections, tiles, workspace?.path])
+
+  // ─── Locked connection helpers ──────────────────────────────────────────────
+  const isConnectionLocked = useCallback((tileA: string, tileB: string) => {
+    const [a, b] = [tileA, tileB].sort()
+    return lockedConnections.some(lc => {
+      const [la, lb] = [lc.sourceTileId, lc.targetTileId].sort()
+      return la === a && lb === b
+    })
+  }, [lockedConnections])
+
+  const toggleConnectionLock = useCallback((tileA: string, tileB: string) => {
+    const [a, b] = [tileA, tileB].sort()
+    setLockedConnections(prev => {
+      const idx = prev.findIndex(lc => {
+        const [la, lb] = [lc.sourceTileId, lc.targetTileId].sort()
+        return la === a && lb === b
+      })
+      const next = idx >= 0
+        ? prev.filter((_, i) => i !== idx)
+        : [...prev, { sourceTileId: a, targetTileId: b }]
+      lockedConnectionsRef.current = next
+      console.log('[Lock]', idx >= 0 ? 'Unlocked' : 'Locked', a, b, 'total:', next.length)
+      setTimeout(() => persistCanvasState(tilesRef.current, viewportRef.current, nextZIndexRef.current, groupsRef.current), 0)
+      return next
+    })
+  }, [persistCanvasState])
+
+  const deleteConnection = useCallback((tileA: string, tileB: string) => {
+    const [a, b] = [tileA, tileB].sort()
+    const key = `${a}::${b}`
+    // Remove from locked connections
+    setLockedConnections(prev => {
+      const next = prev.filter(lc => {
+        const [la, lb] = [lc.sourceTileId, lc.targetTileId].sort()
+        return !(la === a && lb === b)
+      })
+      lockedConnectionsRef.current = next
+      setTimeout(() => persistCanvasState(tilesRef.current, viewportRef.current, nextZIndexRef.current, groupsRef.current), 0)
+      return next
+    })
+    // Suppress proximity auto-reconnect until tiles move
+    setSuppressedConnections(prev => new Set(prev).add(key))
+  }, [persistCanvasState])
+
+  const lockedConnectionKeys = React.useMemo(() => {
+    return new Set(lockedConnections.map(lc => [lc.sourceTileId, lc.targetTileId].sort().join('::')))
+  }, [lockedConnections])
+
+  const ambientDiscoveryRoutes = React.useMemo(() => {
+    // Never show routes where either endpoint is hidden (inside a layout or fullview panel)
+    const visibleRoutes = negotiatedDiscoveryState.ambientRoutes.filter(r => {
+      const [a, b] = r.key.split('::')
+      return !panelTileIds.has(a) && !panelTileIds.has(b)
+    })
+    if (discoveryFocusTileId) {
+      return visibleRoutes.filter(r => lockedConnectionKeys.has(r.key))
+    }
+    return visibleRoutes
+  }, [discoveryFocusTileId, negotiatedDiscoveryState, lockedConnectionKeys, panelTileIds])
 
   const isDraggingCanvas = dragState.type === 'pan'
 
-  const appFonts = React.useMemo(() => ({
-    sans: settings.fonts?.sans?.family ?? settings.primaryFont?.family ?? SANS_DEFAULT,
-    mono: settings.fonts?.mono?.family ?? settings.monoFont?.family ?? MONO_DEFAULT,
-    size: settings.fonts?.sans?.size ?? settings.primaryFont?.size ?? 13,
-    monoSize: settings.fonts?.mono?.size ?? settings.monoFont?.size ?? 13,
-  }), [settings.fonts, settings.primaryFont, settings.monoFont])
+  const appFonts = React.useMemo(() => {
+    const p = settings.fonts?.primary ?? settings.primaryFont
+    const s = settings.fonts?.secondary ?? settings.secondaryFont
+    const m = settings.fonts?.mono ?? settings.monoFont
+    return {
+      primary: p?.family ?? SANS_DEFAULT,
+      secondary: s?.family ?? SANS_DEFAULT,
+      mono: m?.family ?? MONO_DEFAULT,
+      size: p?.size ?? 13,
+      lineHeight: p?.lineHeight ?? 1.5,
+      weight: p?.weight ?? 400,
+      secondarySize: s?.size ?? 11,
+      secondaryLineHeight: s?.lineHeight ?? 1.4,
+      secondaryWeight: s?.weight ?? 400,
+      monoSize: m?.size ?? 13,
+      monoLineHeight: m?.lineHeight ?? 1.5,
+      monoWeight: m?.weight ?? 400,
+    }
+  }, [settings.fonts, settings.primaryFont, settings.secondaryFont, settings.monoFont])
 
   useEffect(() => {
     if (sidebarResizing) {
@@ -1605,95 +2958,329 @@ function App(): JSX.Element {
     return () => window.clearTimeout(timer)
   }, [sidebarResizing])
 
+  useEffect(() => {
+    void window.electron?.window?.setSidebarCollapsed?.(sidebarCollapsed).catch(() => {})
+  }, [sidebarCollapsed])
+
   const fontTokens = React.useMemo(() => settings.fonts, [settings.fonts])
-  const theme = React.useMemo(() => getThemeById(settings.themeId), [settings.themeId])
+
+  useEffect(() => {
+    void window.electron?.appearance?.shouldUseDark?.().then(setSystemPrefersDark).catch(() => {})
+    const unsub = window.electron?.appearance?.onUpdated?.(p => setSystemPrefersDark(p.shouldUseDark))
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    const mode = settings.appearance ?? 'dark'
+    void window.electron?.appearance?.setThemeSource?.(mode)
+  }, [settings.appearance])
+
+  const effectiveThemeId = React.useMemo(
+    () => resolveEffectiveThemeId(settings.appearance, settings.themeId, systemPrefersDark),
+    [settings.appearance, settings.themeId, systemPrefersDark],
+  )
+  const theme = React.useMemo(() => getThemeById(effectiveThemeId), [effectiveThemeId])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    setBrandPrefsReadyTheme(null)
+    try {
+      const savedWordmark = window.localStorage.getItem(`${BRAND_WORDMARK_CACHE_KEY}:${effectiveThemeId}`)
+      const savedPalette = window.localStorage.getItem(`${BRAND_WORDMARK_PALETTE_CACHE_KEY}:${effectiveThemeId}`)
+      const nextWordmark = savedWordmark === null ? 1 : Number.parseInt(savedWordmark, 10)
+      const nextPalette = savedPalette === null ? 0 : Number.parseInt(savedPalette, 10)
+      setBrandWordmarkIndex(Number.isFinite(nextWordmark) && nextWordmark >= 0 ? nextWordmark : 1)
+      setBrandPaletteIndex(Number.isFinite(nextPalette) && nextPalette >= 0 ? nextPalette : 0)
+    } catch {
+      setBrandWordmarkIndex(1)
+      setBrandPaletteIndex(0)
+    }
+    setBrandPrefsReadyTheme(effectiveThemeId)
+  }, [effectiveThemeId])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || brandPrefsReadyTheme !== effectiveThemeId) return
+    try {
+      window.localStorage.setItem(`${BRAND_WORDMARK_CACHE_KEY}:${effectiveThemeId}`, String(brandWordmarkIndex))
+      window.localStorage.setItem(`${BRAND_WORDMARK_PALETTE_CACHE_KEY}:${effectiveThemeId}`, String(brandPaletteIndex))
+    } catch {}
+  }, [brandWordmarkIndex, brandPaletteIndex, brandPrefsReadyTheme, effectiveThemeId])
+  const brandWordmarks = React.useMemo(() => [
+    [
+      '░█▀▀░█▀█░█▀▄░█▀▀░█▀▀░█░█░█▀▄░█▀▀',
+      '░█░░░█░█░█░█░█▀▀░▀▀█░█░█░█▀▄░█▀▀',
+      '░▀▀▀░▀▀▀░▀▀░░▀▀▀░▀▀▀░▀▀▀░▀░▀░▀░░',
+    ],
+    [
+      ' ██████╗ ██████╗ ██████╗ ███████╗███████╗██╗   ██╗██████╗ ███████╗',
+      '██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔════╝██║   ██║██╔══██╗██╔════╝',
+      '██║     ██║   ██║██║  ██║█████╗  ███████╗██║   ██║██████╔╝█████╗  ',
+      '██║     ██║   ██║██║  ██║██╔══╝  ╚════██║██║   ██║██╔══██╗██╔══╝  ',
+      '╚██████╗╚██████╔╝██████╔╝███████╗███████║╚██████╔╝██║  ██║██║     ',
+      ' ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝     ',
+    ],
+    [
+      ' ██████  ██████  ██████  ███████ ███████ ██    ██ ██████  ███████ ',
+      '██      ██    ██ ██   ██ ██      ██      ██    ██ ██   ██ ██      ',
+      '██      ██    ██ ██   ██ █████   ███████ ██    ██ ██████  █████   ',
+      '██      ██    ██ ██   ██ ██           ██ ██    ██ ██   ██ ██      ',
+      ' ██████  ██████  ██████  ███████ ███████  ██████  ██   ██ ██      ',
+    ],
+    [
+      '        CCCCCCCCCCCCC     OOOOOOOOO     DDDDDDDDDDDDD      EEEEEEEEEEEEEEEEEEEEEE   SSSSSSSSSSSSSSS UUUUUUUU     UUUUUUUURRRRRRRRRRRRRRRRR   FFFFFFFFFFFFFFFFFFFFFF',
+      '     CCC::::::::::::C   OO:::::::::OO   D::::::::::::DDD   E::::::::::::::::::::E SS:::::::::::::::SU::::::U     U::::::UR::::::::::::::::R  F::::::::::::::::::::F',
+      '   CC:::::::::::::::C OO:::::::::::::OO D:::::::::::::::DD E::::::::::::::::::::ES:::::SSSSSS::::::SU::::::U     U::::::UR::::::RRRRRR:::::R F::::::::::::::::::::F',
+      '  C:::::CCCCCCCC::::CO:::::::OOO:::::::ODDD:::::DDDDD:::::DEE::::::EEEEEEEEE::::ES:::::S     SSSSSSSUU:::::U     U:::::UURR:::::R     R:::::RFF::::::FFFFFFFFF::::F',
+      ' C:::::C       CCCCCCO::::::O   O::::::O  D:::::D    D:::::D E:::::E       EEEEEES:::::S             U:::::U     U:::::U   R::::R     R:::::R  F:::::F       FFFFFF',
+      'C:::::C              O:::::O     O:::::O  D:::::D     D:::::DE:::::E             S:::::S             U:::::D     D:::::U   R::::R     R:::::R  F:::::F             ',
+      'C:::::C              O:::::O     O:::::O  D:::::D     D:::::DE::::::EEEEEEEEEE    S::::SSSS          U:::::D     D:::::U   R::::RRRRRR:::::R   F::::::FFFFFFFFFF   ',
+      'C:::::C              O:::::O     O:::::O  D:::::D     D:::::DE:::::::::::::::E     SS::::::SSSSS     U:::::D     D:::::U   R:::::::::::::RR    F:::::::::::::::F   ',
+      'C:::::C              O:::::O     O:::::O  D:::::D     D:::::DE:::::::::::::::E       SSS::::::::SS   U:::::D     D:::::U   R::::RRRRRR:::::R   F:::::::::::::::F   ',
+      'C:::::C              O:::::O     O:::::O  D:::::D     D:::::DE::::::EEEEEEEEEE          SSSSSS::::S  U:::::D     D:::::U   R::::R     R:::::R  F::::::FFFFFFFFFF   ',
+      'C:::::C              O:::::O     O:::::O  D:::::D     D:::::DE:::::E                         S:::::S U:::::D     D:::::U   R::::R     R:::::R  F:::::F             ',
+      ' C:::::C       CCCCCCO::::::O   O::::::O  D:::::D    D:::::D E:::::E       EEEEEE            S:::::S U::::::U   U::::::U   R::::R     R:::::R  F:::::F             ',
+      '  C:::::CCCCCCCC::::CO:::::::OOO:::::::ODDD:::::DDDDD:::::DEE::::::EEEEEEEE:::::ESSSSSSS     S:::::S U:::::::UUU:::::::U RR:::::R     R:::::RFF:::::::FF           ',
+      '   CC:::::::::::::::C OO:::::::::::::OO D:::::::::::::::DD E::::::::::::::::::::ES::::::SSSSSS:::::S  UU:::::::::::::UU  R::::::R     R:::::RF::::::::FF           ',
+      '     CCC::::::::::::C   OO:::::::::OO   D::::::::::::DDD   E::::::::::::::::::::ES:::::::::::::::SS     UU:::::::::UU    R::::::R     R:::::RF::::::::FF           ',
+      '        CCCCCCCCCCCCC     OOOOOOOOO     DDDDDDDDDDDDD      EEEEEEEEEEEEEEEEEEEEEE SSSSSSSSSSSSSSS         UUUUUUUUU      RRRRRRRR     RRRRRRRFFFFFFFFFFF           ',
+    ],
+    [
+      '__________  ____  ___________ __  ______  ______',
+      '  / ____/ __ \/ __ \/ ____/ ___// / / / __ \/ ____/',
+      ' / /   / / / / / / / __/  \\__ \/ / / / /_/ / /_    ',
+      '/ /___/ /_/ / /_/ / /___ ___/ / /_/ / _, _/ __/    ',
+      '\\____/\\____/_____/_____//____/\\____/_/ |_/_/     ',
+    ],
+    [
+      ' _________  ___  __________  _____  ____',
+      ' / ___/ __ \/ _ \/ __/ __/ / / / _ \/ __/',
+      '/ /__/ /_/ / // / _/_\\ \/ /_/ / , _/ _/  ',
+      '\\___/\\____/____/___/___/\\____/_/|_/_/   ',
+    ],
+    [
+      '░██████    ░██████   ░███████   ░██████████   ░██████   ░██     ░██ ░█████████  ░██████████',
+      ' ░██   ░██  ░██   ░██  ░██   ░██  ░██          ░██   ░██  ░██     ░██ ░██     ░██ ░██        ',
+      '░██        ░██     ░██ ░██    ░██ ░██         ░██         ░██     ░██ ░██     ░██ ░██        ',
+      '░██        ░██     ░██ ░██    ░██ ░█████████   ░████████  ░██     ░██ ░█████████  ░█████████ ',
+      '░██        ░██     ░██ ░██    ░██ ░██                 ░██ ░██     ░██ ░██   ░██   ░██        ',
+      ' ░██   ░██  ░██   ░██  ░██   ░██  ░██          ░██   ░██   ░██   ░██  ░██    ░██  ░██        ',
+      '  ░██████    ░██████   ░███████   ░██████████   ░██████     ░██████   ░██     ░██ ░██        ',
+    ],
+    [
+      '_____  ____   _____   ______   _____  _    _  _____   ______ ',
+      '  / ____|/ __ \\ |  __ \\ |  ____| / ____|| |  | ||  __ \\ |  ____|',
+      ' | |    | |  | || |  | || |__   | (___  | |  | || |__) || |__   ',
+      ' | |    | |  | || |  | ||  __|   \\___ \\ | |  | ||  _  / |  __|  ',
+      ' | |____| |__| || |__| || |____  ____) || |__| || | \\ \\ | |     ',
+      '  \\_____|\\____/ |_____/ |______||_____/  \\____/ |_|  \\_\\|_|     ',
+    ],
+    [
+      '▄█████ ▄████▄ ████▄  ██████ ▄█████ ██  ██ █████▄  ██████ ',
+      '██     ██  ██ ██  ██ ██▄▄   ▀▀▀▄▄▄ ██  ██ ██▄▄██▄ ██▄▄   ',
+      '▀█████ ▀████▀ ████▀  ██▄▄▄▄ █████▀ ▀████▀ ██   ██ ██     ',
+    ],
+    [
+      '▄▄▄▄▄▄▄   ▄▄▄▄▄   ▄▄▄▄▄▄    ▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄ ▄▄▄  ▄▄▄ ▄▄▄▄▄▄▄    ▄▄▄▄▄▄▄ ',
+      '███▀▀▀▀▀ ▄███████▄ ███▀▀██▄ ███▀▀▀▀▀ █████▀▀▀ ███  ███ ███▀▀███▄ ███▀▀▀▀▀ ',
+      '███      ███   ███ ███  ███ ███▄▄     ▀████▄  ███  ███ ███▄▄███▀ ███▄▄    ',
+      '███      ███▄▄▄███ ███  ███ ███         ▀████ ███▄▄███ ███▀▀██▄  ███▀▀    ',
+      '▀███████  ▀█████▀  ██████▀  ▀███████ ███████▀ ▀██████▀ ███  ▀███ ███      ',
+    ],
+    [
+      '▄████████  ▄██████▄  ████████▄     ▄████████    ▄████████ ███    █▄     ▄████████    ▄████████ ',
+      '███    ███ ███    ███ ███   ▀███   ███    ███   ███    ███ ███    ███   ███    ███   ███    ███ ',
+      '███    █▀  ███    ███ ███    ███   ███    █▀    ███    █▀  ███    ███   ███    ███   ███    █▀  ',
+      '███        ███    ███ ███    ███  ▄███▄▄▄       ███        ███    ███  ▄███▄▄▄▄██▀  ▄███▄▄▄     ',
+      '███        ███    ███ ███    ███ ▀▀███▀▀▀     ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ▀▀███▀▀▀     ',
+      '███    █▄  ███    ███ ███    ███   ███    █▄           ███ ███    ███ ▀███████████   ███        ',
+      '███    ███ ███    ███ ███   ▄███   ███    ███    ▄█    ███ ███    ███   ███    ███   ███        ',
+      '████████▀   ▀██████▀  ████████▀    ██████████  ▄████████▀  ████████▀    ███    ███   ███        ',
+      '                                                                        ███    ███              ',
+    ],
+    [
+      '▄▄▄▄     ▄▄▄▄    ▄▄▄▄▄     ▄▄▄▄▄▄▄▄    ▄▄▄▄    ▄▄    ▄▄  ▄▄▄▄▄▄    ▄▄▄▄▄▄▄▄ ',
+      '  ██▀▀▀▀█   ██▀▀██   ██▀▀▀██   ██▀▀▀▀▀▀  ▄█▀▀▀▀█   ██    ██  ██▀▀▀▀██  ██▀▀▀▀▀▀ ',
+      ' ██▀       ██    ██  ██    ██  ██        ██▄       ██    ██  ██    ██  ██       ',
+      ' ██        ██    ██  ██    ██  ███████    ▀████▄   ██    ██  ███████   ███████  ',
+      ' ██▄       ██    ██  ██    ██  ██             ▀██  ██    ██  ██  ▀██▄  ██       ',
+      '  ██▄▄▄▄█   ██▄▄██   ██▄▄▄██   ██▄▄▄▄▄▄  █▄▄▄▄▄█▀  ▀██▄▄██▀  ██    ██  ██       ',
+      '    ▀▀▀▀     ▀▀▀▀    ▀▀▀▀▀     ▀▀▀▀▀▀▀▀   ▀▀▀▀▀      ▀▀▀▀    ▀▀    ▀▀▀ ▀▀       ',
+    ],
+    [
+      '▄▄▄   ▄▄▄▄  ▄▄▄▄   ▄▄▄▄▄▄  ▄▄▄▄  ▄    ▄ ▄▄▄▄▄  ▄▄▄▄▄▄',
+      ' ▄▀   ▀ ▄▀  ▀▄ █   ▀▄ █      █▀   ▀ █    █ █   ▀█ █     ',
+      ' █      █    █ █    █ █▄▄▄▄▄ ▀█▄▄▄  █    █ █▄▄▄▄▀ █▄▄▄▄▄',
+      ' █      █    █ █    █ █          ▀█ █    █ █   ▀▄ █     ',
+      '  ▀▄▄▄▀  █▄▄█  █▄▄▄▀  █▄▄▄▄▄ ▀▄▄▄█▀ ▀▄▄▄▄▀ █    ▀ █     ',
+    ],
+    [
+      '.o88b.  .d88b.  d8888b. d88888b .d8888. db    db d8888b. d88888b ',
+      'd8P  Y8 .8P  Y8. 88  `8D 88\'     88\'  YP 88    88 88  `8D 88\'     ',
+      '8P      88    88 88   88 88ooooo `8bo.   88    88 88oobY\' 88ooo   ',
+      '8b      88    88 88   88 88~~~~~   `Y8b. 88    88 88`8b   88~~~   ',
+      'Y8b  d8 `8b  d8\' 88  .8D 88.     db   8D 88b  d88 88 `88. 88      ',
+      ' `Y88P\'  `Y88P\'  Y8888D\' Y88888P `8888Y\' ~Y8888P\' 88   YD YP      ',
+    ],
+    [
+      '.d8888b.   .d88888b.  8888888b.  8888888888 .d8888b.  888     888 8888888b.  8888888888 ',
+      'd88P  Y88b d88P" "Y88b 888  "Y88b 888       d88P  Y88b 888     888 888   Y88b 888        ',
+      '888    888 888     888 888    888 888       Y88b.      888     888 888    888 888        ',
+      '888        888     888 888    888 8888888    "Y888b.   888     888 888   d88P 8888888    ',
+      '888        888     888 888    888 888           "Y88b. 888     888 8888888P"  888        ',
+      '888    888 888     888 888    888 888             "888 888     888 888 T88b   888        ',
+      'Y88b  d88P Y88b. .d88P 888  .d88P 888       Y88b  d88P Y88b. .d88P 888  T88b  888        ',
+      ' "Y8888P"   "Y88888P"  8888888P"  8888888888 "Y8888P"   "Y88888P"  888   T88b 888        ',
+    ],
+    [
+      '_______ _______ ______   _______ _______ ___ ___ _______ _______ ',
+      ' |   _   |   _   |   _  \\ |   _   |   _   |   Y   |   _   |   _   |',
+      ' |.  1___|.  |   |.  |   \\|.  1___|   1___|.  |   |.  l   |.  1___|',
+      ' |.  |___|.  |   |.  |    |.  __)_|____   |.  |   |.  _   |.  __)  ',
+      ' |:  1   |:  1   |:  1    |:  1   |:  1   |:  1   |:  |   |:  |    ',
+      ' |::.. . |::.. . |::.. . /|::.. . |::.. . |::.. . |::.|:. |::.|    ',
+      ' `-------`-------`------\' `-------`-------`-------`--- ---`---\'    ',
+    ],
+    [
+      '█████████     ███████    ██████████   ██████████  █████████  █████  █████ ███████████   ███████████',
+      '  ███░░░░░███  ███░░░░░███ ░░███░░░░███ ░░███░░░░░█ ███░░░░░███░░███  ░░███ ░░███░░░░░███ ░░███░░░░░░█',
+      ' ███     ░░░  ███     ░░███ ░███   ░░███ ░███  █ ░ ░███    ░░░  ░███   ░███  ░███    ░███  ░███   █ ░ ',
+      '░███         ░███      ░███ ░███    ░███ ░██████   ░░█████████  ░███   ░███  ░██████████   ░███████   ',
+      '░███         ░███      ░███ ░███    ░███ ░███░░█    ░░░░░░░░███ ░███   ░███  ░███░░░░░███  ░███░░░█   ',
+      '░░███     ███░░███     ███  ░███    ███  ░███ ░   █ ███    ░███ ░███   ░███  ░███    ░███  ░███  ░    ',
+      ' ░░█████████  ░░░███████░   ██████████   ██████████░░█████████  ░░████████   █████   █████ █████      ',
+      '  ░░░░░░░░░     ░░░░░░░    ░░░░░░░░░░   ░░░░░░░░░░  ░░░░░░░░░    ░░░░░░░░   ░░░░░   ░░░░░ ░░░░░      ',
+    ],
+    [
+      'MM\'""""\'YMM MMP"""""YMM M""""""\'YMM MM""""""""`M MP""""""`MM M""MMMMM""M MM"""""""`MM MM""""""""`M ',
+      'M\' .mmm. `M M\' .mmm. `M M  mmmm. `M MM  mmmmmmmM M  mmmmm..M M  MMMMM  M MM  mmmm,  M MM  mmmmmmmM ',
+      'M  MMMMMooM M  MMMMM  M M  MMMMM  M M`      MMMM M.      `YM M  MMMMM  M M\'        .M M\'      MMMM ',
+      'M  MMMMMMMM M  MMMMM  M M  MMMMM  M MM  MMMMMMMM MMMMMMM.  M M  MMMMM  M MM  MMMb. "M MM  MMMMMMMM ',
+      'M. `MMM\' .M M. `MMM\' .M M  MMMM\' .M MM  MMMMMMMM M. .MMM\'  M M  `MMM\'  M MM  MMMMM  M MM  MMMMMMMM ',
+      'MM.     .dM MMb     dMM M       .MM MM        .M Mb.     .dM Mb       dM MM  MMMMM  M MM  MMMMMMMM ',
+      'MMMMMMMMMMM MMMMMMMMMMM MMMMMMMMMMM MMMMMMMMMMMM MMMMMMMMMMM MMMMMMMMMMM MMMMMMMMMMMM MMMMMMMMMMMM ',
+    ],
+    [
+      '.aMMMb  .aMMMb  dMMMMb  dMMMMMP .dMMMb  dMP dMP dMMMMb  dMMMMMP ',
+      '  dMP"VMP dMP"dMP dMP VMP dMP     dMP" VP dMP dMP dMP.dMP dMP      ',
+      ' dMP     dMP dMP dMP dMP dMMMP    VMMMb  dMP dMP dMMMMK" dMMMP     ',
+      'dMP.aMP dMP.aMP dMP.aMP dMP     dP .dMP dMP.aMP dMP"AMF dMP        ',
+      'VMMMP"  VMMMP" dMMMMP" dMMMMMP  VMMMP"  VMMMP" dMP dMP dMP        ',
+    ],
+  ], [])
+  const brandPalettes = React.useMemo(() => theme.mode === 'dark'
+    ? [
+        ['#8bd5ff', '#6db8ff', '#7ee7c8', '#6db8ff', '#8bd5ff', '#7ee7c8'],
+        ['#ffd166', '#ff9f1c', '#ff6b6b', '#c77dff', '#7bdff2', '#72efdd'],
+        ['#f8fafc', '#cbd5e1', '#94a3b8', '#38bdf8', '#22c55e', '#f59e0b'],
+        ['#ffadad', '#ffd6a5', '#fdffb6', '#caffbf', '#9bf6ff', '#bdb2ff'],
+        ['#e879f9', '#a78bfa', '#60a5fa', '#34d399', '#fbbf24', '#fb7185'],
+        ['#f5f5f5', '#e5e5e5', '#d4d4d4', '#fafafa', '#e5e7eb', '#ffffff'],
+        ['#9ca3af', '#6b7280', '#4b5563', '#d1d5db', '#9ca3af', '#6b7280'],
+        ['#ffffff', '#ffffff', '#ffffff', '#ffffff', '#ffffff', '#ffffff'],
+        ['#000000', '#000000', '#000000', '#000000', '#000000', '#000000'],
+      ]
+    : [
+        ['#67b8ff', '#4aa3ff', '#8bd5ff', '#4aa3ff', '#67b8ff', '#8bd5ff'],
+        ['#8a2b06', '#c2410c', '#b91c1c', '#7c3aed', '#0369a1', '#0f766e'],
+        ['#111827', '#374151', '#6b7280', '#2563eb', '#059669', '#d97706'],
+        ['#9f1239', '#c2410c', '#ca8a04', '#15803d', '#0f766e', '#4338ca'],
+        ['#be185d', '#9333ea', '#2563eb', '#0891b2', '#16a34a', '#ea580c'],
+        ['#404040', '#525252', '#737373', '#a3a3a3', '#d4d4d4', '#171717'],
+        ['#111111', '#000000', '#1f2937', '#374151', '#4b5563', '#6b7280'],
+        ['#ffffff', '#ffffff', '#ffffff', '#ffffff', '#ffffff', '#ffffff'],
+        ['#000000', '#000000', '#000000', '#000000', '#000000', '#000000'],
+      ], [theme.mode])
+  const activeBrandWordmark = brandWordmarks[brandWordmarkIndex % brandWordmarks.length]
+  const activeBrandPalette = brandPalettes[brandPaletteIndex % brandPalettes.length]
+  const activeBrandWordmarkScale = activeBrandWordmark[0]
+    ? Math.min(1, (32 / activeBrandWordmark[0].length) * (
+      brandWordmarkIndex === 0 ? 1 : brandWordmarkIndex === 1 ? 1.44 : 1.2
+    ))
+    : 1
   const translucentBackgroundOpacity = Math.max(0.05, Math.min(1, settings.translucentBackgroundOpacity ?? 1))
   const canvasBackground = withAlpha(settings.canvasBackground, translucentBackgroundOpacity)
   const canvasLayerBackground = theme.canvas.backgroundEffect
     ? `${theme.canvas.backgroundEffect}, ${canvasBackground}`
     : canvasBackground
-  const sidebarPanelTop = 36
+  const sidebarPanelTop = 0
   const sidebarFooterBottom = 0
-  const sidebarFooterLeft = 20
-  const sidebarFooterHeight = 45
-  const sidebarPanelBottomOffset = sidebarFooterBottom + sidebarFooterHeight - 1
+  const sidebarFooterLeft = 0
+  const sidebarFooterHeight = 42
+  const sidebarToFooterGap = 8
+  const sidebarPanelBottomOffset = sidebarFooterBottom + sidebarFooterHeight - 12
+  const mainPanelBottomInset = sidebarPanelBottomOffset
   const openSidebarToolbarPadding = sidebarWidth + 16
-  const openSidebarPillLeft = sidebarWidth + 18
-  const expandedLayoutLeft = sidebarWidth + 8
+  const openSidebarPillLeft = sidebarWidth - 4
+  const expandedLayoutLeft = sidebarWidth + 2
+  const discoveryHighlightZIndex = 0
+  const discoveryGlowZIndex = 0
+  // Discovery connection colors — adapt to theme mode
+  const dsc = theme.mode === 'light'
+    ? { line: '53, 104, 255', dot: '53, 104, 255', bg: '255, 255, 255', text: theme.accent.base }
+    : { line: '123, 241, 255', dot: '123, 241, 255', bg: '5, 13, 19', text: 'rgba(215, 247, 255, 0.97)' }
 
   useEffect(() => {
     if (!canvasGlowEnabled) hideCanvasGlow()
     return () => hideCanvasGlow()
   }, [canvasGlowEnabled, hideCanvasGlow])
 
+  useEffect(() => () => {
+    discoveryTimeoutsRef.current.forEach(timeout => window.clearTimeout(timeout))
+    discoveryTimeoutsRef.current = []
+  }, [])
+
   return (
     <ThemeProvider value={theme}>
     <FontTokenProvider value={fontTokens}>
     <FontProvider value={appFonts}>
-    <div className="w-full h-full" style={{ position: 'relative', color: theme.text.primary, fontFamily: appFonts.sans, fontSize: appFonts.size, background: theme.surface.app }}>
+    <div className="w-full h-full" style={{ position: 'relative', color: theme.text.primary, fontFamily: appFonts.primary, fontSize: appFonts.size, lineHeight: appFonts.lineHeight, fontWeight: appFonts.weight, background: theme.surface.app }}>
       {/* Sidebar inset panel — floats over the canvas */}
       <div style={{
         position: 'absolute',
         top: sidebarPanelTop,
         left: 0,
-        bottom: sidebarPanelBottomOffset,
-        padding: '8px 0 8px 8px',
+        bottom: 0,
+        padding: '0px',
+        width: sidebarCollapsed ? 0 : sidebarWidth,
         flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
-        zIndex: 100,
+        overflow: 'hidden',
+        minWidth: sidebarCollapsed ? 0 : 270,
+        zIndex: 10,
         pointerEvents: 'none',
+        transition: 'width 0.15s ease',
       }}>
         <div style={{
+          width: '100%',
           height: '100%',
           background: theme.surface.sidebarOverlay,
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          borderRadius: 10,
-          border: sidebarCollapsed ? 'none' : `1px solid ${theme.border.strong}`,
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          borderRadius: 0,
+          border: 'none',
+          paddingTop: '43px',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
           pointerEvents: 'auto',
+          position: 'relative',
         }}>
-          {/* Traffic light drag zone — sits inside the sidebar panel */}
+          {/* Titlebar drag strip — keeps the traffic-light area draggable without pushing content down */}
           <div
             style={{
-              height: 52,
-              flexShrink: 0,
-              position: 'relative',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 43,
+              zIndex: 1,
               // @ts-ignore
               WebkitAppRegion: 'drag',
             }}
-          >
-            {panelLayout && (
-              <button
-                onClick={() => setSidebarCollapsed(p => !p)}
-                title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
-                style={{
-                  position: 'absolute', top: '50%', right: 8,
-                  transform: 'translateY(-50%)',
-                  width: 22, height: 22, borderRadius: 5,
-                  background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: theme.text.disabled,
-                  // @ts-ignore
-                  WebkitAppRegion: 'no-drag',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.background = theme.surface.hover; e.currentTarget.style.color = theme.text.muted }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = theme.text.disabled }}
-              >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  {sidebarCollapsed
-                    ? <path d="M5 2H12V12H5M2 7H8M5 4L2 7L5 10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
-                    : <path d="M5 2H12V12H5M8 4L11 7L8 10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
-                  }
-                </svg>
-              </button>
-            )}
-          </div>
+          />
           {/* Sidebar content */}
-          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', paddingBottom: sidebarFooterHeight, position: 'relative', zIndex: 2 }}>
             <Suspense fallback={
               <div style={{
                 flex: 1,
@@ -1709,18 +3296,32 @@ function App(): JSX.Element {
               <LazySidebar
                 workspace={workspace}
                 workspaces={workspaces}
+                tiles={tiles}
                 onSwitchWorkspace={handleSwitchWorkspace}
+                onDeleteWorkspace={handleDeleteWorkspace}
                 onNewWorkspace={handleNewWorkspace}
                 onOpenFolder={handleOpenFolder}
                 onOpenFile={handleOpenFile}
-                selectedPath={sidebarSelectedPath}
-                onSelectPath={setSidebarSelectedPath}
+                onFocusTile={bringToFront}
+                onUpdateTile={(tileId, patch) => {
+                  setTiles(prev => {
+                    const updated = prev.map(t => t.id === tileId ? { ...t, ...patch } : t)
+                    saveCanvas(updated, viewport, nextZIndex)
+                    return updated
+                  })
+                }}
+                onCloseTile={closeTile}
                 onNewTerminal={() => addTile('terminal')}
                 onNewKanban={() => addTile('kanban')}
                 onNewBrowser={() => addTile('browser')}
                 onNewChat={() => addTile('chat')}
-                extensionTiles={extensionTiles}
+                onNewFiles={() => addTile('files')}
+                onOpenSettings={(tab) => setShowSettings(tab)}
+                onOpenSessionInChat={openSessionInChat}
+                onOpenSessionInApp={openSessionInApp}
+                extensionTiles={settings.extensionsDisabled ? [] : extensionTiles.filter(e => e.type !== 'ext:md-preview' && !(settings.hiddenFromSidebarExtIds ?? []).includes(e.extId))}
                 onAddExtensionTile={(type) => addTile(type as TileType)}
+                pinnedExtensionIds={settings.extensionsDisabled ? [] : (settings.pinnedExtensionIds ?? [])}
                 collapsed={sidebarCollapsed}
                 width={sidebarWidth}
                 onWidthChange={setSidebarWidth}
@@ -1732,6 +3333,86 @@ function App(): JSX.Element {
           </div>
         </div>
       </div>
+
+      {!sidebarCollapsed && (
+        <div
+          style={{
+            position: 'absolute',
+            left: 12,
+            top: 10,
+            zIndex: 120,
+            width: 'max-content',
+            height: 28,
+            overflow: 'visible',
+            pointerEvents: 'auto',
+            userSelect: 'none',
+            // @ts-ignore
+            WebkitAppRegion: 'no-drag',
+          }}
+        >
+          <button
+            type="button"
+            title="Previous/next logo"
+            aria-label="Change CodeSurf logo"
+            onClick={() => setBrandWordmarkIndex(index => (index + 1) % brandWordmarks.length)}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '50%',
+              background: 'transparent',
+              border: 'none',
+              padding: 0,
+              margin: 0,
+              cursor: 'pointer',
+            }}
+          />
+          <button
+            type="button"
+            title="Cycle logo colors"
+            aria-label="Change CodeSurf logo colors"
+            onClick={() => setBrandPaletteIndex(index => (index + 1) % brandPalettes.length)}
+            style={{
+              position: 'absolute',
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: '50%',
+              background: 'transparent',
+              border: 'none',
+              padding: 0,
+              margin: 0,
+              cursor: 'pointer',
+            }}
+          />
+          <div style={{
+            pointerEvents: 'none',
+            fontFamily: settings.fonts?.mono?.family || appFonts.mono,
+            lineHeight: 0.9,
+            textShadow: theme.mode === 'dark'
+              ? '0 1px 8px rgba(0, 0, 0, 0.35)'
+              : '0 1px 3px rgba(255, 255, 255, 0.7)',
+            textAlign: 'left',
+            transform: `translateY(4px) scale(${activeBrandWordmarkScale})`,
+            transformOrigin: 'top left',
+          }}>
+            {activeBrandWordmark.map((text, index) => (
+              <span
+                key={`${brandWordmarkIndex}-${brandPaletteIndex}-${index}`}
+                style={{
+                  display: 'block',
+                  fontSize: activeBrandWordmark.length <= 3 ? 7 : activeBrandWordmark.length <= 5 ? 5.9 : 5.1,
+                  fontWeight: 700,
+                  letterSpacing: activeBrandWordmark.length <= 3 ? 0.15 : 0,
+                  color: activeBrandPalette[index % activeBrandPalette.length],
+                  whiteSpace: 'pre',
+                }}
+              >
+                {text}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{
         position: 'absolute',
@@ -1746,7 +3427,8 @@ function App(): JSX.Element {
             onNewKanban={() => addTile('kanban')}
             onNewBrowser={() => addTile('browser')}
             onNewChat={() => addTile('chat')}
-            extensionTiles={extensionTiles}
+            onNewFiles={() => addTile('files')}
+            extensionTiles={settings.extensionsDisabled ? [] : extensionTiles.filter(e => e.type !== 'ext:md-preview' && !(settings.hiddenFromSidebarExtIds ?? []).includes(e.extId))}
             onAddExtensionTile={(type) => addTile(type as TileType)}
           />
         </Suspense>
@@ -1761,7 +3443,7 @@ function App(): JSX.Element {
             height: 38,
             // @ts-ignore
             WebkitAppRegion: 'drag',
-            paddingLeft: 90,
+            paddingLeft: sidebarCollapsed ? 90 : sidebarWidth + 16,
             transition: 'padding-left 0.15s ease',
             position: 'relative',
             zIndex: 90,
@@ -1785,7 +3467,7 @@ function App(): JSX.Element {
                     background: 'transparent',
                     border: '1px solid transparent',
                     color: isActive ? theme.text.primary : theme.text.disabled,
-                    fontSize: 12, fontWeight: isActive ? 700 : 400,
+                    fontSize: appFonts.secondarySize, fontWeight: isActive ? 700 : 400,
                     cursor: isActive ? 'default' : 'pointer',
                     display: 'flex', alignItems: 'center', gap: 6,
                     whiteSpace: 'nowrap', transition: 'color 0.1s',
@@ -1813,36 +3495,31 @@ function App(): JSX.Element {
                 </button>
               )
             })}
-            {/* Add workspace — picks the first unopened one */}
-            {workspaces.some(w => !openWorkspaceIds.includes(w.id)) && (
-              <button
-                title="Open another workspace"
-                onClick={() => {
-                  const next = workspaces.find(w => !openWorkspaceIds.includes(w.id))
-                  if (next) { setOpenWorkspaceIds(prev => [...prev, next.id]); handleSwitchWorkspace(next.id) }
-                }}
-                style={{
-                  width: 26, height: 26, borderRadius: 8,
-                  background: 'transparent', border: '1px solid transparent',
-                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: theme.text.disabled, transition: 'all 0.1s',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.background = theme.surface.hover; e.currentTarget.style.color = theme.text.secondary }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = theme.text.disabled }}
-              >
-                <Icon glyph="+" size={18} />
-              </button>
-            )}
+            {/* New empty view in current project */}
+            <button
+              title="New layout view (same project)"
+              onClick={handleNewBlankView}
+              style={{
+                width: 26, height: 26, borderRadius: 8,
+                background: 'transparent', border: '1px solid transparent',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: theme.text.disabled, transition: 'all 0.1s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = theme.surface.hover; e.currentTarget.style.color = theme.text.secondary }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = theme.text.disabled }}
+            >
+              <Icon glyph="+" size={18} />
+            </button>
           </div>
         </div>
 
-        {/* Sidebar collapse pill — floats over the canvas left edge; hidden in tab mode */}
+        {/* Sidebar collapse pill — floats over the canvas left edge */}
         <div
           onClick={() => setSidebarCollapsed(p => !p)}
           style={{
-            display: panelLayout || !sidebarPillVisible ? 'none' : 'flex',
+            display: !sidebarPillVisible ? 'none' : 'flex',
             position: 'absolute',
-            left: sidebarCollapsed ? 8 : openSidebarPillLeft,
+            left: sidebarCollapsed ? 4 : openSidebarPillLeft,
             top: '50%',
             transform: 'translateY(-50%)',
             transition: 'opacity 0.12s ease',
@@ -1861,7 +3538,14 @@ function App(): JSX.Element {
           onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted }}
           onMouseLeave={e => { e.currentTarget.style.background = theme.surface.panelElevated }}
         >
-          {''}
+          <span style={{
+            width: 2,
+            height: 14,
+            borderRadius: 999,
+            background: theme.text.disabled,
+            opacity: 0.9,
+            transition: 'opacity 0.12s ease',
+          }} />
         </div>
 
         {/* Canvas — fills entire window, sits behind sidebar & toolbar */}
@@ -1913,9 +3597,36 @@ function App(): JSX.Element {
               return
             }
 
-            // File from sidebar
+            // Files dropped from OS or sidebar
+            const droppedPaths = getDroppedPaths(e.dataTransfer)
+            if (droppedPaths.length > 0) {
+              // Check for .vsix first
+              const vsixPath = droppedPaths.find(p => p.endsWith('.vsix'))
+              if (vsixPath) {
+                window.api.extensions.installVsix(vsixPath).then((result: any) => {
+                  if (result?.ok) {
+                    console.log('[vsix] Installed:', result.name)
+                    if (result.tiles && result.tiles.length > 0) {
+                      addTile('extension', undefined, world)
+                    }
+                  } else {
+                    console.error('[vsix] Install failed:', result?.error)
+                  }
+                })
+                return
+              }
+              // Create a file tile for each dropped path
+              for (const p of droppedPaths) {
+                void resolveFileTileType(p).then(type => addTile(type, p, world))
+              }
+              return
+            }
+
+            // File from sidebar (text/plain fallback)
             const filePath = e.dataTransfer.getData('text/plain')
-            if (filePath) addTile(extToType(filePath), filePath, world)
+            if (filePath) {
+              void resolveFileTileType(filePath).then(type => addTile(type, filePath, world))
+            }
           }}
         >
           {/* Canvas content wrapper — fades out when in expanded/tabbed mode */}
@@ -1987,6 +3698,198 @@ function App(): JSX.Element {
               .map(g => {
                 const b = groupBounds(g.id)
                 if (!b) return null
+
+                // ── Layout-mode group: embedded PanelLayout ──────────────────
+                if (g.layoutMode && g.layout) {
+                  const lb = b
+                  const layout = g.layout as PanelNode
+                  const color = g.color ?? '#4a9eff'
+                  const borderColor = color + 'bb'
+                  const labelColor = color + 'ee'
+                  const isDraggingThis = dragState.type === 'group' && dragState.groupId === g.id
+                  const HEADER_H = 32  // world px — scales with canvas zoom like tile chrome
+
+                  return (
+                    <div
+                      key={g.id}
+                      style={{
+                        position: 'absolute',
+                        left: lb.x, top: lb.y, width: lb.w, height: lb.h,
+                        border: `2px solid ${borderColor}`,
+                        borderRadius: 12,
+                        background: theme.surface.panel,  // opaque — prevents grid bleed-through
+                        zIndex: isDraggingThis ? 99989 : 8,
+                        boxSizing: 'border-box',
+                        overflow: 'hidden',
+                        cursor: 'default',
+                      }}
+                      onMouseDown={e => e.stopPropagation()}
+                    >
+                      {/* Header — fixed world-px height, scales naturally with canvas zoom */}
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 0, left: 0, right: 0,
+                          height: HEADER_H,
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '0 10px',
+                          background: color + '22',
+                          borderBottom: `1px solid ${borderColor}`,
+                          cursor: isDraggingThis ? 'grabbing' : 'grab',
+                          userSelect: 'none',
+                          boxSizing: 'border-box',
+                        }}
+                        onMouseDown={e => {
+                          e.stopPropagation()
+                          setDragState({
+                            type: 'group',
+                            groupId: g.id,
+                            startX: e.clientX, startY: e.clientY,
+                            snapshots: [],
+                            initLayoutBounds: lb,
+                          })
+                        }}
+                        onDoubleClick={e => { e.stopPropagation(); expandLayoutGroup(g.id) }}
+                      >
+                        <LayoutGrid size={12} style={{ color: labelColor, flexShrink: 0, opacity: 0.7 }} />
+                        <span style={{ fontSize: appFonts.secondarySize, color: labelColor, fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {g.label ?? 'layout'}
+                        </span>
+                        <div
+                          title="Expand fullscreen"
+                          onClick={e => { e.stopPropagation(); expandLayoutGroup(g.id) }}
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, borderRadius: 4, cursor: 'pointer', color: labelColor, opacity: 0.6 }}
+                          onMouseEnter={e => { e.currentTarget.style.opacity = '1' }}
+                          onMouseLeave={e => { e.currentTarget.style.opacity = '0.6' }}
+                        >
+                          <Maximize2 size={11} />
+                        </div>
+                        <div
+                          title="Back to blocks"
+                          onClick={e => { e.stopPropagation(); revertLayoutGroup(g.id) }}
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, borderRadius: 4, cursor: 'pointer', color: labelColor, opacity: 0.6 }}
+                          onMouseEnter={e => { e.currentTarget.style.opacity = '1' }}
+                          onMouseLeave={e => { e.currentTarget.style.opacity = '0.6' }}
+                        >
+                          <Ungroup size={11} />
+                        </div>
+                      </div>
+
+                      {/* Resize handles */}
+                      {([ 'n','s','e','w','ne','nw','se','sw' ] as const).map(dir => {
+                        const S = 10 / viewport.zoom
+                        const hs: React.CSSProperties = { position: 'absolute', zIndex: 20 }
+                        if (dir === 'e')  Object.assign(hs, { right: -S/2,  top: S,      bottom: S,      width: S,  cursor: 'col-resize' })
+                        if (dir === 'w')  Object.assign(hs, { left: -S/2,   top: S,      bottom: S,      width: S,  cursor: 'col-resize' })
+                        if (dir === 's')  Object.assign(hs, { bottom: -S/2, left: S,     right: S,       height: S, cursor: 'row-resize' })
+                        if (dir === 'n')  Object.assign(hs, { top: -S/2,    left: S,     right: S,       height: S, cursor: 'row-resize' })
+                        if (dir === 'se') Object.assign(hs, { right: -S/2,  bottom: -S/2, width: S*1.5, height: S*1.5, cursor: 'se-resize' })
+                        if (dir === 'sw') Object.assign(hs, { left: -S/2,   bottom: -S/2, width: S*1.5, height: S*1.5, cursor: 'sw-resize' })
+                        if (dir === 'ne') Object.assign(hs, { right: -S/2,  top: -S/2,    width: S*1.5, height: S*1.5, cursor: 'ne-resize' })
+                        if (dir === 'nw') Object.assign(hs, { left: -S/2,   top: -S/2,    width: S*1.5, height: S*1.5, cursor: 'nw-resize' })
+                        return (
+                          <div
+                            key={dir}
+                            style={hs}
+                            onMouseDown={e => {
+                              e.stopPropagation()
+                              e.preventDefault()
+                              setDragState({
+                                type: 'group-resize',
+                                groupId: g.id, dir,
+                                startX: e.clientX, startY: e.clientY,
+                                initBounds: { x: lb.x, y: lb.y, w: lb.w, h: lb.h },
+                                snapshots: [],
+                              })
+                            }}
+                          />
+                        )
+                      })}
+
+                      {/* Embedded PanelLayout */}
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: HEADER_H, left: 0, right: 0, bottom: 0,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <Suspense fallback={null}>
+                          <LazyPanelLayout
+                            root={layout}
+                            getTileLabel={(tileId) => {
+                              const t = tiles.find(ti => ti.id === tileId)
+                              if (!t) return 'Unknown'
+                              return t.filePath?.replace(/\\/g, '/').split('/').pop()
+                                ?? t.type.charAt(0).toUpperCase() + t.type.slice(1)
+                            }}
+                            renderTile={(tileId) => {
+                              const t = tiles.find(ti => ti.id === tileId)
+                              if (!t) return null
+                              return (
+                                <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 12 }}>Loading…</div>}>
+                                  {renderTileBody(t)}
+                                </Suspense>
+                              )
+                            }}
+                            onLayoutChange={(newLayout) => {
+                              setGroups(prev => {
+                                const updated = prev.map(gr => gr.id === g.id ? { ...gr, layout: newLayout } : gr)
+                                setTimeout(() => persistCanvasState(tilesRef.current, viewportRef.current, nextZIndexRef.current, updated), 0)
+                                return updated
+                              })
+                            }}
+                            onCloseTab={(tileId) => {
+                              setGroups(prev => {
+                                const updated = prev.map(gr => {
+                                  if (gr.id !== g.id || !gr.layout) return gr
+                                  const newLayout = removeTileFromTree(gr.layout as PanelNode, tileId)
+                                  return { ...gr, layout: newLayout ?? undefined }
+                                })
+                                return updated
+                              })
+                            }}
+                            onAddTile={() => { /* handled externally */ }}
+                            onExit={() => revertLayoutGroup(g.id)}
+                            activePanelId={null}
+                            onActivePanelChange={() => { /* no-op for embedded */ }}
+                            getTileType={(tileId) => tiles.find(t => t.id === tileId)?.type ?? 'note'}
+                            onSplitNew={(panelId, tileType, zone) => {
+                              const { w, h } = getInitialTileSize(tileType as TileState['type'])
+                              const newTile: TileState = {
+                                id: `tile-${Date.now()}`,
+                                type: tileType as TileState['type'],
+                                x: 0, y: 0,
+                                width: w, height: h, zIndex: nextZIndex,
+                                groupId: g.id,
+                              }
+                              setTiles(prev => [...prev, newTile])
+                              setNextZIndex(prev => prev + 1)
+                              setGroups(prev => {
+                                const updated = prev.map(gr => gr.id === g.id && gr.layout
+                                  ? { ...gr, layout: splitLeaf(gr.layout as PanelNode, panelId, newTile.id, zone) }
+                                  : gr)
+                                return updated
+                              })
+                            }}
+                            onCloseOthers={(panelId, tileId) => {
+                              setGroups(prev => prev.map(gr => gr.id === g.id && gr.layout
+                                ? { ...gr, layout: closeOthersInLeaf(gr.layout as PanelNode, panelId, tileId) }
+                                : gr))
+                            }}
+                            onCloseToRight={(panelId, tileId) => {
+                              setGroups(prev => prev.map(gr => gr.id === g.id && gr.layout
+                                ? { ...gr, layout: closeToRightInLeaf(gr.layout as PanelNode, panelId, tileId) }
+                                : gr))
+                            }}
+                            onLaunchTemplate={() => { /* no-op in embedded mode */ }}
+                          />
+                        </Suspense>
+                      </div>
+                    </div>
+                  )
+                }
+
                 const isNested = !!g.parentGroupId
                 const defaultColor = isNested ? '#ffb432' : '#4a9eff'
                 const color = g.color ?? defaultColor
@@ -2092,13 +3995,14 @@ function App(): JSX.Element {
                         }}
                         onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur() } e.stopPropagation() }}
                         onClick={e => e.stopPropagation()}
-                        style={{ fontSize: 11, color: labelColor, fontWeight: 500, minWidth: 30, outline: 'none', cursor: 'text' }}>
+                        style={{ fontSize: appFonts.secondarySize, color: labelColor, fontWeight: 500, minWidth: 30, outline: 'none', cursor: 'text' }}>
                         {g.label ?? 'group'}
                       </span>
 
                       <span style={{ width: 1, height: 10, background: color, opacity: 0.3 }} />
 
                       {([
+                        { icon: <LayoutGrid size={12} />, label: 'Make layout', action: () => convertGroupToLayout(g.id) },
                         { icon: <Ungroup size={12} />, label: 'Ungroup', action: () => ungroupTilesRef.current(g.id) },
                         { icon: <Grid2x2X size={12} />, label: 'Ungroup all', action: () => ungroupAllRef.current(g.id) },
                         { icon: <Scissors size={12} />, label: 'Cut', action: () => {
@@ -2211,6 +4115,52 @@ function App(): JSX.Element {
               )
             )}
 
+            {/* Connection pills — rendered in screen-space under tiles, like edges */}
+            {!panelLayout && (ambientDiscoveryRoutes.length > 0 || discoveryPreview?.match) && (
+              <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0 }}>
+                {/* Ambient route pills */}
+                {ambientDiscoveryRoutes.map(connection => {
+                  const screenRoute = connection.route.map(worldToScreenPoint)
+                  const mid = getRouteMidpoint(screenRoute)
+                  const [tileIdA, tileIdB] = connection.key.split('::')
+                  return (
+                    <Suspense key={`pill-${connection.key}`} fallback={null}>
+                      <LazyConnectionPill
+                        x={mid.x}
+                        y={mid.y}
+                        zoom={viewport.zoom}
+                        isLocked={isConnectionLocked(tileIdA, tileIdB)}
+                        onToggleLock={() => toggleConnectionLock(tileIdA, tileIdB)}
+                        onDelete={() => deleteConnection(tileIdA, tileIdB)}
+                        dscLine={dsc.line}
+                      />
+                    </Suspense>
+                  )
+                })}
+                {/* Preview pill — only if this pair doesn't already have a locked pill showing */}
+                {discoveryPreview?.match && discoveryFocusTileId && (() => {
+                  const previewKey = [discoveryFocusTileId, discoveryPreview.match.tile.id].sort().join('::')
+                  // Skip if already rendered as a locked ambient pill
+                  if (lockedConnectionKeys.has(previewKey)) return null
+                  const screenRoute = discoveryPreview.match.route.map(worldToScreenPoint)
+                  const mid = getRouteMidpoint(screenRoute)
+                  return (
+                    <Suspense fallback={null}>
+                      <LazyConnectionPill
+                        x={mid.x}
+                        y={mid.y}
+                        zoom={viewport.zoom}
+                        isLocked={false}
+                        onToggleLock={() => toggleConnectionLock(discoveryFocusTileId!, discoveryPreview!.match!.tile.id)}
+                        onDelete={() => deleteConnection(discoveryFocusTileId!, discoveryPreview!.match!.tile.id)}
+                        dscLine={dsc.line}
+                      />
+                    </Suspense>
+                  )
+                })()}
+              </div>
+            )}
+
             {tiles.filter(tile => !panelTileIds.has(tile.id)).map(tile => {
               // Tile being dragged (or part of a group being dragged) gets max z-index
               const isActiveDrag =
@@ -2221,28 +4171,280 @@ function App(): JSX.Element {
               return (
                 <Suspense
                   key={tile.id}
-                  fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 12, background: theme.surface.panel }}>Loading tile frame…</div>}
+                  fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 12, background: theme.surface.panel }}>Loading block…</div>}
                 >
+                  <TileColorProvider>
                   <LazyTileChrome
                     tile={activeTile}
                     workspaceId={workspace?.id}
                     workspaceDir={workspace?.path}
                     onClose={() => closeTile(tile.id)}
+                    onActivate={() => bringToFront(tile.id)}
                     onTitlebarMouseDown={e => handleTileMouseDown(e, tile)}
                     onResizeMouseDown={(e, dir) => handleResizeMouseDown(e, tile, dir)}
                     onContextMenu={e => handleTileContextMenu(e, tile)}
                     isSelected={tile.id === selectedTileId || selectedTileIds.has(tile.id)}
                     forceExpanded={panelTileIds.has(tile.id)}
                     onExpandChange={expanded => expanded ? enterExpandedMode(tile.id) : exitExpandedMode()}
+                    discoveryConnected={negotiatedDiscoveryState.connectedTileIds.has(tile.id)}
+                    connectedPeers={negotiatedDiscoveryState.byTileConnections.get(tile.id)?.map(link => link.peerId) ?? []}
+                    titlebarExtra={tile.type === 'note' && !tile.filePath ? <Suspense fallback={null}><LazyStickyColorPicker /></Suspense> : undefined}
                   >
-                    <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 12, background: theme.surface.panelMuted }}>Loading tile…</div>}>
+                    <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 12, background: theme.surface.panelMuted }}>Loading block…</div>}>
                       {renderTileBody(tile)}
                     </Suspense>
                   </LazyTileChrome>
+                  </TileColorProvider>
                 </Suspense>
               )
             })}
+
+            {!panelLayout && (ambientDiscoveryRoutes.length > 0 || discoveryPreview?.match || discoveryPulses.length > 0) && (
+              <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: discoveryHighlightZIndex }}>
+                {(() => {
+                  const previewPairKey = discoveryPreview?.match && discoveryFocusTileId
+                    ? [discoveryFocusTileId, discoveryPreview.match.tile.id].sort().join('::')
+                    : null
+                  return (
+                    <>
+                {ambientDiscoveryRoutes.map(connection => (
+                  <React.Fragment key={connection.key}>
+                    {getRouteSegments(connection.route, 2).map((segment, index) => (
+                      <div
+                        key={`${connection.key}-segment-${index}`}
+                        style={{
+                          position: 'absolute',
+                          left: segment.left,
+                          top: segment.top,
+                          width: segment.width,
+                          height: segment.height,
+                          borderRadius: 999,
+                          backgroundImage: segment.horizontal
+                            ? `repeating-linear-gradient(90deg, rgba(${dsc.line}, 0.28) 0 10px, transparent 10px 22px)`
+                            : `repeating-linear-gradient(180deg, rgba(${dsc.line}, 0.28) 0 10px, transparent 10px 22px)`,
+                          opacity: 0.92,
+                          filter: `drop-shadow(0 0 4px rgba(${dsc.line}, 0.18))`,
+                        }}
+                      />
+                    ))}
+                  </React.Fragment>
+                ))}
+                {discoveryPreview?.match && discoveryFocusTileId && (() => {
+                  const sourceTile = tileByIdMap.get(discoveryFocusTileId)
+                  const targetTile = tileByIdMap.get(discoveryPreview.match.tile.id)
+                  if (!sourceTile || !targetTile) return null
+                  const previewRoute = discoveryPreview.match.route
+                  const sourceRect = { left: sourceTile.x, top: sourceTile.y, width: sourceTile.width, height: sourceTile.height }
+                  const targetRect = { left: targetTile.x, top: targetTile.y, width: targetTile.width, height: targetTile.height }
+                  const labelPoint = getRouteMidpoint(discoveryPreview.match.route)
+
+                  return (
+                    <>
+                      {getRouteSegments(previewRoute).map((segment, index) => (
+                        <div
+                          key={`preview-segment-${index}`}
+                          style={{
+                            position: 'absolute',
+                            left: segment.left,
+                            top: segment.top,
+                            width: segment.width,
+                            height: segment.height,
+                            borderRadius: 999,
+                            backgroundImage: segment.horizontal
+                              ? `repeating-linear-gradient(90deg, rgba(${dsc.line}, 0.64) 0 12px, transparent 12px 20px)`
+                              : `repeating-linear-gradient(180deg, rgba(${dsc.line}, 0.64) 0 12px, transparent 12px 20px)`,
+                            filter: `drop-shadow(0 0 6px rgba(${dsc.line}, 0.22))`,
+                          }}
+                        />
+                      ))}
+
+                      {previewRoute.map((point, index) => (
+                        <div
+                          key={`preview-${index}`}
+                          style={{
+                            position: 'absolute',
+                            left: point.x,
+                            top: point.y,
+                            width: index === 0 || index === previewRoute.length - 1 ? 9 : 6,
+                            height: index === 0 || index === previewRoute.length - 1 ? 9 : 6,
+                            borderRadius: '50%',
+                            transform: 'translate(-50%, -50%)',
+                            background: index === 0 || index === previewRoute.length - 1 ? `rgba(${dsc.line}, 0.72)` : `rgba(${dsc.line}, 0.36)`,
+                            boxShadow: `0 0 8px rgba(${dsc.line}, 0.24)`,
+                          }}
+                        />
+                      ))}
+
+                      {/* Pill rendered in screen-space overlay below */}
+                    </>
+                  )
+                })()}
+
+                <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0, overflow: 'visible' }}>
+                  {discoveryPulses.map(pulse => {
+                    const sourceTile = tileByIdMap.get(pulse.sourceTileId)
+                    const targetTile = tileByIdMap.get(pulse.targetTileId)
+                    if (!sourceTile || !targetTile) return null
+                    const route = pulse.route
+                    const d = routeToSvgPath(route)
+                    return (
+                      <g key={`route-${pulse.id}`}>
+                        <path
+                          d={d}
+                          fill="none"
+                          stroke={`rgba(${dsc.line}, 0.18)`}
+                          strokeWidth={2}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d={d}
+                          fill="none"
+                          pathLength={100}
+                          stroke={`rgba(${dsc.line}, 0.72)`}
+                          strokeWidth={3}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          style={{
+                            strokeDasharray: '16 84',
+                            strokeDashoffset: 100,
+                            filter: `drop-shadow(0 0 8px rgba(${dsc.line}, 0.24))`,
+                            animation: `discovery-route-travel ${pulse.durationMs}ms linear forwards`
+                          }}
+                        />
+                        {route.map((point, index) => (
+                          <circle
+                            key={`${pulse.id}-pt-${index}`}
+                            cx={point.x}
+                            cy={point.y}
+                            r={index === 0 || index === route.length - 1 ? 4.5 : 3}
+                            fill={index === 0 || index === route.length - 1 ? `rgba(${dsc.line}, 0.72)` : `rgba(${dsc.line}, 0.36)`}
+                          />
+                        ))}
+                      </g>
+                    )
+                  })}
+                </svg>
+
+                {discoveryPulses.map(pulse => {
+                  const sourceTile = tileByIdMap.get(pulse.sourceTileId)
+                  const targetTile = tileByIdMap.get(pulse.targetTileId)
+                  if (!sourceTile || !targetTile) return null
+
+                  const pairKey = [pulse.sourceTileId, pulse.targetTileId].sort().join('::')
+                  const _hidePulsePills = previewPairKey === pairKey
+                  const sourceRect = { left: sourceTile.x, top: sourceTile.y, width: sourceTile.width, height: sourceTile.height }
+                  const targetRect = { left: targetTile.x, top: targetTile.y, width: targetTile.width, height: targetTile.height }
+                  const labelPoint = getRouteMidpoint(pulse.route)
+
+                  return (
+                    <React.Fragment key={pulse.id}>
+
+                      {/* Pill rendered in screen-space overlay below */}
+                    </React.Fragment>
+                  )
+                })}
+                    </>
+                  )
+                })()}
+              </div>
+            )}
           </div>
+
+          {canvasGlowEnabled && !panelLayout && (ambientDiscoveryRoutes.length > 0 || discoveryPreview?.match || discoveryPulses.length > 0) && (
+            <div
+              ref={discoveryGlowRef}
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                opacity: 0,
+                transition: 'opacity 0.18s ease-out',
+                zIndex: discoveryGlowZIndex,
+              }}
+            >
+              {ambientDiscoveryRoutes.map(connection => {
+                const screenRoute = connection.route.map(worldToScreenPoint)
+                return getRouteSegments(screenRoute, 2.5).map((segment, index) => (
+                  <div
+                    key={`${connection.key}-glow-${index}`}
+                    style={{
+                      position: 'absolute',
+                      left: segment.left,
+                      top: segment.top,
+                      width: segment.width,
+                      height: segment.height,
+                      borderRadius: 999,
+                      backgroundImage: segment.horizontal
+                        ? `repeating-linear-gradient(90deg, rgba(${dsc.line}, 0.72) 0 10px, transparent 10px 22px)`
+                        : `repeating-linear-gradient(180deg, rgba(${dsc.line}, 0.72) 0 10px, transparent 10px 22px)`,
+                      filter: `drop-shadow(0 0 6px rgba(${dsc.line}, 0.26))`,
+                    }}
+                  />
+                ))
+              })}
+
+              {discoveryPreview?.match && discoveryFocusTileId && (() => {
+                const screenRoute = discoveryPreview.match.route.map(worldToScreenPoint)
+                return (
+                  <>
+                    {getRouteSegments(screenRoute, 3.2).map((segment, index) => (
+                      <div
+                        key={`preview-glow-${index}`}
+                        style={{
+                          position: 'absolute',
+                          left: segment.left,
+                          top: segment.top,
+                          width: segment.width,
+                          height: segment.height,
+                          borderRadius: 999,
+                          backgroundImage: segment.horizontal
+                            ? `repeating-linear-gradient(90deg, rgba(${dsc.line}, 0.82) 0 12px, transparent 12px 20px)`
+                            : `repeating-linear-gradient(180deg, rgba(${dsc.line}, 0.82) 0 12px, transparent 12px 20px)`,
+                          filter: `drop-shadow(0 0 8px rgba(${dsc.line}, 0.30))`,
+                        }}
+                      />
+                    ))}
+                    {screenRoute.map((point, index) => (
+                      <div
+                        key={`preview-glow-dot-${index}`}
+                        style={{
+                          position: 'absolute',
+                          left: point.x,
+                          top: point.y,
+                          width: index === 0 || index === screenRoute.length - 1 ? 10 : 6,
+                          height: index === 0 || index === screenRoute.length - 1 ? 10 : 6,
+                          borderRadius: '50%',
+                          transform: 'translate(-50%, -50%)',
+                          background: index === 0 || index === screenRoute.length - 1 ? `rgba(${dsc.line}, 0.82)` : `rgba(${dsc.line}, 0.46)`,
+                          boxShadow: `0 0 9px rgba(${dsc.line}, 0.28)`,
+                        }}
+                      />
+                    ))}
+                  </>
+                )
+              })()}
+
+              {discoveryPulses.map(pulse => {
+                const screenRoute = pulse.route.map(worldToScreenPoint)
+                return getRouteSegments(screenRoute, 3.2).map((segment, index) => (
+                  <div
+                    key={`${pulse.id}-glow-${index}`}
+                    style={{
+                      position: 'absolute',
+                      left: segment.left,
+                      top: segment.top,
+                      width: segment.width,
+                      height: segment.height,
+                      borderRadius: 999,
+                      backgroundImage: segment.horizontal
+                        ? `repeating-linear-gradient(90deg, rgba(${dsc.line}, 0.76) 0 12px, transparent 12px 20px)`
+                        : `repeating-linear-gradient(180deg, rgba(${dsc.line}, 0.76) 0 12px, transparent 12px 20px)`,
+                      filter: `drop-shadow(0 0 8px rgba(${dsc.line}, 0.28))`,
+                    }}
+                  />
+                ))
+              })}
+            </div>
+          )}
 
           {/* Group button — appears when 2+ tiles are rubber-band selected */}
           {selectedTileIds.size >= 2 && (
@@ -2257,11 +4459,11 @@ function App(): JSX.Element {
               boxShadow: theme.shadow.panel,
               zIndex: 1000
             }}>
-              <span style={{ fontSize: 11, color: theme.text.muted }}>{selectedTileIds.size} selected</span>
+              <span style={{ fontSize: appFonts.secondarySize, color: theme.text.muted }}>{selectedTileIds.size} block{selectedTileIds.size !== 1 ? 's' : ''} selected</span>
               <button
                 onClick={groupSelectedTiles}
                 style={{
-                  fontSize: 11, color: theme.accent.base, background: theme.accent.soft,
+                  fontSize: appFonts.secondarySize, color: theme.accent.base, background: theme.accent.soft,
                   border: `1px solid ${theme.border.accent}`, borderRadius: 5,
                   padding: '3px 10px', cursor: 'pointer'
                 }}
@@ -2273,7 +4475,7 @@ function App(): JSX.Element {
               <button
                 onClick={() => setSelectedTileIds(new Set())}
                 style={{
-                  fontSize: 11, color: theme.text.disabled, background: 'transparent',
+                  fontSize: appFonts.secondarySize, color: theme.text.disabled, background: 'transparent',
                   border: 'none', cursor: 'pointer', padding: '3px 6px'
                 }}
               >
@@ -2288,8 +4490,8 @@ function App(): JSX.Element {
           {panelLayout && (
             <div style={{
               position: 'absolute',
-              top: 44,
-              left: sidebarCollapsed ? 0 : expandedLayoutLeft,
+              top: 39,
+              left: sidebarCollapsed ? 2 : expandedLayoutLeft,
               right: 0,
               bottom: 0,
               zIndex: 50,
@@ -2298,6 +4500,7 @@ function App(): JSX.Element {
             <Suspense fallback={null}>
               <LazyPanelLayout
                 root={panelLayout}
+                insetBottom={mainPanelBottomInset}
                 getTileLabel={(tileId) => {
                   const t = tiles.find(ti => ti.id === tileId)
                   if (!t) return 'Unknown'
@@ -2308,7 +4511,7 @@ function App(): JSX.Element {
                   const t = tiles.find(ti => ti.id === tileId)
                   if (!t) return null
                   return (
-                    <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 12, background: theme.surface.panelMuted }}>Loading tile…</div>}>
+                    <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 12, background: theme.surface.panelMuted }}>Loading block…</div>}>
                       {renderTileBody(t)}
                     </Suspense>
                   )
@@ -2339,6 +4542,7 @@ function App(): JSX.Element {
                 onCloseToRight={(panelId, tileId) => {
                   setPanelLayout(prev => prev ? closeToRightInLeaf(prev, panelId, tileId) : prev)
                 }}
+                onLaunchTemplate={handleLaunchTemplate}
               />
             </Suspense>
             </div>
@@ -2387,7 +4591,7 @@ function App(): JSX.Element {
                 return { ...prev, zoom: 1 }
               })
             }}
-            onOpenSettings={() => setShowSettings(true)}
+            onOpenSettings={() => setShowSettings('general')}
           />
         </Suspense>
       </div>
@@ -2398,7 +4602,7 @@ function App(): JSX.Element {
       )}
       {showSettings && (
         <Suspense fallback={null}>
-          <LazySettingsPanel onClose={() => setShowSettings(false)} onSettingsChange={s => setSettings(s)} workspaces={workspaces} />
+          <LazySettingsPanel settings={settings} onClose={() => setShowSettings(false)} onSettingsChange={s => setSettings(withDefaultSettings(s))} workspaces={workspaces} workspacePath={workspace?.path} initialSection={typeof showSettings === 'string' ? showSettings as any : undefined} systemPrefersDark={systemPrefersDark} />
         </Suspense>
       )}
       {ctxMenu && (

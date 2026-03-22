@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useAppFonts } from '../FontContext'
+import { useTheme } from '../ThemeContext'
 
 interface MCPServer {
   name: string
@@ -191,34 +192,36 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
     setAdding(false)
   }
 
+  const theme = useTheme()
+
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 10000,
-      background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center'
+      background: theme.mode === 'light' ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center'
     }} onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div style={{
-        width: 560, maxHeight: '80vh', background: '#0d1117',
-        border: '1px solid #30363d', borderRadius: 10,
-        boxShadow: '0 16px 48px rgba(0,0,0,0.6)',
+        width: 560, maxHeight: '80vh', background: theme.surface.panel,
+        border: `1px solid ${theme.border.strong}`, borderRadius: 10,
+        boxShadow: theme.shadow.modal,
         display: 'flex', flexDirection: 'column', overflow: 'hidden'
       }}>
         {/* Header */}
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid #21262d', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${theme.border.default}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: '#e6edf3' }}>MCP Configuration</div>
-            <div style={{ fontSize: 10, color: '#555', fontFamily: fonts.mono, marginTop: 2 }}>{CONFIG_PATH}</div>
+            <div style={{ fontSize: fonts.size, fontWeight: 700, color: theme.text.primary }}>MCP Configuration</div>
+            <div style={{ fontSize: 10, color: theme.text.disabled, fontFamily: fonts.mono, marginTop: 2 }}>{CONFIG_PATH}</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {port && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3fb950', boxShadow: '0 0 5px #3fb950', display: 'inline-block' }} />
-                <span style={{ fontSize: 10, color: '#3fb950', fontFamily: fonts.mono }}>:{port}</span>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.status.success, boxShadow: `0 0 5px ${theme.status.success}`, display: 'inline-block' }} />
+                <span style={{ fontSize: 10, color: theme.status.success, fontFamily: fonts.mono }}>:{port}</span>
               </div>
             )}
-            {saved && <span style={{ fontSize: 10, color: '#3fb950' }}>saved</span>}
-            <button onClick={onClose} style={{ fontSize: 12, color: '#555', background: 'none', border: 'none', cursor: 'pointer' }}
-              onMouseEnter={e => (e.currentTarget.style.color = '#fff')}
-              onMouseLeave={e => (e.currentTarget.style.color = '#555')}>x</button>
+            {saved && <span style={{ fontSize: 10, color: theme.status.success }}>saved</span>}
+            <button onClick={onClose} style={{ fontSize: fonts.secondarySize, color: theme.text.disabled, background: 'none', border: 'none', cursor: 'pointer' }}
+              onMouseEnter={e => (e.currentTarget.style.color = theme.text.primary)}
+              onMouseLeave={e => (e.currentTarget.style.color = theme.text.disabled)}>x</button>
           </div>
         </div>
 
@@ -229,18 +232,18 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
           <Section label="BUILT-IN">
             <ServerRow
               name="contex"
-              description="Canvas, kanban, files, tiles — always running"
+              description="Canvas, kanban, files, blocks — always running"
               url={config?.url}
               enabled={true}
               builtin
-              tools={['card_complete', 'card_update', 'card_error', 'request_input', 'canvas_create_tile', 'canvas_open_file', 'canvas_pan_to', 'canvas_list_tiles']}
+              tools={['card_complete', 'card_update', 'card_error', 'request_input', 'kanban_get_board', 'kanban_create_card', 'kanban_update_card', 'kanban_move_card', 'kanban_pause_card', 'kanban_delete_card', 'kanban_create_column', 'kanban_rename_column', 'kanban_delete_column', 'canvas_create_tile', 'canvas_open_file', 'canvas_pan_to', 'canvas_list_tiles']}
             />
           </Section>
 
           {/* External servers */}
           <Section label="MCP SERVERS">
             {loading ? (
-              <div style={{ fontSize: 11, color: '#444', padding: '8px 0' }}>Loading…</div>
+              <div style={{ fontSize: fonts.secondarySize, color: theme.text.muted, padding: '8px 0' }}>Loading...</div>
             ) : (
               <>
                 {servers.filter(s => s.name !== 'contex').map((s, i) => (
@@ -253,34 +256,34 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
                 ))}
 
                 {adding ? (
-                  <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 6, padding: 12, marginTop: 6 }}>
+                  <div style={{ background: theme.surface.panelMuted, border: `1px solid ${theme.border.default}`, borderRadius: 6, padding: 12, marginTop: 6 }}>
                     <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
                       <input value={newServer.name ?? ''} onChange={e => setNewServer(p => ({ ...p, name: e.target.value }))}
-                        placeholder="server name" autoFocus style={{ ...inputStyle, flex: '0 0 120px' }} />
+                        placeholder="server name" autoFocus style={{ ...getInputStyle(theme), flex: '0 0 120px', background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.border.default}` }} />
                       <input value={newServer.url ?? ''} onChange={e => setNewServer(p => ({ ...p, url: e.target.value, cmd: undefined }))}
-                        placeholder="http://..." style={{ ...inputStyle, flex: 1, fontFamily: fonts.mono, fontSize: 10, color: '#3fb950' }} />
+                        placeholder="http://..." style={{ ...getInputStyle(theme), flex: 1, fontFamily: fonts.mono, fontSize: 10, color: theme.status.success, background: theme.surface.input, border: `1px solid ${theme.border.default}` }} />
                     </div>
                     <input value={newServer.cmd ?? ''} onChange={e => setNewServer(p => ({ ...p, cmd: e.target.value, url: undefined }))}
                       placeholder="or stdio command: npx @modelcontextprotocol/server-name"
-                      style={{ ...inputStyle, fontFamily: fonts.mono, fontSize: 10, marginBottom: 8 }} />
+                      style={{ ...getInputStyle(theme), fontFamily: fonts.mono, fontSize: 10, marginBottom: 8, background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.border.default}` }} />
                     <input value={newServer.description ?? ''} onChange={e => setNewServer(p => ({ ...p, description: e.target.value }))}
-                      placeholder="Description (optional)" style={{ ...inputStyle, marginBottom: 8 }} />
+                      placeholder="Description (optional)" style={{ ...getInputStyle(theme), marginBottom: 8, background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.border.default}` }} />
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button onClick={addServer}
-                        style={{ flex: 1, padding: '5px 0', borderRadius: 5, background: '#1f6feb', color: '#fff', border: 'none', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>
+                        style={{ flex: 1, padding: '5px 0', borderRadius: 5, background: theme.accent.base, color: theme.text.inverse, border: 'none', fontSize: fonts.secondarySize, cursor: 'pointer', fontFamily: 'inherit' }}>
                         Add Server
                       </button>
                       <button onClick={() => setAdding(false)}
-                        style={{ padding: '5px 12px', borderRadius: 5, background: '#21262d', color: '#8b949e', border: '1px solid #30363d', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>
+                        style={{ padding: '5px 12px', borderRadius: 5, background: theme.surface.panelMuted, color: theme.text.muted, border: `1px solid ${theme.border.default}`, fontSize: fonts.secondarySize, cursor: 'pointer', fontFamily: 'inherit' }}>
                         Cancel
                       </button>
                     </div>
                   </div>
                 ) : (
                   <button onClick={() => setAdding(true)}
-                    style={{ width: '100%', padding: '7px 0', borderRadius: 6, background: 'none', border: '1px dashed #21262d', color: '#444', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', marginTop: 4 }}
-                    onMouseEnter={e => { e.currentTarget.style.color = '#58a6ff'; e.currentTarget.style.borderColor = '#388bfd44' }}
-                    onMouseLeave={e => { e.currentTarget.style.color = '#444'; e.currentTarget.style.borderColor = '#21262d' }}>
+                    style={{ width: '100%', padding: '7px 0', borderRadius: 6, background: 'none', border: `1px dashed ${theme.border.default}`, color: theme.text.muted, fontSize: fonts.secondarySize, cursor: 'pointer', fontFamily: 'inherit', marginTop: 4 }}
+                    onMouseEnter={e => { e.currentTarget.style.color = theme.accent.base; e.currentTarget.style.borderColor = theme.accent.soft }}
+                    onMouseLeave={e => { e.currentTarget.style.color = theme.text.muted; e.currentTarget.style.borderColor = theme.border.default }}>
                     + Add MCP Server
                   </button>
                 )}
@@ -307,12 +310,12 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
             <Section label="ENDPOINTS">
               {Object.entries(config.endpoints ?? {}).map(([key, url]) => (
                 <div key={key} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '3px 0' }}>
-                  <span style={{ fontSize: 10, color: '#555', fontFamily: fonts.mono, width: 60, flexShrink: 0 }}>{key}</span>
-                  <span style={{ fontSize: 10, color: '#3fb950', fontFamily: fonts.mono, flex: 1 }}>{url}</span>
+                  <span style={{ fontSize: 10, color: theme.text.disabled, fontFamily: fonts.mono, width: 60, flexShrink: 0 }}>{key}</span>
+                  <span style={{ fontSize: 10, color: theme.status.success, fontFamily: fonts.mono, flex: 1 }}>{url}</span>
                   <button onClick={() => navigator.clipboard.writeText(url)}
-                    style={{ fontSize: 9, color: '#444', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
-                    onMouseEnter={e => (e.currentTarget.style.color = '#58a6ff')}
-                    onMouseLeave={e => (e.currentTarget.style.color = '#444')}>copy</button>
+                    style={{ fontSize: 9, color: theme.text.muted, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+                    onMouseEnter={e => (e.currentTarget.style.color = theme.accent.base)}
+                    onMouseLeave={e => (e.currentTarget.style.color = theme.text.muted)}>copy</button>
                 </div>
               ))}
             </Section>
@@ -326,9 +329,11 @@ export function MCPPanel({ onClose }: Props): JSX.Element {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function Section({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+  const theme = useTheme()
+  const fonts = useAppFonts()
   return (
     <div style={{ marginBottom: 20 }}>
-      <div style={{ fontSize: 9, color: '#388bfd', fontFamily: 'inherit', letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>{label}</div>
+      <div style={{ fontSize: 9, color: theme.accent.base, fontFamily: 'inherit', letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>{label}</div>
       {children}
     </div>
   )
@@ -338,19 +343,20 @@ function ServerRow({ name, description, url, cmd, enabled, builtin, tools }: {
   name: string; description?: string; url?: string; cmd?: string; enabled: boolean; builtin?: boolean; tools?: string[]
 }): JSX.Element {
   const fonts = useAppFonts()
+  const theme = useTheme()
   return (
-    <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 6, padding: '10px 12px' }}>
+    <div style={{ background: theme.surface.panelMuted, border: `1px solid ${theme.border.default}`, borderRadius: 6, padding: '10px 12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: description ? 4 : 0 }}>
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: enabled ? '#3fb950' : '#333', flexShrink: 0 }} />
-        <span style={{ fontSize: 12, fontWeight: 600, color: '#e6edf3' }}>{name}</span>
-        {builtin && <span style={{ fontSize: 9, color: '#388bfd', background: '#0d2137', border: '1px solid #1f3a5f', borderRadius: 3, padding: '1px 6px', fontFamily: 'inherit' }}>built-in</span>}
-        <span style={{ fontSize: 10, color: '#555', fontFamily: fonts.mono, marginLeft: 'auto' }}>{url ?? cmd}</span>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: enabled ? theme.status.success : theme.text.disabled, flexShrink: 0 }} />
+        <span style={{ fontSize: fonts.secondarySize, fontWeight: 600, color: theme.text.primary }}>{name}</span>
+        {builtin && <span style={{ fontSize: 9, color: theme.accent.base, background: theme.accent.soft, border: `1px solid ${theme.border.accent}`, borderRadius: 3, padding: '1px 6px', fontFamily: 'inherit' }}>built-in</span>}
+        <span style={{ fontSize: 10, color: theme.text.disabled, fontFamily: fonts.mono, marginLeft: 'auto' }}>{url ?? cmd}</span>
       </div>
-      {description && <div style={{ fontSize: 10, color: '#555', marginBottom: tools?.length ? 6 : 0 }}>{description}</div>}
+      {description && <div style={{ fontSize: 10, color: theme.text.disabled, marginBottom: tools?.length ? 6 : 0 }}>{description}</div>}
       {tools && (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           {tools.map(t => (
-            <span key={t} style={{ fontSize: 9, color: '#444', background: '#0d1117', border: '1px solid #21262d', borderRadius: 3, padding: '1px 6px', fontFamily: fonts.mono }}>{t}</span>
+            <span key={t} style={{ fontSize: 9, color: theme.text.muted, background: theme.surface.panel, border: `1px solid ${theme.border.default}`, borderRadius: 3, padding: '1px 6px', fontFamily: fonts.mono }}>{t}</span>
           ))}
         </div>
       )}
@@ -362,51 +368,53 @@ function EditableServerRow({ server, onUpdate, onRemove }: {
   server: MCPServer; onUpdate: (p: Partial<MCPServer>) => void; onRemove: () => void
 }): JSX.Element {
   const fonts = useAppFonts()
+  const theme = useTheme()
   const [expanded, setExpanded] = useState(false)
+  const iStyle = { ...getInputStyle(theme), background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.border.default}` }
   return (
-    <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 6, marginBottom: 6, overflow: 'hidden' }}>
+    <div style={{ background: theme.surface.panelMuted, border: `1px solid ${theme.border.default}`, borderRadius: 6, marginBottom: 6, overflow: 'hidden' }}>
       <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
         <button onClick={() => onUpdate({ enabled: !server.enabled })}
-          style={{ width: 12, height: 12, borderRadius: '50%', background: server.enabled ? '#3fb950' : '#333', border: 'none', cursor: 'pointer', flexShrink: 0 }} />
-        <span style={{ fontSize: 12, fontWeight: 600, color: '#e6edf3', flex: 1 }}>{server.name}</span>
-        <span style={{ fontSize: 10, color: '#555', fontFamily: fonts.mono, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
+          style={{ width: 12, height: 12, borderRadius: '50%', background: server.enabled ? theme.status.success : theme.text.disabled, border: 'none', cursor: 'pointer', flexShrink: 0 }} />
+        <span style={{ fontSize: fonts.secondarySize, fontWeight: 600, color: theme.text.primary, flex: 1 }}>{server.name}</span>
+        <span style={{ fontSize: 10, color: theme.text.disabled, fontFamily: fonts.mono, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
           {server.url ?? server.cmd}
         </span>
         <button onClick={() => setExpanded(p => !p)}
-          style={{ fontSize: 9, color: '#444', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
-          onMouseEnter={e => (e.currentTarget.style.color = '#888')}
-          onMouseLeave={e => (e.currentTarget.style.color = '#444')}>
+          style={{ fontSize: 9, color: theme.text.muted, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+          onMouseEnter={e => (e.currentTarget.style.color = theme.text.secondary)}
+          onMouseLeave={e => (e.currentTarget.style.color = theme.text.muted)}>
           {expanded ? 'less' : 'edit'}
         </button>
         <button onClick={onRemove}
-          style={{ fontSize: 10, color: '#333', background: 'none', border: 'none', cursor: 'pointer' }}
-          onMouseEnter={e => (e.currentTarget.style.color = '#ff7b72')}
-          onMouseLeave={e => (e.currentTarget.style.color = '#333')}>x</button>
+          style={{ fontSize: 10, color: theme.text.disabled, background: 'none', border: 'none', cursor: 'pointer' }}
+          onMouseEnter={e => (e.currentTarget.style.color = theme.status.danger)}
+          onMouseLeave={e => (e.currentTarget.style.color = theme.text.disabled)}>x</button>
       </div>
       {expanded && (
-        <div style={{ padding: '0 12px 10px', display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid #21262d' }}>
+        <div style={{ padding: '0 12px 10px', display: 'flex', flexDirection: 'column', gap: 6, borderTop: `1px solid ${theme.border.default}` }}>
           <div style={{ paddingTop: 8 }}>
-            <label style={{ fontSize: 9, color: '#444', fontFamily: 'inherit', display: 'block', marginBottom: 3 }}>URL</label>
+            <label style={{ fontSize: 9, color: theme.text.muted, fontFamily: 'inherit', display: 'block', marginBottom: 3 }}>URL</label>
             <input value={server.url ?? ''} onChange={e => onUpdate({
                 url: e.target.value || undefined,
                 cmd: undefined,
                 type: e.target.value ? 'http' : 'stdio'
               })}
-              placeholder="http://localhost:3000" style={{ ...inputStyle, fontFamily: fonts.mono, fontSize: 10, color: '#3fb950' }} />
+              placeholder="http://localhost:3000" style={{ ...iStyle, fontFamily: fonts.mono, fontSize: 10, color: theme.status.success }} />
           </div>
           <div>
-            <label style={{ fontSize: 9, color: '#444', fontFamily: 'inherit', display: 'block', marginBottom: 3 }}>STDIO COMMAND</label>
+            <label style={{ fontSize: 9, color: theme.text.muted, fontFamily: 'inherit', display: 'block', marginBottom: 3 }}>STDIO COMMAND</label>
             <input value={server.cmd ?? ''} onChange={e => onUpdate({
                 cmd: e.target.value || undefined,
                 url: undefined,
                 type: e.target.value ? 'stdio' : 'http'
               })}
-              placeholder="npx @modelcontextprotocol/server-name" style={{ ...inputStyle, fontFamily: fonts.mono, fontSize: 10 }} />
+              placeholder="npx @modelcontextprotocol/server-name" style={{ ...iStyle, fontFamily: fonts.mono, fontSize: 10 }} />
           </div>
           <div>
-            <label style={{ fontSize: 9, color: '#444', fontFamily: 'inherit', display: 'block', marginBottom: 3 }}>DESCRIPTION</label>
+            <label style={{ fontSize: 9, color: theme.text.muted, fontFamily: 'inherit', display: 'block', marginBottom: 3 }}>DESCRIPTION</label>
             <input value={server.description ?? ''} onChange={e => onUpdate({ description: e.target.value })}
-              placeholder="What does this server provide?" style={inputStyle} />
+              placeholder="What does this server provide?" style={iStyle} />
           </div>
         </div>
       )}
@@ -419,6 +427,7 @@ function CatalogueView({ installed, onAdd }: {
   onAdd: (s: MCPServer) => void
 }): JSX.Element {
   const fonts = useAppFonts()
+  const theme = useTheme()
   const [filter, setFilter] = useState('')
   const [cat, setCat] = useState<string | null>(null)
 
@@ -429,17 +438,19 @@ function CatalogueView({ installed, onAdd }: {
     return true
   })
 
+  const iStyle = { ...getInputStyle(theme), background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.border.default}` }
+
   return (
     <div>
       {/* Category filter */}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
         <button onClick={() => setCat(null)}
-          style={{ ...catBtnStyle, background: cat === null ? '#1f6feb' : '#161b22', color: cat === null ? '#fff' : '#555', border: `1px solid ${cat === null ? '#388bfd' : '#21262d'}` }}>
+          style={{ ...catBtnStyle, background: cat === null ? theme.accent.base : theme.surface.panelMuted, color: cat === null ? theme.text.inverse : theme.text.muted, border: `1px solid ${cat === null ? theme.accent.base : theme.border.default}` }}>
           All
         </button>
         {CATEGORIES.map(c => (
           <button key={c} onClick={() => setCat(cat === c ? null : c)}
-            style={{ ...catBtnStyle, background: cat === c ? '#1f6feb' : '#161b22', color: cat === c ? '#fff' : '#555', border: `1px solid ${cat === c ? '#388bfd' : '#21262d'}` }}>
+            style={{ ...catBtnStyle, background: cat === c ? theme.accent.base : theme.surface.panelMuted, color: cat === c ? theme.text.inverse : theme.text.muted, border: `1px solid ${cat === c ? theme.accent.base : theme.border.default}` }}>
             {c}
           </button>
         ))}
@@ -447,23 +458,23 @@ function CatalogueView({ installed, onAdd }: {
 
       {/* Search */}
       <input value={filter} onChange={e => setFilter(e.target.value)}
-        placeholder="Search servers…"
-        style={{ ...inputStyle, marginBottom: 8 }} />
+        placeholder="Search servers..."
+        style={{ ...iStyle, marginBottom: 8 }} />
 
       {/* Server list */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {filtered.map(s => {
           const isInstalled = installed.includes(s.name)
           return (
-            <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: '#161b22', border: '1px solid #21262d', borderRadius: 6 }}>
+            <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: theme.surface.panelMuted, border: `1px solid ${theme.border.default}`, borderRadius: 6 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: isInstalled ? '#555' : '#c9d1d9' }}>{s.name}</span>
-                  <span style={{ fontSize: 9, color: '#388bfd', background: '#0d2137', border: '1px solid #1f3a5f', borderRadius: 3, padding: '0 5px', fontFamily: 'inherit' }}>{s.category}</span>
-                  {isInstalled && <span style={{ fontSize: 9, color: '#3fb950', fontFamily: 'inherit' }}>added</span>}
+                  <span style={{ fontSize: fonts.secondarySize, fontWeight: 600, color: isInstalled ? theme.text.disabled : theme.text.primary }}>{s.name}</span>
+                  <span style={{ fontSize: 9, color: theme.accent.base, background: theme.accent.soft, border: `1px solid ${theme.border.accent}`, borderRadius: 3, padding: '0 5px', fontFamily: 'inherit' }}>{s.category}</span>
+                  {isInstalled && <span style={{ fontSize: 9, color: theme.status.success, fontFamily: 'inherit' }}>added</span>}
                 </div>
-                <div style={{ fontSize: 10, color: '#555', marginTop: 1 }}>{s.description}</div>
-                <div style={{ fontSize: 9, color: '#2d3a2d', fontFamily: fonts.mono, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <div style={{ fontSize: 10, color: theme.text.disabled, marginTop: 1 }}>{s.description}</div>
+                <div style={{ fontSize: 9, color: theme.text.disabled, fontFamily: fonts.mono, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {s.cmd ?? s.url}
                 </div>
               </div>
@@ -472,11 +483,11 @@ function CatalogueView({ installed, onAdd }: {
                 disabled={isInstalled}
                 style={{
                   padding: '4px 12px', borderRadius: 5, fontSize: 10, cursor: isInstalled ? 'default' : 'pointer',
-                  background: isInstalled ? '#161b22' : '#21262d', color: isInstalled ? '#333' : '#8b949e',
-                  border: `1px solid ${isInstalled ? '#21262d' : '#30363d'}`, fontFamily: 'inherit', flexShrink: 0
+                  background: isInstalled ? theme.surface.panelMuted : theme.surface.panelElevated, color: isInstalled ? theme.text.disabled : theme.text.muted,
+                  border: `1px solid ${theme.border.default}`, fontFamily: 'inherit', flexShrink: 0
                 }}
-                onMouseEnter={e => { if (!isInstalled) { e.currentTarget.style.background = '#1f6feb'; e.currentTarget.style.color = '#fff' } }}
-                onMouseLeave={e => { if (!isInstalled) { e.currentTarget.style.background = '#21262d'; e.currentTarget.style.color = '#8b949e' } }}
+                onMouseEnter={e => { if (!isInstalled) { e.currentTarget.style.background = theme.accent.base; e.currentTarget.style.color = theme.text.inverse } }}
+                onMouseLeave={e => { if (!isInstalled) { e.currentTarget.style.background = theme.surface.panelElevated; e.currentTarget.style.color = theme.text.muted } }}
               >
                 {isInstalled ? 'added' : '+ add'}
               </button>
@@ -492,8 +503,10 @@ const catBtnStyle: React.CSSProperties = {
   padding: '2px 10px', borderRadius: 10, fontSize: 10, cursor: 'pointer', fontFamily: 'inherit'
 }
 
-const inputStyle: React.CSSProperties = {
-  width: '100%', fontSize: 11, padding: '5px 8px', borderRadius: 5,
-  background: '#0d1117', color: '#c9d1d9', border: '1px solid #21262d',
-  outline: 'none', fontFamily: 'inherit'
+function getInputStyle(theme: ReturnType<typeof useTheme>): React.CSSProperties {
+  return {
+    width: '100%', fontSize: 'inherit', padding: '5px 8px', borderRadius: 5,
+    background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.border.default}`,
+    outline: 'none', fontFamily: 'inherit'
+  }
 }

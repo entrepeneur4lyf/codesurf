@@ -83,6 +83,20 @@ const AGENTS_TO_DETECT: Array<Omit<AgentInfo, 'available' | 'path' | 'version'> 
     versionFlag: '--version'
   },
   {
+    id: 'openclaw',
+    label: 'OpenClaw',
+    cmd: 'openclaw',
+    bins: ['openclaw', '/usr/local/bin/openclaw', '/opt/homebrew/bin/openclaw', `${homedir()}/.local/bin/openclaw`, `${homedir()}/.cargo/bin/openclaw`],
+    versionFlag: '--version'
+  },
+  {
+    id: 'hermes',
+    label: 'Hermes',
+    cmd: 'hermes',
+    bins: ['hermes', '/usr/local/bin/hermes', `${homedir()}/.local/bin/hermes`, `${homedir()}/.hermes/bin/hermes`, `${homedir()}/Documents/GitHub/hermes-agent/hermes`],
+    versionFlag: '--version'
+  },
+  {
     id: 'shell',
     label: 'Shell',
     cmd: process.env.SHELL ?? '/bin/zsh',

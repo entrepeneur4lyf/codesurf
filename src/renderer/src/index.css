@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@source "../../../node_modules/streamdown/dist";
+@source "../../../node_modules/@streamdown/code/dist";
 
 @font-face {
   font-family: 'Armata';
@@ -120,6 +122,31 @@
   font-display: swap;
 }
 
+/* Tailwind 4 semantic colors for Streamdown / shadcn-ui compatibility */
+@theme inline {
+  --color-background: #1e1e1e;
+  --color-foreground: #cccccc;
+  --color-muted: #2a2a2a;
+  --color-muted-foreground: #888888;
+  --color-border: #333333;
+  --color-input: #333333;
+  --color-ring: #555555;
+  --color-primary: #3b82f6;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #2a2a2a;
+  --color-secondary-foreground: #cccccc;
+  --color-accent: #333333;
+  --color-accent-foreground: #cccccc;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #ffffff;
+  --color-card: #252525;
+  --color-card-foreground: #cccccc;
+  --color-popover: #252525;
+  --color-popover-foreground: #cccccc;
+  --color-sidebar: #1e1e1e;
+  --radius: 0.5rem;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -168,6 +195,23 @@ button:focus-visible,
   50%       { box-shadow: 0 0 10px #3fb950, 0 0 20px #3fb95044; }
 }
 
+@keyframes discovery-route-travel {
+  0% {
+    stroke-dashoffset: 100;
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+
 /* Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
@@ -183,3 +227,4 @@ button:focus-visible,
 ::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
+

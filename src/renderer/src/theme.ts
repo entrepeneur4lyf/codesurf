@@ -584,8 +584,8 @@ const THEMES: Record<string, AppTheme> = {
     text: {
       primary: '#1b2430',
       secondary: '#2d3748',
-      muted: '#6f7a8a',
-      disabled: '#9aa3b2',
+      muted: '#586676',
+      disabled: '#7a8594',
       inverse: '#ffffff',
     },
     accent: {
@@ -657,11 +657,496 @@ const THEMES: Record<string, AppTheme> = {
       modal: '0 28px 64px rgba(15,23,42,0.16)',
     },
   },
+  'morph-dark': {
+    id: 'morph-dark',
+    label: 'Morph',
+    mode: 'dark',
+    description: 'Deep charcoal with olive-green accents — inspired by morph.so.',
+    canvas: {
+      background: '#18181c',
+      backgroundEffect: '',
+      gridSmall: '#26262c',
+      gridLarge: '#32323a',
+      gridGlowSmall: 'rgba(200,214,78,0.22)',
+      gridGlowLarge: 'rgba(200,214,78,0.32)',
+    },
+    surface: {
+      app: '#131316',
+      sidebarOverlay: 'rgba(19,19,22,0.92)',
+      sidebar: '#151518',
+      panel: '#1a1a1e',
+      panelMuted: '#1f1f24',
+      panelElevated: '#24242a',
+      titlebar: '#1e1e23',
+      input: '#18181c',
+      hover: 'rgba(200,214,78,0.06)',
+      selection: 'rgba(200,214,78,0.10)',
+      selectionBorder: 'rgba(200,214,78,0.22)',
+      accentSoft: 'rgba(200,214,78,0.12)',
+    },
+    border: {
+      subtle: 'rgba(200,214,78,0.06)',
+      default: 'rgba(200,214,78,0.10)',
+      strong: 'rgba(200,214,78,0.18)',
+      accent: 'rgba(200,214,78,0.30)',
+    },
+    text: {
+      primary: '#e8e6e0',
+      secondary: '#d4d0c8',
+      muted: '#aaa69c',
+      disabled: '#6a6760',
+      inverse: '#131316',
+    },
+    accent: {
+      base: '#c8d64e',
+      hover: '#d8e65e',
+      soft: 'rgba(200,214,78,0.12)',
+    },
+    status: {
+      success: '#a0c850',
+      warning: '#e8a838',
+      danger: '#f06868',
+    },
+    chat: {
+      background: '#151518',
+      placeholder: '#6a675e',
+      input: '#1e1e23',
+      inputBorder: 'rgba(200,214,78,0.12)',
+      text: '#e8e6e0',
+      textSecondary: '#c4c0b6',
+      muted: '#8a877e',
+      subtle: '#5e5c56',
+      divider: 'rgba(200,214,78,0.08)',
+      assistantBubble: '#1f1f24',
+      assistantBubbleBorder: 'rgba(200,214,78,0.08)',
+      userBubble: '#2a2a1e',
+      userBubbleBorder: 'rgba(200,214,78,0.18)',
+      dropdownBackground: '#1a1a1e',
+      dropdownBorder: 'rgba(200,214,78,0.10)',
+      dropdownActiveBackground: '#24242a',
+      dropdownHoverBackground: 'rgba(200,214,78,0.06)',
+    },
+    terminal: {
+      background: '#141417',
+      foreground: '#dddbd4',
+      cursor: '#c8d64e',
+      cursorAccent: '#141417',
+      selection: 'rgba(200,214,78,0.18)',
+      black: '#141417',
+      red: '#f06868',
+      green: '#a0c850',
+      yellow: '#e8a838',
+      blue: '#6898d0',
+      magenta: '#c080d8',
+      cyan: '#58b8b0',
+      white: '#dddbd4',
+      brightBlack: '#6a675e',
+      brightRed: '#f88888',
+      brightGreen: '#b8e060',
+      brightYellow: '#f0c048',
+      brightBlue: '#88b8e8',
+      brightMagenta: '#d8a0f0',
+      brightCyan: '#78d8d0',
+      brightWhite: '#f0eee8',
+    },
+    editor: {
+      monacoBase: 'vs-dark',
+      background: '#1a1a1e',
+    },
+    extension: {
+      background: '#1a1a1e',
+      panel: '#24242a',
+      border: 'rgba(200,214,78,0.10)',
+      text: '#e8e6e0',
+      muted: '#8a877e',
+      accent: '#c8d64e',
+    },
+    shadow: {
+      panel: '0 10px 36px rgba(0,0,0,0.48)',
+      modal: '0 32px 80px rgba(0,0,0,0.6)',
+    },
+  },
+  'warm-light': {
+    id: 'warm-light',
+    label: 'Warm Light',
+    mode: 'light',
+    description: 'Soft cream tones with warm amber accents — easy on the eyes.',
+    canvas: {
+      background: '#f5f0ea',
+      backgroundEffect: '',
+      gridSmall: '#e2dbd2',
+      gridLarge: '#d0c8bd',
+      gridGlowSmall: 'rgba(162,100,28,0.14)',
+      gridGlowLarge: 'rgba(162,100,28,0.20)',
+    },
+    surface: {
+      app: '#f0ebe4',
+      sidebarOverlay: 'rgba(245,240,234,0.94)',
+      sidebar: '#faf7f2',
+      panel: '#fffdf8',
+      panelMuted: '#f5f0ea',
+      panelElevated: '#eee8e0',
+      titlebar: '#f5f0ea',
+      input: '#fffdf8',
+      hover: 'rgba(120,80,20,0.05)',
+      selection: 'rgba(186,120,40,0.10)',
+      selectionBorder: 'rgba(186,120,40,0.22)',
+      accentSoft: 'rgba(186,120,40,0.10)',
+    },
+    border: {
+      subtle: 'rgba(120,80,20,0.06)',
+      default: 'rgba(120,80,20,0.12)',
+      strong: 'rgba(120,80,20,0.20)',
+      accent: 'rgba(186,120,40,0.30)',
+    },
+    text: {
+      primary: '#2c2418',
+      secondary: '#4a3e30',
+      muted: '#7a6e5e',
+      disabled: '#9a8e7e',
+      inverse: '#fffdf8',
+    },
+    accent: {
+      base: '#ba7828',
+      hover: '#d08830',
+      soft: 'rgba(186,120,40,0.10)',
+    },
+    status: {
+      success: '#3d8c50',
+      warning: '#c07b12',
+      danger: '#c44040',
+    },
+    chat: {
+      background: '#fffdf8',
+      placeholder: '#9a8e7e',
+      input: '#fffdf8',
+      inputBorder: 'rgba(120,80,20,0.12)',
+      text: '#2c2418',
+      textSecondary: '#4a3e30',
+      muted: '#7a6e5e',
+      subtle: '#9a8e7e',
+      divider: 'rgba(120,80,20,0.10)',
+      assistantBubble: '#f5f0ea',
+      assistantBubbleBorder: 'rgba(120,80,20,0.08)',
+      userBubble: '#f0e4d0',
+      userBubbleBorder: '#dcc8a8',
+      dropdownBackground: '#fffdf8',
+      dropdownBorder: 'rgba(120,80,20,0.12)',
+      dropdownActiveBackground: '#eee8e0',
+      dropdownHoverBackground: 'rgba(120,80,20,0.05)',
+    },
+    terminal: {
+      background: '#faf6f0',
+      foreground: '#2c2418',
+      cursor: '#2c2418',
+      cursorAccent: '#faf6f0',
+      selection: 'rgba(186,120,40,0.18)',
+      black: '#2c2418',
+      red: '#c44040',
+      green: '#3d8c50',
+      yellow: '#a06800',
+      blue: '#3568c0',
+      magenta: '#8848a0',
+      cyan: '#287878',
+      white: '#7a6e5e',
+      brightBlack: '#9a8e7e',
+      brightRed: '#d85050',
+      brightGreen: '#4ca860',
+      brightYellow: '#b88018',
+      brightBlue: '#4878d0',
+      brightMagenta: '#a060b8',
+      brightCyan: '#389090',
+      brightWhite: '#2c2418',
+    },
+    editor: {
+      monacoBase: 'vs',
+      background: '#fffdf8',
+    },
+    extension: {
+      background: '#fffdf8',
+      panel: '#f5f0ea',
+      border: 'rgba(120,80,20,0.12)',
+      text: '#2c2418',
+      muted: '#7a6e5e',
+      accent: '#ba7828',
+    },
+    shadow: {
+      panel: '0 8px 24px rgba(80,50,10,0.08)',
+      modal: '0 24px 56px rgba(80,50,10,0.12)',
+    },
+  },
+  'linear-light': {
+    id: 'linear-light',
+    label: 'Linear Light',
+    mode: 'light',
+    description: 'Cool blue-grey workspace inspired by modern productivity tools.',
+    canvas: {
+      background: '#f2f4f8',
+      backgroundEffect: '',
+      gridSmall: '#d8dce6',
+      gridLarge: '#c4cad8',
+      gridGlowSmall: 'rgba(80,100,200,0.14)',
+      gridGlowLarge: 'rgba(80,100,200,0.20)',
+    },
+    surface: {
+      app: '#edf0f6',
+      sidebarOverlay: 'rgba(242,244,248,0.94)',
+      sidebar: '#f8f9fc',
+      panel: '#ffffff',
+      panelMuted: '#f2f4f8',
+      panelElevated: '#eaecf2',
+      titlebar: '#f2f4f8',
+      input: '#ffffff',
+      hover: 'rgba(60,80,160,0.04)',
+      selection: 'rgba(80,100,200,0.08)',
+      selectionBorder: 'rgba(80,100,200,0.20)',
+      accentSoft: 'rgba(80,100,200,0.08)',
+    },
+    border: {
+      subtle: 'rgba(20,30,60,0.05)',
+      default: 'rgba(20,30,60,0.10)',
+      strong: 'rgba(20,30,60,0.16)',
+      accent: 'rgba(80,100,200,0.28)',
+    },
+    text: {
+      primary: '#1a1e2e',
+      secondary: '#363c50',
+      muted: '#6a7088',
+      disabled: '#8a90a4',
+      inverse: '#ffffff',
+    },
+    accent: {
+      base: '#5064c8',
+      hover: '#6478e0',
+      soft: 'rgba(80,100,200,0.08)',
+    },
+    status: {
+      success: '#28845c',
+      warning: '#c07b12',
+      danger: '#d04848',
+    },
+    chat: {
+      background: '#ffffff',
+      placeholder: '#8a90a4',
+      input: '#ffffff',
+      inputBorder: 'rgba(20,30,60,0.10)',
+      text: '#1a1e2e',
+      textSecondary: '#363c50',
+      muted: '#6a7088',
+      subtle: '#8a90a4',
+      divider: 'rgba(20,30,60,0.08)',
+      assistantBubble: '#f2f4f8',
+      assistantBubbleBorder: 'rgba(20,30,60,0.06)',
+      userBubble: '#e8ecff',
+      userBubbleBorder: '#c0c8f0',
+      dropdownBackground: '#ffffff',
+      dropdownBorder: 'rgba(20,30,60,0.10)',
+      dropdownActiveBackground: '#eaecf2',
+      dropdownHoverBackground: 'rgba(60,80,160,0.04)',
+    },
+    terminal: {
+      background: '#f8f9fc',
+      foreground: '#1a1e2e',
+      cursor: '#1a1e2e',
+      cursorAccent: '#f8f9fc',
+      selection: 'rgba(80,100,200,0.16)',
+      black: '#1a1e2e',
+      red: '#d04848',
+      green: '#28845c',
+      yellow: '#9a6800',
+      blue: '#3058c0',
+      magenta: '#7c40b0',
+      cyan: '#1a7888',
+      white: '#6a7088',
+      brightBlack: '#8a90a4',
+      brightRed: '#e06060',
+      brightGreen: '#38a070',
+      brightYellow: '#b88018',
+      brightBlue: '#4070d8',
+      brightMagenta: '#9458c8',
+      brightCyan: '#2a90a0',
+      brightWhite: '#1a1e2e',
+    },
+    editor: {
+      monacoBase: 'vs',
+      background: '#ffffff',
+    },
+    extension: {
+      background: '#ffffff',
+      panel: '#f2f4f8',
+      border: 'rgba(20,30,60,0.10)',
+      text: '#1a1e2e',
+      muted: '#6a7088',
+      accent: '#5064c8',
+    },
+    shadow: {
+      panel: '0 8px 24px rgba(20,30,60,0.08)',
+      modal: '0 24px 56px rgba(20,30,60,0.12)',
+    },
+  },
+  'garden-light': {
+    id: 'garden-light',
+    label: 'Garden',
+    mode: 'light',
+    description: 'Natural green tones for a calm, focused workspace.',
+    canvas: {
+      background: '#f0f4f0',
+      backgroundEffect: '',
+      gridSmall: '#d4dcd4',
+      gridLarge: '#bec8be',
+      gridGlowSmall: 'rgba(48,96,56,0.14)',
+      gridGlowLarge: 'rgba(48,96,56,0.20)',
+    },
+    surface: {
+      app: '#eaf0ea',
+      sidebarOverlay: 'rgba(240,244,240,0.94)',
+      sidebar: '#f6faf6',
+      panel: '#fcfefc',
+      panelMuted: '#f0f4f0',
+      panelElevated: '#e6ece6',
+      titlebar: '#f0f4f0',
+      input: '#fcfefc',
+      hover: 'rgba(40,80,48,0.04)',
+      selection: 'rgba(48,96,56,0.08)',
+      selectionBorder: 'rgba(48,96,56,0.20)',
+      accentSoft: 'rgba(48,96,56,0.08)',
+    },
+    border: {
+      subtle: 'rgba(20,50,20,0.05)',
+      default: 'rgba(20,50,20,0.10)',
+      strong: 'rgba(20,50,20,0.16)',
+      accent: 'rgba(48,96,56,0.28)',
+    },
+    text: {
+      primary: '#1a2e1c',
+      secondary: '#2e4430',
+      muted: '#5a7060',
+      disabled: '#7e9480',
+      inverse: '#fcfefc',
+    },
+    accent: {
+      base: '#306038',
+      hover: '#408048',
+      soft: 'rgba(48,96,56,0.08)',
+    },
+    status: {
+      success: '#2a7840',
+      warning: '#b87818',
+      danger: '#c84040',
+    },
+    chat: {
+      background: '#fcfefc',
+      placeholder: '#7e9480',
+      input: '#fcfefc',
+      inputBorder: 'rgba(20,50,20,0.10)',
+      text: '#1a2e1c',
+      textSecondary: '#2e4430',
+      muted: '#5a7060',
+      subtle: '#7e9480',
+      divider: 'rgba(20,50,20,0.08)',
+      assistantBubble: '#f0f4f0',
+      assistantBubbleBorder: 'rgba(20,50,20,0.06)',
+      userBubble: '#e0f0e4',
+      userBubbleBorder: '#b8d4bc',
+      dropdownBackground: '#fcfefc',
+      dropdownBorder: 'rgba(20,50,20,0.10)',
+      dropdownActiveBackground: '#e6ece6',
+      dropdownHoverBackground: 'rgba(40,80,48,0.04)',
+    },
+    terminal: {
+      background: '#f6faf6',
+      foreground: '#1a2e1c',
+      cursor: '#1a2e1c',
+      cursorAccent: '#f6faf6',
+      selection: 'rgba(48,96,56,0.16)',
+      black: '#1a2e1c',
+      red: '#c84040',
+      green: '#2a7840',
+      yellow: '#907000',
+      blue: '#2860b0',
+      magenta: '#7040a0',
+      cyan: '#187068',
+      white: '#5a7060',
+      brightBlack: '#7e9480',
+      brightRed: '#d85858',
+      brightGreen: '#389050',
+      brightYellow: '#a88818',
+      brightBlue: '#3878c8',
+      brightMagenta: '#8858b8',
+      brightCyan: '#289080',
+      brightWhite: '#1a2e1c',
+    },
+    editor: {
+      monacoBase: 'vs',
+      background: '#fcfefc',
+    },
+    extension: {
+      background: '#fcfefc',
+      panel: '#f0f4f0',
+      border: 'rgba(20,50,20,0.10)',
+      text: '#1a2e1c',
+      muted: '#5a7060',
+      accent: '#306038',
+    },
+    shadow: {
+      panel: '0 8px 24px rgba(20,40,20,0.08)',
+      modal: '0 24px 56px rgba(20,40,20,0.10)',
+    },
+  },
+}
+
+export type AppearanceMode = 'dark' | 'light' | 'system'
+
+/** Which theme id to apply given appearance mode, saved dark preset, and OS dark preference. */
+export function resolveEffectiveThemeId(
+  appearance: AppearanceMode | undefined,
+  themeId: string,
+  systemPrefersDark: boolean,
+): string {
+  const a = appearance ?? 'dark'
+  const theme = THEMES[themeId]
+  if (a === 'light') {
+    // Use the selected theme if it's a light theme, otherwise fall back to paper-light
+    return theme?.mode === 'light' ? themeId : 'paper-light'
+  }
+  if (a === 'system') {
+    if (systemPrefersDark) {
+      return theme?.mode === 'dark' ? themeId : DEFAULT_THEME_ID
+    }
+    return theme?.mode === 'light' ? themeId : 'paper-light'
+  }
+  // Dark mode — use selected if dark, otherwise default
+  return theme?.mode === 'dark' ? themeId : (THEMES[themeId] ? themeId : DEFAULT_THEME_ID)
 }
 
 export const DEFAULT_THEME_ID = 'default-dark'
+const BUILTIN_THEME_IDS = new Set(Object.keys(THEMES))
 export const THEME_PRESETS = Object.values(THEMES)
 export const THEME_OPTIONS = THEME_PRESETS.map(({ id, label, mode, description }) => ({ id, label, mode, description }))
+
+/** Register or update a custom (extension-provided) theme at runtime. Builtins are immutable. */
+export function registerCustomTheme(theme: AppTheme): void {
+  if (BUILTIN_THEME_IDS.has(theme.id)) return
+  THEMES[theme.id] = theme
+  const presetIndex = THEME_PRESETS.findIndex(t => t.id === theme.id)
+  if (presetIndex >= 0) THEME_PRESETS[presetIndex] = theme
+  else THEME_PRESETS.push(theme)
+
+  const option = { id: theme.id, label: theme.label, mode: theme.mode, description: theme.description }
+  const optionIndex = THEME_OPTIONS.findIndex(t => t.id === theme.id)
+  if (optionIndex >= 0) THEME_OPTIONS[optionIndex] = option
+  else THEME_OPTIONS.push(option)
+}
+
+/** Remove a custom theme registered at runtime. Builtins are immutable. */
+export function unregisterCustomTheme(themeId: string): void {
+  if (!themeId || BUILTIN_THEME_IDS.has(themeId)) return
+  delete THEMES[themeId]
+  const presetIndex = THEME_PRESETS.findIndex(t => t.id === themeId)
+  if (presetIndex >= 0) THEME_PRESETS.splice(presetIndex, 1)
+  const optionIndex = THEME_OPTIONS.findIndex(t => t.id === themeId)
+  if (optionIndex >= 0) THEME_OPTIONS.splice(optionIndex, 1)
+}
 
 export function getThemeById(id?: string | null): AppTheme {
   if (!id) return THEMES[DEFAULT_THEME_ID]

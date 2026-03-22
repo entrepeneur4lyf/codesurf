@@ -3,6 +3,8 @@ import type { TileState, SkillConfig, ContextItem, ActivityStatus } from '../../
 import { buildObjective } from '../utils/objectiveBuilder'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { useTheme } from '../ThemeContext'
+import { useAppFonts } from '../FontContext'
+import { useTileColor } from '../TileColorContext'
 
 // --- Drawer data types ---
 
@@ -24,13 +26,30 @@ interface ToolItem {
   timestamp: number
 }
 
-type DrawerTab = 'tasks' | 'tools' | 'skills' | 'context'
+interface MessageItem {
+  id: string
+  source: 'direct' | 'group'
+  direction: 'inbound' | 'outbound'
+  fromTileId: string
+  toTileId?: string
+  channel?: string
+  subject: string
+  type?: string
+  kind?: string
+  scope?: string
+  createdAt: number
+  status?: string
+  mailbox?: string
+}
+
+type DrawerTab = 'tasks' | 'tools' | 'skills' | 'context' | 'messages'
 
 interface DrawerData {
   tasks: TaskItem[]
   tools: ToolItem[]
   skills: SkillConfig[]
   context: ContextItem[]
+  messages: MessageItem[]
 }
 
 // --- TileChrome props ---
@@ -40,6 +59,7 @@ interface Props {
   workspaceId?: string
   workspaceDir?: string
   onClose: () => void
+  onActivate?: () => void
   onTitlebarMouseDown: (e: React.MouseEvent) => void
   onResizeMouseDown: (e: React.MouseEvent, dir: 'e' | 's' | 'se' | 'w' | 'n' | 'nw' | 'ne' | 'sw') => void
   onContextMenu?: (e: React.MouseEvent) => void
@@ -51,6 +71,10 @@ interface Props {
   busUnreadCount?: number
   onBusPopupToggle?: () => void
   showBusPopup?: boolean
+  discoveryConnected?: boolean
+  connectedPeers?: string[]
+  titlebarColor?: string
+  titlebarExtra?: React.ReactNode
   busEvents?: Array<{
     id: string
     type: string
@@ -64,7 +88,7 @@ const DRAWER_WIDTH = 260
 const DRAWER_TYPES = new Set(['terminal', 'chat'])
 
 const TYPE_LABELS: Record<string, string> = {
-  terminal: 'Terminal', note: 'Note', code: 'Code', image: 'Image', kanban: 'Board', browser: 'Browser', chat: 'Chat',
+  terminal: 'Terminal', note: 'Note', code: 'Code', image: 'Image', kanban: 'Board', browser: 'Browser', chat: 'Chat', files: 'Files', customisation: 'Settings',
 }
 
 // Extension type labels are resolved dynamically — see getTypeLabel()
@@ -79,6 +103,7 @@ function getTypeLabel(type: string): string {
 }
 
 export function fileLabel(tile: TileState): string {
+  if (tile.label) return tile.label
   if (!tile.filePath) return getTypeLabel(tile.type)
   return tile.filePath.replace(/\\/g, '/').split('/').pop() || tile.filePath
 }
@@ -121,6 +146,12 @@ function TabIcon({ tab }: { tab: DrawerTab }): JSX.Element {
       <path d="M6 1l1.5 3.5H11l-3 2.2 1.2 3.3L6 7.8 2.8 10l1.2-3.3-3-2.2h3.5z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
     </svg>
   )
+  if (tab === 'messages') return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+      <path d="M1.5 2h9a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5v-7A.5.5 0 0 1 1.5 2z" stroke="currentColor" strokeWidth="1" />
+      <path d="M1.5 2.5 6 5.75 10.5 2.5" stroke="currentColor" strokeWidth="1" />
+    </svg>
+  )
   // context
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -134,19 +165,32 @@ function TabIcon({ tab }: { tab: DrawerTab }): JSX.Element {
 // ─── Tab labels ──────────────────────────────────────────────────────────────
 
 const TAB_LABELS: Record<DrawerTab, string> = {
-  tasks: 'Tasks', tools: 'Tools', skills: 'Skills', context: 'Context'
+  tasks: 'Tasks', tools: 'Tools Available', skills: 'Skills', context: 'Context', messages: 'Messages'
 }
 
-const ALL_TABS: DrawerTab[] = ['tasks', 'tools', 'skills', 'context']
+const ALL_TABS: DrawerTab[] = ['tasks', 'tools', 'skills', 'context', 'messages']
 
 function drawerTabTitle(tab: DrawerTab): string {
   return TAB_LABELS[tab].toUpperCase()
+}
+
+function getTitlebarForeground(background: string | null | undefined, lightFallback: string, darkFallback: string): string {
+  if (!background) return lightFallback
+  const hex = background.trim().match(/^#([0-9a-f]{6})$/i)
+  if (!hex) return lightFallback
+  const value = hex[1]
+  const r = parseInt(value.slice(0, 2), 16)
+  const g = parseInt(value.slice(2, 4), 16)
+  const b = parseInt(value.slice(4, 6), 16)
+  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+  return luminance > 0.62 ? darkFallback : lightFallback
 }
 
 // ─── Status icons ────────────────────────────────────────────────────────────
 
 function TaskStatusIcon({ status }: { status: TaskItem['status'] }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   if (status === 'done') return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
       <circle cx="6" cy="6" r="5" stroke={theme.status.success} strokeWidth="1.2" />
@@ -180,6 +224,7 @@ function TaskStatusIcon({ status }: { status: TaskItem['status'] }): JSX.Element
 
 function ToolStatusIcon({ status }: { status: ToolItem['status'] }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   if (status === 'done') return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
       <circle cx="6" cy="6" r="5" stroke={theme.status.success} strokeWidth="1.2" />
@@ -208,6 +253,7 @@ function ActionBtn({ title, color, onClick, children }: {
   title: string; color: string; onClick: () => void; children: React.ReactNode
 }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   return (
     <button
       title={title}
@@ -240,6 +286,7 @@ function TasksPanel({ tasks, onUpdateTask, onDeleteTask, onAddTask }: {
   onAddTask: (title: string) => void
 }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const [newTitle, setNewTitle] = useState('')
   const [taskMenu, setTaskMenu] = useState<{ x: number; y: number; task: TaskItem } | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -318,7 +365,7 @@ function TasksPanel({ tasks, onUpdateTask, onDeleteTask, onAddTask }: {
       >
         <TaskStatusIcon status={task.status} />
       </button>
-      <div style={{ flex: 1, minWidth: 0, fontSize: 11, color: doneRow ? theme.text.disabled : theme.text.secondary, textDecoration: doneRow ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div style={{ flex: 1, minWidth: 0, fontSize: fonts.secondarySize, color: doneRow ? theme.text.disabled : theme.text.secondary, textDecoration: doneRow ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {task.title}
       </div>
       <div style={{ display: 'flex', gap: 1, flexShrink: 0 }}>
@@ -369,7 +416,7 @@ function TasksPanel({ tasks, onUpdateTask, onDeleteTask, onAddTask }: {
           rows={2}
           style={{
             width: '100%', borderRadius: 6, border: `1px solid ${theme.border.default}`, background: theme.surface.input,
-            color: theme.text.secondary, fontSize: 11, padding: '4px 8px', resize: 'vertical', outline: 'none', minHeight: 36, maxHeight: 100, lineHeight: 1.4,
+            color: theme.text.secondary, fontSize: fonts.secondarySize, padding: '4px 8px', resize: 'vertical', outline: 'none', minHeight: 36, maxHeight: 100, lineHeight: 1.4,
           }}
           onFocus={e => {
             e.currentTarget.style.borderColor = theme.border.accent
@@ -411,6 +458,7 @@ function TasksPanel({ tasks, onUpdateTask, onDeleteTask, onAddTask }: {
 
 function ToolsPanel({ tools }: { tools: ToolItem[] }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
       {tools.length === 0 ? (
@@ -420,7 +468,7 @@ function ToolsPanel({ tools }: { tools: ToolItem[] }): JSX.Element {
           <div key={t.id} style={{ padding: '5px 12px', display: 'flex', alignItems: 'flex-start', gap: 6 }}>
             <div style={{ marginTop: 1, flexShrink: 0 }}><ToolStatusIcon status={t.status} /></div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, color: theme.text.secondary, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</div>
+              <div style={{ fontSize: fonts.secondarySize, color: theme.text.secondary, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</div>
               {t.input && <div style={{ fontSize: 10, color: theme.text.muted, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.input}</div>}
               {t.elapsed != null && t.status === 'done' && (
                 <div style={{ fontSize: 9, color: theme.text.disabled, marginTop: 1 }}>{(t.elapsed / 1000).toFixed(1)}s</div>
@@ -438,6 +486,7 @@ function SkillsPanel({ skills, onToggle }: {
   onToggle: (id: string) => void
 }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const builtin = skills.filter(s => s.source === 'builtin')
   const mcpGroups = new Map<string, SkillConfig[]>()
   for (const s of skills.filter(s => s.source === 'mcp')) {
@@ -463,7 +512,7 @@ function SkillsPanel({ skills, onToggle }: {
         }} />
       </button>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 11, color: s.enabled ? theme.text.secondary : theme.text.disabled, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</div>
+        <div style={{ fontSize: fonts.secondarySize, color: s.enabled ? theme.text.secondary : theme.text.disabled, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</div>
         {s.description && <div style={{ fontSize: 9, color: theme.text.disabled, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.description}</div>}
       </div>
     </div>
@@ -499,6 +548,7 @@ function ContextPanel({ items, onAddNote, onRemoveItem }: {
   onRemoveItem: (id: string) => void
 }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const [note, setNote] = useState('')
   const submitNote = () => {
     const t = note.trim()
@@ -517,7 +567,7 @@ function ContextPanel({ items, onAddNote, onRemoveItem }: {
           rows={2}
           style={{
             width: '100%', borderRadius: 4, border: `1px solid ${theme.border.default}`, background: theme.surface.input,
-            color: theme.text.secondary, fontSize: 11, padding: '4px 6px', resize: 'vertical', outline: 'none',
+            color: theme.text.secondary, fontSize: fonts.secondarySize, padding: '4px 6px', resize: 'vertical', outline: 'none',
             minHeight: 36, maxHeight: 100, lineHeight: 1.4,
           }}
           onFocus={e => (e.currentTarget.style.borderColor = theme.border.accent)}
@@ -541,7 +591,7 @@ function ContextPanel({ items, onAddNote, onRemoveItem }: {
               {c.type === 'note' ? 'N' : 'F'}
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, color: theme.text.secondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
+              <div style={{ fontSize: fonts.secondarySize, color: theme.text.secondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
               {c.type === 'note' && c.content && (
                 <div style={{ fontSize: 10, color: theme.text.muted, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.content.slice(0, 80)}</div>
               )}
@@ -556,13 +606,48 @@ function ContextPanel({ items, onAddNote, onRemoveItem }: {
   )
 }
 
+function MessagePanel({ messages }: { messages: MessageItem[] }): JSX.Element {
+  const theme = useTheme()
+  const fonts = useAppFonts()
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+      {messages.length === 0 ? (
+        <EmptyState text="No messages yet" />
+      ) : (
+        messages.map(m => {
+          const directionLabel = m.direction === 'inbound' ? 'From' : m.direction === 'outbound' ? 'To' : 'Message'
+          const peer = m.direction === 'inbound' ? m.fromTileId : m.toTileId
+          const peerLabel = peer ? `${peer.slice(0, 8)}` : 'system'
+          const badgeColor = m.source === 'group' ? theme.accent.base : theme.text.muted
+          return (
+            <div key={m.id} style={{ padding: '6px 8px', borderBottom: `1px solid ${theme.border.subtle}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 2 }}>
+                <span style={{ fontSize: 10, color: badgeColor, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase' }}>
+                  {m.source === 'group' ? `#${m.channel}` : directionLabel}
+                </span>
+                <span style={{ fontSize: 9, color: theme.text.disabled }}>
+                  {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+              <div style={{ fontSize: 10, color: theme.text.secondary, marginBottom: 1 }}>{peerLabel} · {m.subject}</div>
+              {m.kind && <div style={{ fontSize: 9, color: theme.text.disabled }}>{m.kind}</div>}
+            </div>
+          )
+        })
+      )}
+    </div>
+  )
+}
+
 function EmptyState({ text }: { text: string }): JSX.Element {
   const theme = useTheme()
-  return <div style={{ padding: '24px 12px', textAlign: 'center', color: theme.text.disabled, fontSize: 11 }}>{text}</div>
+  const fonts = useAppFonts()
+  return <div style={{ padding: '24px 12px', textAlign: 'center', color: theme.text.disabled, fontSize: fonts.secondarySize }}>{text}</div>
 }
 
 function Divider(): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   return <div style={{ height: 1, background: theme.border.subtle, margin: '4px 12px' }} />
 }
 
@@ -580,11 +665,13 @@ function DrawerPanel({ data, activeTab, onTabChange, onUpdateTask, onDeleteTask,
   onRemoveContext: (id: string) => void
 }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const counts: Record<DrawerTab, number> = {
     tasks: data.tasks.filter(t => t.status !== 'done').length,
     tools: data.tools.filter(t => t.status === 'running').length,
     skills: data.skills.filter(s => s.enabled).length,
     context: data.context.length,
+    messages: data.messages.length,
   }
 
   return (
@@ -615,7 +702,7 @@ function DrawerPanel({ data, activeTab, onTabChange, onUpdateTask, onDeleteTask,
 
       {/* Active panel */}
       <div style={{ padding: '10px 14px 7px', borderBottom: `1px solid ${theme.border.subtle}`, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: theme.text.secondary, letterSpacing: 0.7, textTransform: 'uppercase', lineHeight: 1 }}>
+        <div style={{ fontSize: fonts.secondarySize, fontWeight: 700, color: theme.text.secondary, letterSpacing: 0.7, textTransform: 'uppercase', lineHeight: 1 }}>
           {drawerTabTitle(activeTab)}
         </div>
       </div>
@@ -623,6 +710,7 @@ function DrawerPanel({ data, activeTab, onTabChange, onUpdateTask, onDeleteTask,
       {activeTab === 'tools' && <ToolsPanel tools={data.tools} />}
       {activeTab === 'skills' && <SkillsPanel skills={data.skills} onToggle={onToggleSkill} />}
       {activeTab === 'context' && <ContextPanel items={data.context} onAddNote={onAddNote} onRemoveItem={onRemoveContext} />}
+      {activeTab === 'messages' && <MessagePanel messages={data.messages} />}
     </div>
   )
 }
@@ -631,6 +719,7 @@ function TabButton({ tab, active, count, onClick }: {
   tab: DrawerTab; active: boolean; count: number; onClick: () => void
 }): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
   const [h, setH] = useState(false)
   return (
     <button
@@ -644,13 +733,13 @@ function TabButton({ tab, active, count, onClick }: {
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         height: 28,
         minWidth: 32,
-        background: active ? theme.surface.selection : (h ? theme.surface.hover : 'transparent'),
-        border: `1px solid ${active ? theme.border.default : h ? theme.border.default : 'transparent'}`,
+        background: 'transparent',
+        border: 'none',
         borderRadius: 7,
         cursor: 'pointer',
         color: active ? theme.accent.base : (h ? theme.text.secondary : theme.text.muted),
         padding: '0 9px',
-        transition: 'color 0.15s, background 0.15s, border-color 0.15s',
+        transition: 'color 0.15s',
         flex: 1,
       }}
     >
@@ -788,17 +877,23 @@ function processEvent(evt: { type: string; payload: Record<string, unknown>; id:
 // ─── Main TileChrome ─────────────────────────────────────────────────────────
 
 export function TileChrome({
-  tile, workspaceId, workspaceDir, onClose, onTitlebarMouseDown, onResizeMouseDown, onContextMenu,
+  tile, workspaceId, workspaceDir, onClose, onActivate, onTitlebarMouseDown, onResizeMouseDown, onContextMenu,
   onExpandChange, children, isSelected, forceExpanded,
-  busUnreadCount, onBusPopupToggle, showBusPopup, busEvents
+  busUnreadCount, onBusPopupToggle, showBusPopup, discoveryConnected, connectedPeers, titlebarColor: titlebarColorProp, titlebarExtra, busEvents
 }: Props): JSX.Element {
   const theme = useTheme()
+  const fonts = useAppFonts()
+  const { color: tileContextColor } = useTileColor()
+  const titlebarColor = titlebarColorProp ?? tileContextColor
+  const titlebarForeground = getTitlebarForeground(titlebarColor, theme.text.primary, '#3a2f00')
+  const titlebarMuted = titlebarColor ? `${titlebarForeground}aa` : theme.text.disabled
   const [localExpanded, setLocalExpanded] = useState(false)
   const expanded = forceExpanded ?? localExpanded
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<DrawerTab>('tasks')
-  const [data, setData] = useState<DrawerData>({ tasks: [], tools: [], skills: [], context: [] })
+  const [data, setData] = useState<DrawerData>({ tasks: [], tools: [], skills: [], context: [], messages: [] })
   const hasDrawer = DRAWER_TYPES.has(tile.type)
+  const peerIds = React.useMemo(() => [...new Set((connectedPeers ?? []).filter(Boolean))], [connectedPeers])
 
   const toggle = () => {
     const next = !expanded
@@ -848,10 +943,11 @@ export function TileChrome({
   useEffect(() => { regenerateObjective() }, [regenerateObjective])
   useEffect(() => () => { if (regenTimer.current) clearTimeout(regenTimer.current) }, [])
 
-  // ── Collab: ensure .collab dir + start watcher on mount ────────────────
+  // ── Collab: ensure per-tile protocol dirs; state watcher only for drawer tiles ──
   useEffect(() => {
-    if (!workspaceDir || !hasDrawer) return
+    if (!workspaceDir) return
     window.electron?.collab?.ensureDir(workspaceDir, tile.id)
+    if (!hasDrawer) return
     window.electron?.collab?.watchState(workspaceDir, tile.id)
     return () => { window.electron?.collab?.unwatchState(workspaceDir, tile.id) }
   }, [workspaceDir, tile.id, hasDrawer])
@@ -922,6 +1018,68 @@ export function TileChrome({
       window.electron?.collab?.removeContext(workspaceDir, tile.id, item.name)
     }
   }, [workspaceDir, tile.id, data.context])
+
+  const loadMessages = useCallback(async () => {
+    if (!hasDrawer || !workspaceDir) return
+
+    const peers = new Set(peerIds)
+    const items: MessageItem[] = []
+    const seen = new Set<string>()
+
+    const pushMessage = (msg: MessageItem) => {
+      if (seen.has(msg.id)) return
+      seen.add(msg.id)
+      items.push(msg)
+    }
+
+    const collabInboxes = await window.electron?.collab?.listMessages?.(workspaceDir, tile.id, 'inbox')
+    const collabSent = await window.electron?.collab?.listMessages?.(workspaceDir, tile.id, 'sent')
+    const collabMessages = [...(collabInboxes ?? []), ...(collabSent ?? [])]
+    for (const msg of collabMessages) {
+      const from = msg.meta.fromTileId
+      const to = msg.meta.toTileId
+      const peer = from === tile.id ? to : from
+      if (!peers.has(peer) && peers.size > 0) continue
+      const direction: MessageItem['direction'] = from === tile.id ? 'outbound' : 'inbound'
+      pushMessage({
+        id: msg.meta.id,
+        source: 'direct',
+        direction,
+        fromTileId: from,
+        toTileId: to,
+        subject: msg.meta.subject || '(no subject)',
+        type: msg.meta.type,
+        kind: msg.meta.type,
+        createdAt: msg.meta.createdTs,
+        status: msg.meta.status,
+        mailbox: msg.mailbox,
+      })
+    }
+
+    items.sort((a, b) => b.createdAt - a.createdAt)
+    setData(prev => ({ ...prev, messages: items }))
+  }, [hasDrawer, workspaceDir, tile.id, peerIds.join(',')])
+
+  useEffect(() => {
+    if (!hasDrawer || !workspaceDir) return
+    loadMessages()
+    const interval = setInterval(() => { loadMessages() }, 15000)
+
+    window.electron?.collab?.watchMessages(workspaceDir, tile.id)
+    const unsubscribeMessageChanges = window.electron?.collab?.onMessageChanged((change: any) => {
+      if (change?.workspacePath && change.workspacePath !== workspaceDir) return
+      if (change.tileId !== tile.id) return
+      if (change.mailbox === 'inbox' || change.mailbox === 'sent') {
+        loadMessages()
+      }
+    })
+
+    return () => {
+      clearInterval(interval)
+      window.electron?.collab?.unwatchMessages(workspaceDir, tile.id)
+      unsubscribeMessageChanges?.()
+    }
+  }, [hasDrawer, workspaceDir, tile.id, loadMessages, peerIds.join(',')])
 
   // ── Load skills from MCP config on mount ───────────────────────────────
   useEffect(() => {
@@ -996,6 +1154,7 @@ export function TileChrome({
         pointerEvents: forceExpanded ? 'none' : 'all',
       }}
       onDoubleClick={e => e.stopPropagation()}
+      onMouseDownCapture={() => onActivate?.()}
     >
       {/* Drawer panel — sits behind the tile, slides right */}
       {hasDrawer && (
@@ -1034,7 +1193,7 @@ export function TileChrome({
         className="flex flex-col"
         style={{
           width: '100%', height: '100%',
-          borderRadius: 8, overflow: 'hidden',
+          borderRadius: tile.borderRadius ?? 8, overflow: 'hidden',
           border: isSelected ? `1px solid ${theme.accent.base}` : `1px solid ${theme.border.default}`,
           boxShadow: isSelected
             ? `${theme.shadow.panel}, 0 0 0 1px ${theme.border.accent}`
@@ -1048,9 +1207,13 @@ export function TileChrome({
         <div
           ref={titlebarRef}
           style={{
-            height: 32, background: theme.surface.titlebar, borderBottom: `1px solid ${theme.border.default}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '0 8px 0 0', userSelect: 'none', flexShrink: 0, cursor: 'move'
+            height: tile.hideTitlebar ? 0 : 32,
+            background: titlebarColor ?? theme.surface.titlebar,
+            borderBottom: tile.hideTitlebar ? 'none' : titlebarColor ? 'none' : `1px solid ${theme.border.default}`,
+            display: tile.hideTitlebar ? 'none' : 'flex',
+            alignItems: 'center', justifyContent: 'space-between',
+            padding: '0 8px 0 0', userSelect: 'none', flexShrink: 0, cursor: 'move',
+            overflow: 'hidden',
           }}
           onDoubleClick={e => { e.stopPropagation(); toggle() }}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(e) }}
@@ -1073,7 +1236,7 @@ export function TileChrome({
             style={{
               width: 28, height: '100%',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              cursor: 'grab', flexShrink: 0, color: theme.text.disabled, fontSize: 11
+              cursor: 'grab', flexShrink: 0, color: titlebarMuted, fontSize: fonts.secondarySize
             }}
           >
             ::
@@ -1086,11 +1249,34 @@ export function TileChrome({
             />
           ) : (
             <span style={{
-              flex: 1, fontSize: 12, fontWeight: 500, color: theme.text.primary,
+              flex: 1, fontSize: fonts.size, fontWeight: 500, color: titlebarForeground,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
             }}>
               {fileLabel(tile)}
             </span>
+          )}
+
+          {titlebarExtra && (
+            <div data-no-drag="" style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+              {titlebarExtra}
+            </div>
+          )}
+
+          {discoveryConnected && (
+            <div
+              title="Nearby connection negotiated"
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                flexShrink: 0,
+                marginRight: 8,
+                background: theme.mode === 'light' ? 'rgba(53, 104, 255, 0.88)' : 'rgba(123, 241, 255, 0.88)',
+                boxShadow: theme.mode === 'light'
+                  ? '0 0 8px rgba(53, 104, 255, 0.34), 0 0 0 1px rgba(53, 104, 255, 0.12)'
+                  : '0 0 8px rgba(123, 241, 255, 0.34), 0 0 0 1px rgba(123, 241, 255, 0.12)',
+              }}
+            />
           )}
 
           {/* Drawer toggle — only for terminal/chat */}
@@ -1228,14 +1414,14 @@ export function TileChrome({
             <div style={{
               padding: '6px 10px',
               borderBottom: `1px solid ${theme.border.default}`,
-              fontSize: 11, fontWeight: 600, color: theme.text.muted,
+              fontSize: fonts.secondarySize, fontWeight: 600, color: theme.text.muted,
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
               <span>Events</span>
               <button
                 onClick={e => { e.stopPropagation(); onBusPopupToggle?.() }}
                 style={{
-                  background: 'none', border: 'none', color: theme.text.disabled, cursor: 'pointer', fontSize: 12
+                  background: 'none', border: 'none', color: theme.text.disabled, cursor: 'pointer', fontSize: fonts.secondarySize
                 }}
               >
                 ✕
@@ -1243,7 +1429,7 @@ export function TileChrome({
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
               {busEvents.length === 0 ? (
-                <div style={{ padding: '12px', textAlign: 'center', color: theme.text.disabled, fontSize: 11 }}>
+                <div style={{ padding: '12px', textAlign: 'center', color: theme.text.disabled, fontSize: fonts.secondarySize }}>
                   No events yet
                 </div>
               ) : (
@@ -1251,7 +1437,7 @@ export function TileChrome({
                   <div key={evt.id} style={{
                     padding: '4px 10px',
                     borderBottom: `1px solid ${theme.border.subtle}`,
-                    fontSize: 11,
+                    fontSize: fonts.secondarySize,
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
                       <span style={{

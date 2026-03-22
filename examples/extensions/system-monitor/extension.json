@@ -5,6 +5,7 @@
   "description": "Live CPU and memory usage dashboard. Power tier — uses Node.js os module to gather system stats and publishes them to the event bus.",
   "author": "contex",
   "tier": "power",
+  "ui": { "mode": "native" },
   "main": "main.js",
   "contributes": {
     "tiles": [

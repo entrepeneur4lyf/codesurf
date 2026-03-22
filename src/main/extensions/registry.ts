@@ -17,6 +17,25 @@ import { bus } from '../event-bus'
 import { tryAdaptExtension } from './adapters'
 import type { ExtensionManifest, ExtensionTileContrib, ExtensionMCPToolContrib, ExtensionContextMenuContrib } from '../../shared/types'
 
+// ── Persisted disabled-extension set ──────────────────────────────────────────
+
+const DISABLED_EXTS_PATH = join(CONTEX_HOME, 'disabled-extensions.json')
+
+async function loadDisabledSet(): Promise<Set<string>> {
+  try {
+    const raw = await fs.readFile(DISABLED_EXTS_PATH, 'utf8')
+    const arr = JSON.parse(raw)
+    return new Set(Array.isArray(arr) ? arr : [])
+  } catch {
+    return new Set()
+  }
+}
+
+async function saveDisabledSet(ids: Set<string>): Promise<void> {
+  await fs.mkdir(CONTEX_HOME, { recursive: true })
+  await fs.writeFile(DISABLED_EXTS_PATH, JSON.stringify([...ids], null, 2))
+}
+
 export interface LoadedExtension {
   manifest: ExtensionManifest
   deactivate?: () => void
@@ -24,11 +43,21 @@ export interface LoadedExtension {
 
 const EXTENSIONS_DIRNAME = 'extensions'
 
+function normalizeManifestUi(manifest: ExtensionManifest): void {
+  manifest.ui = manifest.ui ?? {}
+  if (!manifest.ui.mode) {
+    manifest.ui.mode = manifest.tier === 'safe' ? 'native' : 'custom'
+  }
+}
+
 export class ExtensionRegistry {
   private extensions = new Map<string, LoadedExtension>()
   private extraMCPTools: Array<ExtensionMCPToolContrib & { extId: string; handler?: (args: Record<string, unknown>) => Promise<string> }> = []
+  private activeWorkspacePath: string | null = null
+  private disabledIds: Set<string> = new Set()
 
   async scan(): Promise<void> {
+    this.disabledIds = await loadDisabledSet()
     const globalDir = join(CONTEX_HOME, EXTENSIONS_DIRNAME)
     await this.scanDir(globalDir)
   }
@@ -36,6 +65,21 @@ export class ExtensionRegistry {
   async scanWorkspace(workspacePath: string): Promise<void> {
     const wsDir = join(workspacePath, '.contex', EXTENSIONS_DIRNAME)
     await this.scanDir(wsDir)
+  }
+
+  async rescan(workspacePath?: string | null): Promise<void> {
+    this.deactivateAll()
+    this.extensions.clear()
+    this.extraMCPTools = []
+    this.activeWorkspacePath = workspacePath ?? null
+    await this.scan()
+    if (workspacePath) {
+      await this.scanWorkspace(workspacePath)
+    }
+  }
+
+  getActiveWorkspacePath(): string | null {
+    return this.activeWorkspacePath
   }
 
   private async scanDir(dir: string): Promise<void> {
@@ -78,10 +122,11 @@ export class ExtensionRegistry {
       throw new Error(`Invalid manifest in ${extDir}: missing id, name, or version`)
     }
     if (!manifest.tier) manifest.tier = 'safe'
+    normalizeManifestUi(manifest)
 
     // Attach runtime metadata
     manifest._path = resolve(extDir)
-    manifest._enabled = manifest._enabled !== false
+    manifest._enabled = this.disabledIds.has(manifest.id) ? false : manifest._enabled !== false
 
     // Namespace tile types with ext: prefix
     if (manifest.contributes?.tiles) {
@@ -121,6 +166,11 @@ export class ExtensionRegistry {
   /** Load an already-parsed manifest (used by adapters) */
   async loadFromManifest(manifest: ExtensionManifest): Promise<void> {
     if (this.extensions.has(manifest.id)) return
+
+    normalizeManifestUi(manifest)
+
+    // Apply persisted disabled state
+    if (this.disabledIds.has(manifest.id)) manifest._enabled = false
 
     // Namespace tiles
     if (manifest.contributes?.tiles) {
@@ -162,11 +212,24 @@ export class ExtensionRegistry {
       if (!ext.manifest._enabled) continue
       if (ext.manifest.contributes?.tiles) {
         for (const tile of ext.manifest.contributes.tiles) {
-          tiles.push({ ...tile, extId: ext.manifest.id })
+          tiles.push({ ...tile, extId: ext.manifest.id, uiMode: ext.manifest.ui?.mode })
         }
       }
     }
     return tiles
+  }
+
+  getExtensionActions(): Map<string, Array<{ name: string; description: string }>> {
+    const result = new Map<string, Array<{ name: string; description: string }>>()
+    for (const ext of this.extensions.values()) {
+      if (!ext.manifest._enabled) continue
+      const contributes = ext.manifest.contributes as any
+      const actions = contributes?.actions
+      if (Array.isArray(actions) && actions.length > 0) {
+        result.set(ext.manifest.id, actions.map((a: any) => ({ name: String(a.name ?? ''), description: String(a.description ?? '') })))
+      }
+    }
+    return result
   }
 
   getMCPTools(): Array<ExtensionMCPToolContrib & { extId: string; handler?: (args: Record<string, unknown>) => Promise<string> }> {
@@ -208,7 +271,7 @@ export class ExtensionRegistry {
       .split(/[\\/]/)
       .filter(Boolean)
       .map(segment => encodeURIComponent(segment))
-    const query = tileId ? `?tileId=${encodeURIComponent(tileId)}` : ''
+    const query = tileId ? `?tileId=${encodeURIComponent(tileId)}&_t=${Date.now()}` : ''
 
     return `contex-ext://extension/${encodeURIComponent(extId)}/${entrySegments.join('/')}${query}`
   }
@@ -219,6 +282,8 @@ export class ExtensionRegistry {
     const ext = this.extensions.get(id)
     if (!ext) return false
     ext.manifest._enabled = true
+    this.disabledIds.delete(id)
+    saveDisabledSet(this.disabledIds).catch(() => {})
     return true
   }
 
@@ -226,6 +291,8 @@ export class ExtensionRegistry {
     const ext = this.extensions.get(id)
     if (!ext) return false
     ext.manifest._enabled = false
+    this.disabledIds.add(id)
+    saveDisabledSet(this.disabledIds).catch(() => {})
     if (ext.deactivate) {
       ext.deactivate()
       ext.deactivate = undefined

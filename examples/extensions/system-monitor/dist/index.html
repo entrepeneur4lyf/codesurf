@@ -6,8 +6,8 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-    background: transparent;
-    color: #e0ddd4;
+    background: var(--ct-bg, transparent);
+    color: var(--ct-text, #111);
     padding: 16px;
     font-size: 12px;
     overflow-y: auto;
@@ -18,64 +18,27 @@
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 1.5px;
-    color: #666;
+    color: var(--ct-dim, #64748b);
     margin-bottom: 6px;
   }
   .meter {
     height: 8px;
-    background: #2a2a30;
+    background: var(--ct-panel-2, rgba(0,0,0,.06));
     border-radius: 4px;
     overflow: hidden;
     margin-bottom: 4px;
   }
-  .meter-fill {
-    height: 100%;
-    border-radius: 4px;
-    transition: width 0.5s ease;
-  }
-  .meter-fill.cpu { background: linear-gradient(90deg, #5d8aa8, #e87070); }
-  .meter-fill.mem { background: linear-gradient(90deg, #70c870, #e8c870); }
-  .value {
-    font-variant-numeric: tabular-nums;
-    color: #bbb;
-    font-size: 11px;
-  }
-  .cores {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(30px, 1fr));
-    gap: 3px;
-    margin-top: 6px;
-  }
-  .core {
-    height: 20px;
-    border-radius: 3px;
-    position: relative;
-    overflow: hidden;
-    background: #2a2a30;
-  }
-  .core-fill {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    transition: height 0.5s ease;
-    border-radius: 3px;
-  }
-  .info-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 4px 0;
-    border-bottom: 1px solid #2a2a30;
-  }
-  .info-row .k { color: #666; }
-  .info-row .v { color: #bbb; font-variant-numeric: tabular-nums; }
-  .waiting {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: #555;
-  }
+  .meter-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+  .meter-fill.cpu { background: linear-gradient(90deg, var(--ct-accent, #4f46e5), var(--ct-danger, #dc2626)); }
+  .meter-fill.mem { background: linear-gradient(90deg, var(--ct-success, #1f8f5f), var(--ct-warning, #c07b12)); }
+  .value { font-variant-numeric: tabular-nums; color: var(--ct-muted, #334155); font-size: 11px; }
+  .cores { display: grid; grid-template-columns: repeat(auto-fill, minmax(30px, 1fr)); gap: 3px; margin-top: 6px; }
+  .core { height: 20px; border-radius: 3px; position: relative; overflow: hidden; background: var(--ct-panel-2, rgba(0,0,0,.06)); }
+  .core-fill { position: absolute; bottom: 0; left: 0; right: 0; transition: height 0.5s ease; border-radius: 3px; }
+  .info-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--ct-border, rgba(0,0,0,.1)); }
+  .info-row .k { color: var(--ct-dim, #64748b); }
+  .info-row .v { color: var(--ct-muted, #334155); font-variant-numeric: tabular-nums; }
+  .waiting { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--ct-dim, #64748b); }
 </style>
 </head>
 <body>
@@ -113,10 +76,11 @@
   const waiting = document.getElementById('waiting')
   const dashboard = document.getElementById('dashboard')
 
+  function css(name, fallback) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback }
   function cpuColor(pct) {
-    if (pct < 40) return '#5d8aa8'
-    if (pct < 70) return '#e8c870'
-    return '#e87070'
+    if (pct < 40) return css('--ct-accent', '#4f46e5')
+    if (pct < 70) return css('--ct-warning', '#c07b12')
+    return css('--ct-danger', '#dc2626')
   }
 
   function update(stats) {
@@ -130,7 +94,6 @@
     memVal.textContent = stats.memPercent
     memDetail.textContent = stats.memUsedGB + ' / ' + stats.memTotalGB + ' GB'
 
-    // Per-core bars
     if (stats.cpuCores) {
       if (coresEl.children.length !== stats.cpuCores.length) {
         coresEl.innerHTML = stats.cpuCores.map(() => '<div class="core"><div class="core-fill"></div></div>').join('')
@@ -144,7 +107,6 @@
       })
     }
 
-    // System info
     function fmtUptime(s) {
       const h = Math.floor(s / 3600)
       const m = Math.floor((s % 3600) / 60)
@@ -161,7 +123,6 @@
     ).join('')
   }
 
-  // Listen for sysmon events from the power extension
   function listen() {
     if (!window.contex) return
     window.contex.bus.subscribe('sysmon', (event) => {
@@ -169,9 +130,8 @@
     })
   }
 
-  if (window.contex) {
-    listen()
-  } else {
+  if (window.contex) listen()
+  else {
     window.addEventListener('message', function handler(e) {
       if (e.data?.type === 'contex-bridge-ready') {
         window.removeEventListener('message', handler)

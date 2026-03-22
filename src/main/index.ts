@@ -1,35 +1,95 @@
-import { app, BrowserWindow, shell, ipcMain, Menu } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, Menu, nativeTheme, nativeImage } from 'electron'
 import { join } from 'path'
+import { existsSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import { initWorkspaces, registerWorkspaceIPC } from './ipc/workspace'
 import { registerFsIPC } from './ipc/fs'
 import { registerCanvasIPC } from './ipc/canvas'
 import { registerTerminalIPC } from './ipc/terminal'
-import { startMCPServer, getMCPPort } from './mcp-server'
+import { startMCPServer, getMCPPort, setExtensionRegistryProvider } from './mcp-server'
 import { registerAgentsIPC } from './ipc/agents'
 import { registerStreamIPC } from './ipc/stream'
 import { registerGitIPC } from './ipc/git'
 import { registerBusIPC } from './ipc/bus'
-import { registerChatIPC } from './ipc/chat'
+import { registerChatIPC, warmOpenCodeModelsOnStartup } from './ipc/chat'
 import { registerActivityIPC } from './ipc/activity'
 import { registerCollabIPC, stopAllCollabWatchers } from './ipc/collab'
+import { registerTileContextIPC } from './ipc/tile-context'
 import { flushAll as flushActivityStore } from './activity-store'
 import { detectAllAgents, registerAgentPathsIPC } from './agent-paths'
 import { ExtensionRegistry } from './extensions/registry'
 import { registerExtensionProtocol } from './extensions/protocol'
 import { registerExtensionIPC } from './ipc/extensions'
+import { registerChromeSyncIPC } from './ipc/chromeSync'
+import { registerLocalProxyIPC } from './ipc/localProxy'
 import { applyWindowAppearance, getWindowAppearanceOptions } from './windowAppearance'
 import { migrateLegacyStorage } from './migration'
 import { APP_ID, APP_NAME, CONTEX_HOME } from './paths'
+import { stopAllRelayServices } from './relay/service'
+import { readSettingsSync } from './ipc/workspace'
 // browserTile BrowserView IPC was removed — renderer uses <webview> tag directly
 
 // Per-window display titles (webContents.id → label set by renderer via workspace name)
 const windowTitles = new Map<number, string>()
+const freshWindowIds = new Set<number>()
 let extensionRegistry: ExtensionRegistry | null = null
+const TRAFFIC_LIGHT_Y = 15
+const TRAFFIC_LIGHT_X_EXPANDED = 170
+const TRAFFIC_LIGHT_X_COLLAPSED = 16
+
+function resolveAppIconPath(): string | null {
+  const candidates = [
+    join(process.resourcesPath, 'icon.png'),
+    join(process.resourcesPath, 'resources', 'icon.png'),
+    join(app.getAppPath(), 'resources', 'icon.png'),
+    join(app.getAppPath(), '..', 'resources', 'icon.png'),
+    join(__dirname, '../../resources/icon.png'),
+  ]
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+
+  return null
+}
+
+function applyRuntimeAppBranding(): void {
+  const iconPath = resolveAppIconPath()
+  if (iconPath && process.platform === 'darwin') {
+    try {
+      app.dock.setIcon(nativeImage.createFromPath(iconPath))
+    } catch (err) {
+      console.warn('[app] Failed to set dock icon:', err)
+    }
+  }
+
+  app.setName(APP_NAME)
+  app.setAboutPanelOptions({
+    applicationName: APP_NAME,
+  })
+}
+
+function setWindowTrafficLights(win: BrowserWindow, opts?: { sidebarCollapsed?: boolean }): void {
+  if (process.platform !== 'darwin') return
+  const x = opts?.sidebarCollapsed ? TRAFFIC_LIGHT_X_COLLAPSED : TRAFFIC_LIGHT_X_EXPANDED
+  try {
+    win.setWindowButtonPosition({ x, y: TRAFFIC_LIGHT_Y })
+  } catch (err) {
+    console.warn('[window] Failed to set traffic light position:', err)
+  }
+}
 
 function getLiveWindows(): BrowserWindow[] {
   return BrowserWindow.getAllWindows().filter(w => !w.isDestroyed() && !w.webContents.isDestroyed())
+}
+
+function broadcastAppearanceToRenderers(): void {
+  const payload = { shouldUseDark: nativeTheme.shouldUseDarkColors }
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) continue
+    win.webContents.send('appearance:updated', payload)
+  }
 }
 
 function broadcastWindowList(): void {
@@ -40,7 +100,7 @@ function broadcastWindowList(): void {
     : undefined
   const list = wins.map(w => ({
     id: w.webContents.id,
-    title: windowTitles.get(w.webContents.id) ?? 'Contex',
+    title: windowTitles.get(w.webContents.id) ?? 'CodeSurf',
     focused: w.webContents.id === focusedId,
   }))
   for (const w of wins) {
@@ -48,7 +108,8 @@ function broadcastWindowList(): void {
   }
 }
 
-function createWindow(): BrowserWindow {
+function createWindow(opts?: { fresh?: boolean }): BrowserWindow {
+  const iconPath = resolveAppIconPath()
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -57,7 +118,8 @@ function createWindow(): BrowserWindow {
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 18 },
+    trafficLightPosition: { x: TRAFFIC_LIGHT_X_EXPANDED, y: TRAFFIC_LIGHT_Y },
+    ...(iconPath ? { icon: iconPath } : {}),
     ...getWindowAppearanceOptions(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -72,6 +134,7 @@ function createWindow(): BrowserWindow {
   win.on('ready-to-show', () => {
     if (win.isDestroyed() || win.webContents.isDestroyed()) return
     applyWindowAppearance(win)
+    setWindowTrafficLights(win, { sidebarCollapsed: false })
     win.setTitle('') // hide native title text; our pill tabs show workspace name
     win.show()
     broadcastWindowList()
@@ -90,6 +153,11 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
+  // Track fresh windows so renderer can query via IPC
+  if (opts?.fresh) {
+    freshWindowIds.add(win.webContents.id)
+  }
+
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
@@ -100,7 +168,7 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
-  app.setName(APP_NAME)
+  applyRuntimeAppBranding()
   electronApp.setAppUserModelId(APP_ID)
 
   app.on('browser-window-created', (_, window) => {
@@ -122,13 +190,33 @@ app.whenReady().then(async () => {
   registerChatIPC()
   registerActivityIPC()
   registerCollabIPC()
+  registerTileContextIPC()
   registerAgentPathsIPC()
+  registerChromeSyncIPC()
+  registerLocalProxyIPC()
 
-  // Load extensions (global + workspace)
+  // Load extensions (global + workspace) — skip entirely when user has disabled extensions
   extensionRegistry = new ExtensionRegistry()
-  await extensionRegistry.scan()
+  const appSettings = readSettingsSync()
+  if (!appSettings.extensionsDisabled) {
+    await extensionRegistry.rescan()
+  } else {
+    console.log('[Extensions] Skipped — extensions globally disabled in settings')
+  }
   registerExtensionProtocol(extensionRegistry)
   registerExtensionIPC(extensionRegistry)
+  setExtensionRegistryProvider(() => extensionRegistry)
+
+  // Native dark/light preference — drives "system" appearance in renderer
+  nativeTheme.on('updated', broadcastAppearanceToRenderers)
+  ipcMain.handle('appearance:shouldUseDark', () => nativeTheme.shouldUseDarkColors)
+  ipcMain.handle('appearance:setThemeSource', (_, mode: string) => {
+    if (mode === 'dark' || mode === 'light' || mode === 'system') {
+      nativeTheme.themeSource = mode
+    }
+    broadcastAppearanceToRenderers()
+    return true
+  })
 
   // Detect agent binaries (claude, codex, opencode) — uses real shell PATH
   detectAllAgents().catch(err => console.error('[AgentPaths] Detection failed:', err))
@@ -350,8 +438,18 @@ app.whenReady().then(async () => {
   })
 
   // Window management
-  ipcMain.handle('window:new', () => { createWindow(); return null })
-  ipcMain.handle('window:newTab', () => { createWindow(); return null })
+  ipcMain.handle('window:new', () => { createWindow({ fresh: true }); return null })
+  ipcMain.handle('window:newTab', () => { createWindow({ fresh: true }); return null })
+  ipcMain.handle('window:isFresh', (event) => {
+    const id = event.sender.id
+    const isFresh = freshWindowIds.has(id)
+    console.log(`[window:isFresh] id=${id} fresh=${isFresh} freshSet=[${[...freshWindowIds]}]`)
+    if (isFresh) {
+      freshWindowIds.delete(id)
+      return true
+    }
+    return false
+  })
 
   ipcMain.handle('window:list', () => {
     const wins = getLiveWindows()
@@ -383,6 +481,13 @@ app.whenReady().then(async () => {
     win?.close()
   })
 
+  ipcMain.handle('window:setSidebarCollapsed', (event, collapsed: boolean) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return false
+    setWindowTrafficLights(win, { sidebarCollapsed: !!collapsed })
+    return true
+  })
+
   ipcMain.handle('app:relaunch', () => {
     app.relaunch()
     app.quit()
@@ -410,12 +515,17 @@ app.whenReady().then(async () => {
         {
           label: 'New Window',
           accelerator: 'CmdOrCtrl+N',
-          click: () => createWindow()
+          click: () => createWindow({ fresh: true })
         },
         {
           label: 'New Tab',
           accelerator: 'CmdOrCtrl+T',
-          click: () => createWindow()
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow()
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('workspace:newTab')
+            }
+          }
         },
         { type: 'separator' },
         { role: 'close' }
@@ -466,6 +576,7 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(menu)
 
   createWindow()
+  warmOpenCodeModelsOnStartup()
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -476,6 +587,7 @@ app.on('before-quit', () => {
   flushActivityStore()
   stopAllCollabWatchers()
   extensionRegistry?.deactivateAll()
+  stopAllRelayServices()
 })
 
 app.on('window-all-closed', () => {

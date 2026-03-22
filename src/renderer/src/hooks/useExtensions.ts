@@ -8,7 +8,7 @@ import type { ExtensionTileContrib } from '../../../shared/types'
 
 const el = (window as any).electron
 
-export function useExtensions() {
+export function useExtensions(workspacePath?: string | null) {
   const [extensionTiles, setExtensionTiles] = useState<ExtensionTileContrib[]>([])
 
   useEffect(() => {
@@ -16,6 +16,7 @@ export function useExtensions() {
 
     async function load() {
       try {
+        await el.extensions?.refresh?.(workspacePath ?? null)
         const tiles = await el.extensions?.listTiles?.()
         if (!cancelled && tiles) {
           setExtensionTiles(tiles)
@@ -27,7 +28,7 @@ export function useExtensions() {
 
     load()
     return () => { cancelled = true }
-  }, [])
+  }, [workspacePath])
 
   return { extensionTiles }
 }

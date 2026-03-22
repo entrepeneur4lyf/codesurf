@@ -4,10 +4,93 @@ export interface Workspace {
   path: string
 }
 
-export type BuiltinTileType = 'terminal' | 'note' | 'code' | 'image' | 'kanban' | 'browser' | 'chat' | 'file'
+export type BuiltinTileType = 'terminal' | 'note' | 'code' | 'image' | 'kanban' | 'browser' | 'chat' | 'file' | 'files' | 'customisation'
+
+// ─── Customisation Data Types ──────────────────────────────────────────────
+
+export interface PromptTemplate {
+  id: string
+  name: string
+  description: string
+  template: string
+  fields: PromptField[]
+  tags: string[]
+}
+
+export interface PromptField {
+  name: string
+  type: 'str' | 'int' | 'float' | 'select' | 'multi-select'
+  options?: string[]
+  default?: string
+  required: boolean
+}
+
+export interface SkillDefinition {
+  id: string
+  name: string
+  description: string
+  content: string
+  command?: string
+}
+
+export interface AgentMode {
+  id: string
+  name: string
+  description: string
+  systemPrompt: string
+  tools: string[] | null
+  icon: string
+  color: string
+  isBuiltin: boolean
+  defaultNextMode?: string
+  /** Which tool this agent was discovered from: 'claude' | 'cursor' | 'opencode' | 'gemini' | etc. */
+  source?: string
+}
 export type TileType = BuiltinTileType | `ext:${string}`
 
+// ─── Tile Context Types ────────────────────────────────────────────────────
+
+export interface TileContextEntry {
+  key: string
+  value: unknown
+  updatedAt: number
+  source: string
+}
+
+export interface ExtensionContextDeclaration {
+  produces?: string[]
+  consumes?: string[]
+}
+
+// ─── Layout Template Types ─────────────────────────────────────────────────
+
+export interface LayoutTemplateSlot {
+  tileType: TileType
+  label?: string
+}
+
+export type LayoutTemplateNode =
+  | { type: 'leaf'; slots: LayoutTemplateSlot[] }
+  | { type: 'split'; direction: 'horizontal' | 'vertical'; children: LayoutTemplateNode[]; sizes: number[] }
+
+export interface LayoutTemplate {
+  id: string
+  name: string
+  created_at: string
+  tree: LayoutTemplateNode
+}
+
 // ─── Extension System Types ─────────────────────────────────────────────────
+
+export interface ExtensionActionContrib {
+  name: string
+  description: string
+}
+
+export interface ExtensionUIContrib {
+  /** Native = should look/feel like core app UI. Custom = extension owns its bespoke surface. */
+  mode?: 'native' | 'custom'
+}
 
 export interface ExtensionManifest {
   id: string
@@ -16,11 +99,14 @@ export interface ExtensionManifest {
   description?: string
   author?: string
   tier: 'safe' | 'power'
+  ui?: ExtensionUIContrib
   contributes?: {
     tiles?: ExtensionTileEntry[]
     mcpTools?: ExtensionMCPToolContrib[]
     contextMenu?: ExtensionContextMenuContrib[]
     settings?: ExtensionSettingContrib[]
+    actions?: ExtensionActionContrib[]
+    context?: ExtensionContextDeclaration
   }
   main?: string
   permissions?: string[]
@@ -40,6 +126,7 @@ export interface ExtensionTileEntry {
 
 export interface ExtensionTileContrib extends ExtensionTileEntry {
   extId: string
+  uiMode?: 'native' | 'custom'
 }
 
 export interface ExtensionMCPToolContrib {
@@ -78,85 +165,68 @@ export interface FontToken {
 export type FontConfig = FontToken
 
 export interface FontSettings {
-  // ── Base tokens (everything inherits from these if not overridden) ──
-  /** Default sans-serif used across all UI */
-  sans: FontToken
-  /** Default monospace used for all code/data contexts */
+  /** Primary sans-serif — main UI text, headings, labels, chat messages */
+  primary: FontToken
+  /** Secondary sans-serif — metadata, subtitles, hints, smaller UI text */
+  secondary: FontToken
+  /** Monospace — terminal, code editor, inline code, data display */
   mono: FontToken
 
-  // ── Headings & structure ──
-  /** Tile title bars, panel headers */
-  title: FontToken
-  /** Section labels (ACTIVITY, BUILT-IN, MCP SERVERS, etc.) */
-  sectionLabel: FontToken
-  /** Secondary descriptions, subtitles, hints */
-  subtitle: FontToken
-
-  // ── Sidebar ──
-  /** File/folder names in the sidebar tree */
-  sidebarFileList: FontToken
-  /** Section headers in sidebar (FILES, AGENTS, WORKSPACES) */
-  sidebarHeader: FontToken
-  /** Path breadcrumbs and workspace path */
-  sidebarPath: FontToken
-
-  // ── Terminal & code ──
-  /** Terminal emulator (xterm) */
-  terminal: FontToken
-  /** Code editor (Monaco) */
-  codeEditor: FontToken
-  /** Inline code snippets, <code> tags */
-  inlineCode: FontToken
-  /** Launch commands, CLI previews */
-  commandPreview: FontToken
-
-  // ── Chat ──
-  /** Chat message body text */
-  chatMessage: FontToken
-  /** Chat input textarea */
-  chatInput: FontToken
-  /** Model/provider dropdown labels */
-  chatToolbar: FontToken
-  /** Model IDs, cost data, session info */
-  chatMeta: FontToken
-  /** Thinking block content */
-  chatThinking: FontToken
-
-  // ── Kanban ──
-  /** Kanban card titles */
-  kanbanCardTitle: FontToken
-  /** Agent pill badges, status pills */
-  kanbanBadge: FontToken
-  /** Tab labels (overview, terminal, notes) */
-  kanbanTab: FontToken
-
-  // ── Data display ──
-  /** URLs, endpoints, server addresses */
-  dataUrl: FontToken
-  /** File paths, directory paths */
-  dataPath: FontToken
-  /** Key-value pairs (env vars, endpoints table) */
-  dataKeyValue: FontToken
-  /** Timestamps, dates */
-  dataTimestamp: FontToken
-  /** Numeric values, costs, counts */
-  dataNumeric: FontToken
-  /** Tags, chips, tool names */
-  dataBadge: FontToken
-
-  // ── Controls ──
-  /** Buttons, clickable text actions */
-  button: FontToken
-  /** Form labels (URL, DESCRIPTION, etc.) */
-  formLabel: FontToken
-  /** Text inputs, selects */
-  formInput: FontToken
-
-  // ── Settings panel ──
-  /** Settings section headers */
-  settingsHeader: FontToken
-  /** Settings field labels */
-  settingsLabel: FontToken
+  // ── Legacy aliases (kept for backward compat with saved configs) ──
+  /** @deprecated use primary */
+  sans?: FontToken
+  /** @deprecated use primary */
+  title?: FontToken
+  /** @deprecated use secondary */
+  sectionLabel?: FontToken
+  /** @deprecated use secondary */
+  subtitle?: FontToken
+  /** @deprecated use mono */
+  terminal?: FontToken
+  /** @deprecated use mono */
+  codeEditor?: FontToken
+  /** @deprecated use mono */
+  inlineCode?: FontToken
+  /** @deprecated use mono */
+  commandPreview?: FontToken
+  /** @deprecated use primary */
+  chatMessage?: FontToken
+  /** @deprecated use primary */
+  chatInput?: FontToken
+  /** @deprecated use secondary */
+  chatToolbar?: FontToken
+  /** @deprecated use mono */
+  chatMeta?: FontToken
+  /** @deprecated use mono */
+  chatThinking?: FontToken
+  /** @deprecated use primary */
+  kanbanCardTitle?: FontToken
+  /** @deprecated use secondary */
+  kanbanBadge?: FontToken
+  /** @deprecated use secondary */
+  kanbanTab?: FontToken
+  /** @deprecated use mono */
+  dataUrl?: FontToken
+  /** @deprecated use mono */
+  dataPath?: FontToken
+  /** @deprecated use mono */
+  dataKeyValue?: FontToken
+  /** @deprecated use mono */
+  dataTimestamp?: FontToken
+  /** @deprecated use mono */
+  dataNumeric?: FontToken
+  /** @deprecated use secondary */
+  dataBadge?: FontToken
+  /** @deprecated use secondary */
+  button?: FontToken
+  /** @deprecated use secondary */
+  formLabel?: FontToken
+  /** @deprecated use primary */
+  formInput?: FontToken
+  /** @deprecated use secondary */
+  settingsHeader?: FontToken
+  /** @deprecated use secondary */
+  settingsLabel?: FontToken
 }
 
 // ── System font stacks ──────────────────────────────────────────────────────
@@ -167,101 +237,82 @@ const MONO_STACK = '"JetBrains Mono", "Menlo", "Monaco", "SF Mono", "Fira Code",
 // ── Default font tokens ─────────────────────────────────────────────────────
 
 export const DEFAULT_FONTS: FontSettings = {
-  // Base
-  sans:             { family: SANS_STACK, size: 13, lineHeight: 1.5, weight: 400 },
-  mono:             { family: MONO_STACK, size: 13, lineHeight: 1.5, weight: 400 },
+  primary:   { family: SANS_STACK, size: 13, lineHeight: 1.5, weight: 400 },
+  secondary: { family: SANS_STACK, size: 11, lineHeight: 1.4, weight: 400 },
+  mono:      { family: MONO_STACK, size: 13, lineHeight: 1.5, weight: 400 },
+}
 
-  // Headings
-  title:            { family: SANS_STACK, size: 14, lineHeight: 1.3, weight: 700 },
-  sectionLabel:     { family: SANS_STACK, size: 9,  lineHeight: 1.2, weight: 700, letterSpacing: 1 },
-  subtitle:         { family: SANS_STACK, size: 11, lineHeight: 1.4, weight: 400 },
-
-  // Sidebar
-  sidebarFileList:  { family: SANS_STACK, size: 12, lineHeight: 1.4, weight: 400 },
-  sidebarHeader:    { family: SANS_STACK, size: 9,  lineHeight: 1.2, weight: 700, letterSpacing: 1 },
-  sidebarPath:      { family: MONO_STACK, size: 10, lineHeight: 1.3, weight: 400 },
-
-  // Terminal & code
-  terminal:         { family: MONO_STACK, size: 13, lineHeight: 1.3, weight: 400 },
-  codeEditor:       { family: MONO_STACK, size: 13, lineHeight: 1.5, weight: 400 },
-  inlineCode:       { family: MONO_STACK, size: 12, lineHeight: 1.4, weight: 400 },
-  commandPreview:   { family: MONO_STACK, size: 9,  lineHeight: 1.6, weight: 400 },
-
-  // Chat
-  chatMessage:      { family: SANS_STACK, size: 13, lineHeight: 1.5, weight: 400 },
-  chatInput:        { family: SANS_STACK, size: 13, lineHeight: 1.5, weight: 400 },
-  chatToolbar:      { family: SANS_STACK, size: 11, lineHeight: 1.2, weight: 400 },
-  chatMeta:         { family: MONO_STACK, size: 10, lineHeight: 1.3, weight: 400 },
-  chatThinking:     { family: MONO_STACK, size: 11, lineHeight: 1.5, weight: 400 },
-
-  // Kanban
-  kanbanCardTitle:  { family: SANS_STACK, size: 13, lineHeight: 1.3, weight: 600 },
-  kanbanBadge:      { family: SANS_STACK, size: 9,  lineHeight: 1.2, weight: 400 },
-  kanbanTab:        { family: SANS_STACK, size: 11, lineHeight: 1.2, weight: 400 },
-
-  // Data display
-  dataUrl:          { family: MONO_STACK, size: 10, lineHeight: 1.3, weight: 400 },
-  dataPath:         { family: MONO_STACK, size: 10, lineHeight: 1.3, weight: 400 },
-  dataKeyValue:     { family: MONO_STACK, size: 10, lineHeight: 1.3, weight: 400 },
-  dataTimestamp:    { family: MONO_STACK, size: 9,  lineHeight: 1.2, weight: 400 },
-  dataNumeric:      { family: MONO_STACK, size: 10, lineHeight: 1.3, weight: 400 },
-  dataBadge:        { family: SANS_STACK, size: 9,  lineHeight: 1.2, weight: 400 },
-
-  // Controls
-  button:           { family: SANS_STACK, size: 10, lineHeight: 1.2, weight: 400 },
-  formLabel:        { family: SANS_STACK, size: 9,  lineHeight: 1.2, weight: 400, letterSpacing: 0.5 },
-  formInput:        { family: SANS_STACK, size: 11, lineHeight: 1.4, weight: 400 },
-
-  // Settings panel
-  settingsHeader:   { family: SANS_STACK, size: 9,  lineHeight: 1.2, weight: 700, letterSpacing: 1 },
-  settingsLabel:    { family: SANS_STACK, size: 11, lineHeight: 1.4, weight: 400 },
+/** Migrate old granular FontSettings to the simplified 3-token shape */
+export function normalizeFontSettings(raw: Partial<FontSettings> | undefined): FontSettings {
+  if (!raw) return { ...DEFAULT_FONTS }
+  return {
+    primary:   raw.primary ?? raw.sans ?? raw.chatMessage ?? DEFAULT_FONTS.primary,
+    secondary: raw.secondary ?? raw.subtitle ?? raw.sectionLabel ?? DEFAULT_FONTS.secondary,
+    mono:      raw.mono ?? raw.terminal ?? raw.codeEditor ?? DEFAULT_FONTS.mono,
+  }
 }
 
 // ── AppSettings ─────────────────────────────────────────────────────────────
 
 export interface AppSettings {
-  // Granular font tokens (VS Code-style: override any subset in config.json)
+  // The three font tokens
   fonts: FontSettings
-  // Legacy compat — still read by SettingsPanel pickers, mapped into fonts.*
-  primaryFont: FontToken
-  secondaryFont: FontToken
-  monoFont: FontToken
-  // Theme
+  // Legacy compat — mapped into fonts.* on load
+  /** @deprecated use fonts.primary */
+  primaryFont?: FontToken
+  /** @deprecated use fonts.secondary */
+  secondaryFont?: FontToken
+  /** @deprecated use fonts.mono */
+  monoFont?: FontToken
+  // Theme / appearance
+  /** UI chrome: dark palette, light palette, or follow OS (uses dark theme preset when OS is dark). */
+  appearance: 'dark' | 'light' | 'system'
   themeId: string
   // Canvas
   canvasBackground: string
   canvasGlowEnabled: boolean
+  canvasGlowRadius: number
   gridColorSmall: string
   gridColorLarge: string
   gridSpacingSmall: number
   gridSpacingLarge: number
   snapToGrid: boolean
   gridSize: number
-  // Terminal (legacy — prefer fonts.terminal)
+  // Terminal (legacy — prefer fonts.mono)
   terminalFontSize: number
   terminalFontFamily: string
-  // Appearance (legacy — prefer fonts.sans.size)
+  // Appearance (legacy — prefer fonts.primary.size)
   uiFontSize: number
   /** @deprecated — translucency is always enabled at the Electron level now */
   translucentBackground: boolean
   /** Canvas background opacity: 1 = fully opaque, lower = more see-through vibrancy */
   translucentBackgroundOpacity: number
-  // Sidebar
-  sidebarDefaultSort: 'name' | 'type' | 'ext'
-  sidebarIgnored: string[]
   // Behaviour
   autoSaveIntervalMs: number
   defaultTileSizes: Record<BuiltinTileType, { w: number; h: number }> & Record<string, { w: number; h: number }>
+  // Chrome sync
+  chromeSyncEnabled: boolean
+  chromeSyncProfileDir: string | null
+  // Local OpenAI-compat proxy endpoint remapping
+  localProxyEnabled: boolean
+  localProxyPort: number
+  // Extensions pinned to top of sidebar
+  pinnedExtensionIds: string[]
+  // Extensions hidden from the sidebar Extensions list (hidden = not in list)
+  hiddenFromSidebarExtIds: string[]
+  // Extensions shown as panels inside Settings
+  settingsPanelExtIds: string[]
+  // Master kill-switch: hide all extensions from sidebar and footer
+  extensionsDisabled: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   fonts: { ...DEFAULT_FONTS },
-  primaryFont: { family: SANS_STACK, size: 14, lineHeight: 1.5 },
-  secondaryFont: { family: '"SF Pro Display", "Segoe UI", "Helvetica Neue", sans-serif', size: 12, lineHeight: 1.4 },
-  monoFont: { family: MONO_STACK, size: 13, lineHeight: 1.5 },
+  appearance: 'dark',
   themeId: 'default-dark',
   canvasBackground: '#15171a',
   canvasGlowEnabled: true,
+  canvasGlowRadius: 120,
   gridColorSmall: '#2a2e35',
   gridColorLarge: '#3a3f48',
   gridSpacingSmall: 20,
@@ -273,8 +324,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   uiFontSize: 12,
   translucentBackground: true,
   translucentBackgroundOpacity: 1,
-  sidebarDefaultSort: 'name',
-  sidebarIgnored: ['.git', 'node_modules', '.next', 'dist', 'dist-electron', '.DS_Store', '__pycache__', '.cache', 'out'],
   autoSaveIntervalMs: 500,
   defaultTileSizes: {
     terminal: { w: 600, h: 400 },
@@ -285,7 +334,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
     browser:  { w: 1000, h: 700 },
     chat:     { w: 420, h: 600 },
     file:     { w: 240, h: 240 },
-  }
+    files:    { w: 280, h: 500 },
+    customisation: { w: 720, h: 560 },
+  },
+  chromeSyncEnabled: false,
+  chromeSyncProfileDir: null,
+  localProxyEnabled: false,
+  localProxyPort: 1337,
+  pinnedExtensionIds: [],
+  hiddenFromSidebarExtIds: [],
+  settingsPanelExtIds: [],
+  extensionsDisabled: false,
 }
 
 /** Deep-merge a single font token with its default */
@@ -295,46 +354,33 @@ function mergeToken(base: FontToken, override?: Partial<FontToken>): FontToken {
 }
 
 /** Deep-merge all font tokens, falling back to defaults for any missing */
-function mergeFonts(base: FontSettings, overrides?: Partial<Record<keyof FontSettings, Partial<FontToken>>>): FontSettings {
-  if (!overrides) return { ...base }
-  const result = { ...base }
-  for (const key of Object.keys(base) as (keyof FontSettings)[]) {
-    result[key] = mergeToken(base[key], overrides[key])
-  }
-  return result
-}
+/** Merge saved font settings with defaults, handling legacy config migration */
+function resolveFonts(saved?: Partial<FontSettings>, legacyPrimary?: Partial<FontToken>, legacySecondary?: Partial<FontToken>, legacyMono?: Partial<FontToken>): FontSettings {
+  // Start with defaults
+  const result: FontSettings = { ...DEFAULT_FONTS }
 
-/** Apply legacy primaryFont/monoFont overrides to the granular font tokens.
- *  When a user changes primaryFont in the settings UI, all sans-based tokens
- *  pick up the new family. Same for monoFont → all mono-based tokens. */
-function applyLegacyFontOverrides(fonts: FontSettings, primary?: Partial<FontToken>, mono?: Partial<FontToken>): FontSettings {
-  if (!primary && !mono) return fonts
-  const result = { ...fonts }
-  const pFamily = primary?.family
-  const mFamily = mono?.family
+  // Apply legacy settings first (old configs had primaryFont/secondaryFont/monoFont)
+  if (legacyPrimary) result.primary = mergeToken(result.primary, legacyPrimary)
+  if (legacySecondary) result.secondary = mergeToken(result.secondary, legacySecondary)
+  if (legacyMono) result.mono = mergeToken(result.mono, legacyMono)
 
-  // All tokens that should track primaryFont (sans-based)
-  const sansKeys: (keyof FontSettings)[] = [
-    'sans', 'title', 'sectionLabel', 'subtitle',
-    'sidebarFileList', 'sidebarHeader',
-    'chatMessage', 'chatInput', 'chatToolbar',
-    'kanbanCardTitle', 'kanbanBadge', 'kanbanTab',
-    'dataBadge', 'button', 'formLabel', 'formInput',
-    'settingsHeader', 'settingsLabel',
-  ]
-  // All tokens that should track monoFont (mono-based)
-  const monoKeys: (keyof FontSettings)[] = [
-    'mono', 'sidebarPath', 'terminal', 'codeEditor', 'inlineCode', 'commandPreview',
-    'chatMeta', 'chatThinking',
-    'dataUrl', 'dataPath', 'dataKeyValue', 'dataTimestamp', 'dataNumeric',
-  ]
+  if (!saved) return result
 
-  if (pFamily) {
-    for (const k of sansKeys) result[k] = { ...result[k], family: pFamily }
-  }
-  if (mFamily) {
-    for (const k of monoKeys) result[k] = { ...result[k], family: mFamily }
-  }
+  // Migrate old granular tokens: sans → primary, subtitle → secondary
+  const s = saved as Record<string, Partial<FontToken> | undefined>
+  const legacySans = s.sans ?? s.chatMessage ?? s.title
+  const legacySub = s.subtitle ?? s.sectionLabel
+  const legacyMonoToken = s.terminal ?? s.codeEditor
+
+  if (legacySans && !saved.primary) result.primary = mergeToken(result.primary, legacySans)
+  if (legacySub && !saved.secondary) result.secondary = mergeToken(result.secondary, legacySub)
+  if (legacyMonoToken && !saved.mono) result.mono = mergeToken(result.mono, legacyMonoToken)
+
+  // Apply new-style tokens (these win over everything)
+  if (saved.primary) result.primary = mergeToken(result.primary, saved.primary)
+  if (saved.secondary) result.secondary = mergeToken(result.secondary, saved.secondary)
+  if (saved.mono) result.mono = mergeToken(result.mono, saved.mono)
+
   return result
 }
 
@@ -343,20 +389,19 @@ export function withDefaultSettings(input: Partial<AppSettings> | null | undefin
   const base: AppSettings = {
     ...DEFAULT_SETTINGS,
     ...settings,
-    primaryFont: { ...DEFAULT_SETTINGS.primaryFont, ...(settings.primaryFont ?? {}) },
-    secondaryFont: { ...DEFAULT_SETTINGS.secondaryFont, ...(settings.secondaryFont ?? {}) },
-    monoFont: { ...DEFAULT_SETTINGS.monoFont, ...(settings.monoFont ?? {}) },
-    sidebarIgnored: settings.sidebarIgnored ?? DEFAULT_SETTINGS.sidebarIgnored,
     defaultTileSizes: {
       ...DEFAULT_SETTINGS.defaultTileSizes,
       ...(settings.defaultTileSizes ?? {})
     },
-    // Apply legacy primaryFont/monoFont first, then let explicit fonts.* tokens win on top
-    fonts: mergeFonts(
-      applyLegacyFontOverrides(DEFAULT_FONTS, settings.primaryFont, settings.monoFont),
-      settings.fonts as Partial<Record<keyof FontSettings, Partial<FontToken>>>
+    // Resolve fonts: new 3-token system, with legacy migration
+    fonts: resolveFonts(
+      settings.fonts as Partial<FontSettings>,
+      settings.primaryFont as Partial<FontToken>,
+      settings.secondaryFont as Partial<FontToken>,
+      settings.monoFont as Partial<FontToken>,
     ),
   }
+  base.canvasGlowRadius = Math.max(50, Math.min(200, base.canvasGlowRadius ?? DEFAULT_SETTINGS.canvasGlowRadius))
   return base
 }
 
@@ -376,6 +421,12 @@ export interface TileState {
   zIndex: number
   filePath?: string
   groupId?: string
+  label?: string
+  hideTitlebar?: boolean
+  hideNavbar?: boolean
+  borderRadius?: number
+  launchBin?: string
+  launchArgs?: string[]
 }
 
 export interface GroupState {
@@ -383,6 +434,14 @@ export interface GroupState {
   label?: string
   color?: string
   parentGroupId?: string
+  layoutMode?: boolean
+  layout?: unknown  // PanelNode — typed as unknown to avoid circular import
+  layoutBounds?: { x: number; y: number; w: number; h: number }
+}
+
+export interface LockedConnection {
+  sourceTileId: string
+  targetTileId: string
 }
 
 export interface CanvasState {
@@ -394,6 +453,7 @@ export interface CanvasState {
   activePanelId?: string | null
   tabViewActive?: boolean
   expandedTileId?: string | null
+  lockedConnections?: LockedConnection[]
 }
 
 // ─── Event Bus Types ────────────────────────────────────────────────────────
@@ -507,4 +567,48 @@ export interface CollabTask {
 export interface CollabSkills {
   enabled: string[]
   disabled: string[]
+}
+
+export type CollabMailbox = 'inbox' | 'sent' | 'memory' | 'bin'
+export type CollabMessageType = 'request' | 'reply' | 'note' | 'signal' | 'memory'
+export type CollabMessageStatus = 'unread' | 'read' | 'sent' | 'archived'
+
+export interface CollabMessageMeta {
+  protocol: 'contex-message/v1'
+  id: string
+  threadId: string
+  fromTileId: string
+  toTileId: string
+  type: CollabMessageType
+  subject: string
+  status: CollabMessageStatus
+  createdAt: string
+  createdTs: number
+  updatedAt: string
+  updatedTs: number
+  replyToId?: string
+}
+
+export interface CollabMessage {
+  mailbox: CollabMailbox
+  filename: string
+  meta: CollabMessageMeta
+  body: string
+  data?: Record<string, unknown>
+}
+
+export interface CollabMessageDraft {
+  toTileId: string
+  subject: string
+  body: string
+  type?: CollabMessageType
+  threadId?: string
+  replyToId?: string
+  data?: Record<string, unknown>
+}
+
+export interface CollabMessageListItem {
+  mailbox: CollabMailbox
+  filename: string
+  meta: CollabMessageMeta
 }

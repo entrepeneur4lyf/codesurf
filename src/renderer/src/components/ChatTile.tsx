@@ -1,14 +1,19 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
+import { Streamdown } from 'streamdown'
+import { code } from '@streamdown/code'
+import 'streamdown/styles.css'
 import type { AppSettings } from '../../../shared/types'
 import { basename, getDroppedPaths, isImagePath } from '../utils/dnd'
 import {
   ShieldCheck, ChevronDown,
   Check, ArrowUp, Square, MessageSquare, Bot,
   Brain, ChevronRight, Clock, DollarSign,
-  FileText, Trash2
+  FileText, Paperclip, Trash2, Wrench
 } from 'lucide-react'
 import { useMCPServers, type MCPServerEntry } from '../hooks/useMCPServers'
 import { useTheme } from '../ThemeContext'
+import { stripCapabilityPrefix, getAllNodeTools } from '../../../shared/nodeTools'
 
 // --- Custom provider SVG icons (matching Paseo) ----------------------------------
 
@@ -24,6 +29,30 @@ function CodexIcon({ size = 12, color = 'currentColor' }: { size?: number; color
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill={color} fillRule="evenodd">
       <path d="M21.55 10.004a5.416 5.416 0 00-.478-4.501c-1.217-2.09-3.662-3.166-6.05-2.66A5.59 5.59 0 0010.831 1C8.39.995 6.224 2.546 5.473 4.838A5.553 5.553 0 001.76 7.496a5.487 5.487 0 00.691 6.5 5.416 5.416 0 00.477 4.502c1.217 2.09 3.662 3.165 6.05 2.66A5.586 5.586 0 0013.168 23c2.443.006 4.61-1.546 5.361-3.84a5.553 5.553 0 003.715-2.66 5.488 5.488 0 00-.693-6.497v.001zm-8.381 11.558a4.199 4.199 0 01-2.675-.954c.034-.018.093-.05.132-.074l4.44-2.53a.71.71 0 00.364-.623v-6.176l1.877 1.069c.02.01.033.029.036.05v5.115c-.003 2.274-1.87 4.118-4.174 4.123zM4.192 17.78a4.059 4.059 0 01-.498-2.763c.032.02.09.055.131.078l4.44 2.53c.225.13.504.13.73 0l5.42-3.088v2.138a.068.068 0 01-.027.057L9.9 19.288c-1.999 1.136-4.552.46-5.707-1.51h-.001zM3.023 8.216A4.15 4.15 0 015.198 6.41l-.002.151v5.06a.711.711 0 00.364.624l5.42 3.087-1.876 1.07a.067.067 0 01-.063.005l-4.489-2.559c-1.995-1.14-2.679-3.658-1.53-5.63h.001zm15.417 3.54l-5.42-3.088L14.896 7.6a.067.067 0 01.063-.006l4.489 2.557c1.998 1.14 2.683 3.662 1.529 5.633a4.163 4.163 0 01-2.174 1.807V12.38a.71.71 0 00-.363-.623zm1.867-2.773a6.04 6.04 0 00-.132-.078l-4.44-2.53a.731.731 0 00-.729 0l-5.42 3.088V7.325a.068.068 0 01.027-.057L14.1 4.713c2-1.137 4.555-.46 5.707 1.513.487.833.664 1.809.499 2.757h.001zm-11.741 3.81l-1.877-1.068a.065.065 0 01-.036-.051V6.559c.001-2.277 1.873-4.122 4.181-4.12.976 0 1.92.338 2.671.954-.034.018-.092.05-.131.073l-4.44 2.53a.71.71 0 00-.365.623l-.003 6.173v.002zm1.02-2.168L12 9.25l2.414 1.375v2.75L12 14.75l-2.415-1.375v-2.75z" />
+    </svg>
+  )
+}
+
+function HermesIcon({ size = 12, color = 'currentColor' }: { size?: number; color?: string }): JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2L9 7h6l-3-5z" />
+      <path d="M4 10c0-1 .5-2 2-2h12c1.5 0 2 1 2 2v2c0 1-.5 2-2 2H6c-1.5 0-2-1-2-2v-2z" />
+      <path d="M8 14v5M16 14v5" />
+      <path d="M6 19h4M14 19h4" />
+      <circle cx="12" cy="11" r="1" fill={color} />
+    </svg>
+  )
+}
+
+function OpenClawIcon({ size = 12, color = 'currentColor' }: { size?: number; color?: string }): JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 8c0-2 1.5-4 3-4s2 1 3 1 1.5-1 3-1 3 2 3 4" />
+      <path d="M5 12c-1 0-2 .5-2 2s1.5 3 3 3h12c1.5 0 3-1 3-3s-1-2-2-2" />
+      <path d="M8 17v2M16 17v2M12 17v2" />
+      <circle cx="9" cy="11" r="1" fill={color} />
+      <circle cx="15" cy="11" r="1" fill={color} />
     </svg>
   )
 }
@@ -85,6 +114,10 @@ interface ThinkingBlock {
   done: boolean
 }
 
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool'; toolId: string }
+
 interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -93,6 +126,7 @@ interface ChatMessage {
   isStreaming?: boolean
   thinking?: ThinkingBlock
   toolBlocks?: ToolBlock[]
+  contentBlocks?: ContentBlock[]
   cost?: number
   turns?: number
 }
@@ -102,6 +136,40 @@ interface PendingAttachment {
   kind: 'image' | 'file'
 }
 
+interface ChatTilePersistedState {
+  messages: ChatMessage[]
+  input: string
+  attachments: PendingAttachment[]
+  provider: 'claude' | 'codex' | 'opencode' | 'openclaw' | 'hermes'
+  model: string
+  mcpEnabled: boolean
+  mode: string
+  thinking: string
+  agentMode: boolean
+  autoAgentMode: boolean
+  sessionId: string | null
+  isStreaming: boolean
+}
+
+interface DiscoveryPeer {
+  peerId: string
+  peerType: string
+  capabilities: string[]
+  distance: number
+  lastSeen: number
+  actions?: Array<{ name: string; description: string }>
+  filePath?: string
+  label?: string
+}
+
+interface AutocompleteItem {
+  key: string
+  value: string
+  description: string
+  attachPath?: string
+  priority?: number
+}
+
 interface Props {
   tileId: string
   workspaceId: string
@@ -109,16 +177,22 @@ interface Props {
   width: number
   height: number
   settings?: AppSettings
+  isConnected?: boolean
+  isAutoConnected?: boolean
+  connectedPeers?: DiscoveryPeer[]
 }
 
 // --- Font defaults (used when no settings are provided) --------------------------
 
-const FONT_SANS = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-const FONT_MONO = "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace"
+// Use the canonical font stacks from shared/types.ts DEFAULT_FONTS
+const FONT_SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+const FONT_MONO = '"JetBrains Mono", "Menlo", "Monaco", "SF Mono", "Fira Code", monospace'
 const FONT_SIZE_DEFAULT = 13
+const chatTileRuntimeState = new Map<string, ChatTilePersistedState>()
 const MONO_SIZE_DEFAULT = 13
-const CHAT_MESSAGE_MAX_WIDTH = 840
+const CHAT_MESSAGE_MAX_WIDTH = 800
 const CHAT_COMPOSER_MAX_WIDTH = 800
+const CHAT_COMPOSER_MIN_WIDTH = 400
 const CHAT_COMPOSER_MIN_HEIGHT = 105
 const CHAT_COMPOSER_TEXTAREA_MIN_HEIGHT = 56
 const TOOLBAR_ICON_SIZE = 16
@@ -127,16 +201,98 @@ const TOOLBAR_TEXT_SIZE = 13
 const TOOLBAR_CHEVRON_SIZE = 12
 
 // Font context so sub-components can read settings-derived fonts without prop drilling
-const FontCtx = React.createContext({ sans: FONT_SANS, mono: FONT_MONO, size: FONT_SIZE_DEFAULT, monoSize: MONO_SIZE_DEFAULT })
+const FontCtx = React.createContext({ sans: FONT_SANS, secondary: FONT_SANS, mono: FONT_MONO, size: FONT_SIZE_DEFAULT, monoSize: MONO_SIZE_DEFAULT })
 function useFonts() { return React.useContext(FontCtx) }
+
+function getRelativeMentionPath(filePath: string, workspaceDir: string): string {
+  const normalizedFilePath = filePath.replace(/\\/g, '/')
+  const normalizedWorkspaceDir = workspaceDir.replace(/\\/g, '/').replace(/\/+$/, '')
+  if (!normalizedWorkspaceDir) return basename(normalizedFilePath)
+  if (normalizedFilePath === normalizedWorkspaceDir) return basename(normalizedFilePath)
+  if (normalizedFilePath.startsWith(`${normalizedWorkspaceDir}/`)) {
+    return normalizedFilePath.slice(normalizedWorkspaceDir.length + 1)
+  }
+  return basename(normalizedFilePath)
+}
+
+// --- Markdown renderer for chat bubbles (Streamdown) ------------------------------
+
+// Post-render patch: fix Streamdown's code block layout via direct DOM style overrides
+function usePatchCodeBlocks(ref: React.RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const blocks = el.querySelectorAll<HTMLElement>('[data-streamdown="code-block"]')
+    blocks.forEach(block => {
+      // Container: kill padding, gap, margin
+      block.style.cssText = 'padding:0!important;gap:0!important;margin:6px 0!important;border-radius:6px!important;overflow:hidden!important;border:1px solid rgba(128,128,128,0.2)!important;max-width:100%!important'
+      // Header: compact
+      const header = block.querySelector<HTMLElement>('[data-streamdown="code-block-header"]')
+      if (header) header.style.cssText = 'height:22px!important;font-size:10px!important;padding:0 8px!important'
+      // Actions wrapper (parent of code-block-actions): same line as header
+      const actionsWrapper = block.querySelector<HTMLElement>('[data-streamdown="code-block-actions"]')?.parentElement
+      if (actionsWrapper) actionsWrapper.style.cssText = 'margin-top:-22px!important;height:22px!important;pointer-events:none;position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:flex-end'
+      // Actions buttons
+      const actions = block.querySelector<HTMLElement>('[data-streamdown="code-block-actions"]')
+      if (actions) {
+        actions.style.cssText = 'padding:1px 4px!important;pointer-events:auto'
+        actions.querySelectorAll<HTMLElement>('button').forEach(btn => {
+          btn.style.cssText = 'width:18px!important;height:18px!important;padding:1px!important'
+        })
+        actions.querySelectorAll<SVGElement>('svg').forEach(svg => {
+          svg.setAttribute('width', '11')
+          svg.setAttribute('height', '11')
+        })
+      }
+      // Code body: compact
+      const body = block.querySelector<HTMLElement>('[data-streamdown="code-block-body"]')
+      if (body) body.style.cssText = 'padding:8px 10px!important;font-size:11px!important;border:none!important;border-radius:0!important'
+      // Pre: small font, preserve whitespace
+      block.querySelectorAll<HTMLElement>('pre').forEach(pre => {
+        pre.style.cssText += ';font-size:11px!important;line-height:1.4!important;margin:0!important;border-radius:0!important;white-space:pre!important'
+      })
+      block.querySelectorAll<HTMLElement>('pre > code').forEach(code => {
+        code.style.cssText += ';font-size:11px!important;line-height:1.4!important'
+        // Each direct child span is a line — must be display:block
+        code.querySelectorAll<HTMLElement>(':scope > span').forEach(line => {
+          line.style.display = 'block'
+        })
+      })
+    })
+  })
+}
+
+const ChatMarkdown = React.memo(({ text, isStreaming, className }: {
+  text: string
+  isStreaming?: boolean
+  className?: string
+}) => {
+  const ref = useRef<HTMLDivElement>(null)
+  usePatchCodeBlocks(ref)
+  return (
+    <div ref={ref}>
+      <Streamdown
+        className={`chat-md ${className ?? ''}`}
+        plugins={streamdownPlugins}
+        mode={isStreaming ? 'streaming' : 'static'}
+        shikiTheme={['github-light', 'github-dark']}
+        controls={{ code: { copy: true, download: false }, table: false, mermaid: false }}
+        lineNumbers={false}
+      >
+        {text}
+      </Streamdown>
+    </div>
+  )
+})
 
 // --- Provider / Model config -----------------------------------------------------
 
-type Provider = 'claude' | 'codex' | 'opencode'
+type Provider = 'claude' | 'codex' | 'opencode' | 'openclaw' | 'hermes'
 
 interface ModelOption {
   id: string
   label: string
+  description?: string
 }
 
 const DEFAULT_MODELS: Record<Provider, ModelOption[]> = {
@@ -155,12 +311,21 @@ const DEFAULT_MODELS: Record<Provider, ModelOption[]> = {
     { id: 'o3-mini', label: 'o3-mini' },
   ],
   opencode: [
-    { id: 'anthropic/claude-opus-4-6', label: 'Claude Opus 4.6' },
-    { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+    { id: 'anthropic/claude-sonnet-4-6', label: 'Sonnet 4.6' },
+    { id: 'anthropic/claude-opus-4-6', label: 'Opus 4.6' },
     { id: 'openai/gpt-5.4', label: 'GPT-5.4' },
     { id: 'openai/o4-mini', label: 'o4-mini' },
     { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-    { id: 'deepseek/deepseek-coder', label: 'DeepSeek Coder' },
+  ],
+  openclaw: [
+    { id: 'main', label: 'Main (default)', description: 'Configured default OpenClaw agent' },
+  ],
+  hermes: [
+    { id: 'anthropic/claude-opus-4-6', label: 'Opus 4.6' },
+    { id: 'anthropic/claude-sonnet-4-6', label: 'Sonnet 4.6' },
+    { id: 'openai/gpt-5.4', label: 'GPT-5.4' },
+    { id: 'openai/o4-mini', label: 'o4-mini' },
+    { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
   ],
 }
 
@@ -184,6 +349,18 @@ const PROVIDER_MODES: Record<Provider, ModeOption[]> = {
     { id: 'build', label: 'Build', description: 'Execute and build code', color: '#ffb432' },
     { id: 'plan', label: 'Plan', description: 'Plan only, no execution', color: '#58a6ff' },
   ],
+  openclaw: [
+    { id: 'full-auto', label: 'Full Auto', description: 'Full auto, no approval', color: '#e54d2e' },
+    { id: 'auto', label: 'Auto', description: 'Auto-approve safe actions', color: '#ffb432' },
+    { id: 'default', label: 'Default', description: 'Ask before risky actions', color: '#3fb950' },
+    { id: 'plan', label: 'Plan', description: 'Plan only, no execution', color: '#58a6ff' },
+  ],
+  hermes: [
+    { id: 'full', label: 'Full', description: 'All toolsets enabled', color: '#e54d2e' },
+    { id: 'terminal', label: 'Terminal', description: 'Terminal + file tools', color: '#ffb432' },
+    { id: 'web', label: 'Web', description: 'Web + browser tools', color: '#3fb950' },
+    { id: 'query', label: 'Query', description: 'No tools, query only', color: '#58a6ff' },
+  ],
 }
 
 // --- Thinking budget config (Claude only) ----------------------------------------
@@ -203,17 +380,33 @@ const PROVIDER_ICON: Record<Provider, React.ReactNode> = {
   claude: <ClaudeIcon size={TOOLBAR_PILL_ICON_SIZE} />,
   codex: <CodexIcon size={TOOLBAR_PILL_ICON_SIZE} />,
   opencode: <Bot size={TOOLBAR_PILL_ICON_SIZE} />,
+  openclaw: <OpenClawIcon size={TOOLBAR_PILL_ICON_SIZE} />,
+  hermes: <HermesIcon size={TOOLBAR_PILL_ICON_SIZE} />,
 }
 
 const PROVIDER_LABELS: Record<Provider, string> = {
   claude: 'Claude',
   codex: 'Codex',
   opencode: 'OpenCode',
+  openclaw: 'OpenClaw',
+  hermes: 'Hermes',
 }
 
 // --- Shimmer keyframes (injected once, lifted from Paseo) ------------------------
 
 const SHIMMER_ID = 'chat-tile-shimmer'
+function relativeTime(ts: number): string {
+  const diff = Math.max(0, Math.floor((Date.now() - ts) / 1000))
+  if (diff < 5) return 'just now'
+  if (diff < 60) return `${diff}s ago`
+  const mins = Math.floor(diff / 60)
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
+}
+
 function ensureShimmerStyle(): void {
   if (document.getElementById(SHIMMER_ID)) return
   const style = document.createElement('style')
@@ -239,9 +432,47 @@ function ensureShimmerStyle(): void {
       0%, 100% { opacity: 0.4; }
       50% { opacity: 1; }
     }
+
+    /* Chat markdown styles (Streamdown overrides for dark theme) */
+    .chat-md { line-height: 1.55; color: inherit; max-width: 100%; overflow: hidden; }
+    .chat-md > *:first-child { margin-top: 0 !important; }
+    .chat-md > *:last-child { margin-bottom: 0 !important; }
+    .chat-md pre { max-width: 100%; overflow-x: auto; }
+    .chat-md p { margin: 0 0 8px; }
+    .chat-md p:last-child { margin-bottom: 0; }
+    .chat-md h1 { font-size: 1.3em; font-weight: 700; margin: 12px 0 6px; color: inherit; }
+    .chat-md h2 { font-size: 1.15em; font-weight: 600; margin: 10px 0 4px; color: inherit; }
+    .chat-md h3 { font-size: 1.05em; font-weight: 600; margin: 8px 0 4px; color: inherit; }
+    .chat-md strong { font-weight: 600; }
+    .chat-md em { font-style: italic; }
+    .chat-md code:not(pre code) {
+      background: rgba(128,128,128,0.15); padding: 1px 5px; border-radius: 3px;
+      font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 0.88em;
+    }
+    .chat-md pre { margin: 8px 0; border-radius: 6px; overflow: hidden; }
+    .chat-md pre:first-child { margin-top: 0; }
+    .chat-md pre:last-child { margin-bottom: 0; }
+    .chat-md ul, .chat-md ol { padding-left: 18px; margin: 6px 0; }
+    .chat-md ul:first-child, .chat-md ol:first-child { margin-top: 0; }
+    .chat-md ul:last-child, .chat-md ol:last-child { margin-bottom: 0; }
+    .chat-md li { line-height: 1.55; margin-bottom: 2px; }
+    .chat-md li > p { margin: 0; }
+    .chat-md a { color: inherit; opacity: 0.85; text-decoration: underline; text-underline-offset: 2px; }
+    .chat-md a:hover { opacity: 1; }
+    .chat-md blockquote {
+      border-left: 3px solid rgba(128,128,128,0.4); padding-left: 10px;
+      margin: 6px 0; opacity: 0.85;
+    }
+    .chat-md hr { border: none; border-top: 1px solid rgba(128,128,128,0.3); margin: 10px 0; }
+    .chat-md table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 0.9em; }
+    .chat-md th, .chat-md td { border: 1px solid rgba(128,128,128,0.3); padding: 4px 8px; text-align: left; }
+    .chat-md th { font-weight: 600; background: rgba(128,128,128,0.1); }
   `
   document.head.appendChild(style)
 }
+
+// --- Streamdown plugins (singleton) ------------------------------------------------
+const streamdownPlugins = { code }
 
 // --- Shimmer text helper (Paseo technique) ---------------------------------------
 // Uses background-clip: text with a sweeping white gradient to create
@@ -286,7 +517,7 @@ function WorkingDots({ color, size = 5 }: { color?: string; size?: number }): JS
 
 // --- Component -------------------------------------------------------------------
 
-export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, width: _width, height: _height, settings }: Props): JSX.Element {
+export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, width: _width, height: _height, settings, isConnected, isAutoConnected, connectedPeers = [] }: Props): JSX.Element {
   const theme = useTheme()
   const composerBackground = theme.chat.input
   const composerBorder = theme.chat.inputBorder
@@ -294,32 +525,89 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
   const dropdownBorder = theme.chat.dropdownBorder
   const dropdownActiveBackground = theme.chat.dropdownActiveBackground
   const dropdownHoverBackground = theme.chat.dropdownHoverBackground
-  const fontSans = settings?.primaryFont?.family ?? FONT_SANS
-  const fontMono = settings?.monoFont?.family ?? FONT_MONO
-  const fontSize = settings?.primaryFont?.size ?? FONT_SIZE_DEFAULT
-  const monoSize = settings?.monoFont?.size ?? MONO_SIZE_DEFAULT
+  const fontSans = settings?.fonts?.primary?.family ?? settings?.primaryFont?.family ?? FONT_SANS
+  const fontMono = settings?.fonts?.mono?.family ?? settings?.monoFont?.family ?? FONT_MONO
+  const fontSize = settings?.fonts?.primary?.size ?? settings?.primaryFont?.size ?? FONT_SIZE_DEFAULT
+  const fontLineHeight = settings?.fonts?.primary?.lineHeight ?? 1.5
+  const fontWeight = settings?.fonts?.primary?.weight ?? 400
+  const monoSize = settings?.fonts?.mono?.size ?? settings?.monoFont?.size ?? MONO_SIZE_DEFAULT
+  const fontSecondary = settings?.fonts?.secondary?.family ?? settings?.secondaryFont?.family ?? FONT_SANS
+  const initialRuntimeStateRef = useRef<ChatTilePersistedState | null>(chatTileRuntimeState.get(tileId) ?? null)
+  const initialProvider = initialRuntimeStateRef.current?.provider ?? 'claude'
 
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [input, setInput] = useState('')
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [provider, setProvider] = useState<Provider>('claude')
-  const [model, setModel] = useState(DEFAULT_MODELS.claude[0].id)
-  const [mcpEnabled, setMcpEnabled] = useState(true)
+  const [messages, setMessages] = useState<ChatMessage[]>(() => initialRuntimeStateRef.current?.messages ?? [])
+  const [input, setInput] = useState(() => initialRuntimeStateRef.current?.input ?? '')
+  const [isStreaming, setIsStreaming] = useState(() => initialRuntimeStateRef.current?.isStreaming ?? false)
+  const [provider, setProvider] = useState<Provider>(() => initialProvider)
+  const [model, setModel] = useState(() => initialRuntimeStateRef.current?.model ?? DEFAULT_MODELS[initialProvider][0].id)
+  const [mcpEnabled, setMcpEnabled] = useState(() => initialRuntimeStateRef.current?.mcpEnabled ?? true)
   const mcpServers = useMCPServers()
   const [disabledServers, setDisabledServers] = useState<Set<string>>(new Set())
-  const [mode, setMode] = useState(PROVIDER_MODES.claude[0].id)
-  const [thinking, setThinking] = useState('adaptive')
-  const [agentMode, setAgentMode] = useState(false)
+  const peerToolNames = useMemo(() => {
+    const discovered = new Set<string>()
+    const validTool = new Set(getAllNodeTools().map(tool => tool.name))
+
+    for (const peer of connectedPeers) {
+      for (const cap of peer.capabilities) {
+        if (!cap.startsWith('tool:')) continue
+        const toolName = stripCapabilityPrefix(cap)
+        if (toolName && validTool.has(toolName)) {
+          discovered.add(toolName)
+        }
+      }
+      // Extension actions are not in the static node tool set — include them directly
+      if (peer.actions) {
+        for (const action of peer.actions) {
+          if (action.name) discovered.add(action.name)
+        }
+      }
+    }
+
+    return Array.from(discovered).sort()
+  }, [connectedPeers])
+
+  // Track current context values published by peer extension tiles
+  const peerContextRef = useRef<Map<string, Record<string, unknown>>>(new Map())
+  const [peerContextVersion, setPeerContextVersion] = useState(0)
+
+  useEffect(() => {
+    if (!window.electron?.bus) return
+    const unsubs: Array<() => void> = []
+
+    for (const peer of connectedPeers) {
+      const channel = `ctx:${peer.peerId}`
+      const subscriberId = `chat:${tileId}:peer-ctx:${peer.peerId}`
+      const unsubscribe = window.electron.bus.subscribe(channel, subscriberId, (event: any) => {
+        const p = event?.payload ?? event
+        if (p?.action === 'context_changed' && p.key) {
+          const existing = peerContextRef.current.get(peer.peerId) ?? {}
+          peerContextRef.current.set(peer.peerId, { ...existing, [p.key]: p.value })
+          setPeerContextVersion(v => v + 1)
+        }
+      })
+      if (typeof unsubscribe === 'function') unsubs.push(unsubscribe)
+    }
+
+    return () => { for (const u of unsubs) u() }
+  }, [connectedPeers, tileId])
+  const [mode, setMode] = useState(() => initialRuntimeStateRef.current?.mode ?? PROVIDER_MODES[initialProvider][0].id)
+  const [thinking, setThinking] = useState(() => initialRuntimeStateRef.current?.thinking ?? 'adaptive')
+  const [agentMode, setAgentMode] = useState(() => initialRuntimeStateRef.current?.agentMode ?? false)
+  const [autoAgentMode, setAutoAgentMode] = useState(() => initialRuntimeStateRef.current?.autoAgentMode ?? false)
   const [showModelMenu, setShowModelMenu] = useState(false)
   const [showProviderMenu, setShowProviderMenu] = useState(false)
   const [showMcpMenu, setShowMcpMenu] = useState(false)
   const [showModeMenu, setShowModeMenu] = useState(false)
   const [showThinkingMenu, setShowThinkingMenu] = useState(false)
-  const [sessionId, setSessionId] = useState<string | null>(null)
-  const [opencodeModels, setOllamaModels] = useState<ModelOption[]>(DEFAULT_MODELS.opencode)
-  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const [sessionId, setSessionId] = useState<string | null>(() => initialRuntimeStateRef.current?.sessionId ?? null)
+  const [opencodeModels, setOpencodeModels] = useState<ModelOption[]>(DEFAULT_MODELS.opencode)
+  const [openclawAgents, setOpenclawAgents] = useState<ModelOption[]>(DEFAULT_MODELS.openclaw)
+  const [modelFilter, setModelFilter] = useState('')
+  const [attachments, setAttachments] = useState<PendingAttachment[]>(() => initialRuntimeStateRef.current?.attachments ?? [])
   const [isDropTarget, setIsDropTarget] = useState(false)
   const stateLoadedRef = useRef(false)
+  const latestStateRef = useRef<ChatTilePersistedState | null>(null)
+  const requestedProviderOptionsRef = useRef<{ opencode: boolean; openclaw: boolean }>({ opencode: false, openclaw: false })
 
   // Voice dictation state
   const [isDictating, setIsDictating] = useState(false)
@@ -357,10 +645,55 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
     { value: '@src/', description: 'Source directory' },
   ]
 
-  const acItems = acType === 'slash'
-    ? SLASH_COMMANDS.filter(c => c.value.toLowerCase().startsWith('/' + acQuery.toLowerCase()))
+  const mentionItems = useMemo<AutocompleteItem[]>(() => {
+    const query = acQuery.trim().toLowerCase()
+    const seenPaths = new Set<string>()
+    const connectedFileItems: AutocompleteItem[] = []
+
+    for (const peer of connectedPeers) {
+      if (!peer.filePath || seenPaths.has(peer.filePath)) continue
+      seenPaths.add(peer.filePath)
+
+      const mentionPath = getRelativeMentionPath(peer.filePath, _workspaceDir)
+      const searchText = [
+        mentionPath,
+        peer.filePath,
+        peer.label ?? '',
+        peer.peerType,
+      ].join('\n').toLowerCase()
+
+      if (query && !searchText.includes(query)) continue
+
+      connectedFileItems.push({
+        key: `connected-file:${peer.peerId}:${peer.filePath}`,
+        value: `@${mentionPath}`,
+        description: `Connected ${peer.peerType} · ${mentionPath}`,
+        attachPath: peer.filePath,
+        priority: peer.distance,
+      })
+    }
+
+    connectedFileItems.sort((a, b) => {
+      const priorityDelta = (a.priority ?? 0) - (b.priority ?? 0)
+      if (priorityDelta !== 0) return priorityDelta
+      return a.value.localeCompare(b.value)
+    })
+
+    const existingValues = new Set(connectedFileItems.map(item => item.value.toLowerCase()))
+    const stubItems = MENTION_STUBS
+      .filter(item => !query || `${item.value}\n${item.description}`.toLowerCase().includes(query))
+      .filter(item => !existingValues.has(item.value.toLowerCase()))
+      .map(item => ({ key: `mention-stub:${item.value}`, ...item }))
+
+    return [...connectedFileItems, ...stubItems]
+  }, [acQuery, connectedPeers, _workspaceDir])
+
+  const acItems: AutocompleteItem[] = acType === 'slash'
+    ? SLASH_COMMANDS
+      .filter(c => c.value.toLowerCase().startsWith('/' + acQuery.toLowerCase()))
+      .map(item => ({ key: `slash:${item.value}`, ...item }))
     : acType === 'mention'
-      ? (acQuery ? MENTION_STUBS.filter(c => c.value.toLowerCase().includes(acQuery.toLowerCase())) : MENTION_STUBS)
+      ? mentionItems
       : []
 
   // Clamp index when filtered items change
@@ -370,17 +703,60 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
 
   useEffect(() => { ensureShimmerStyle() }, [])
 
-  // Fetch available OpenCode models on mount
+  // Subscribe once to async OpenCode model refreshes, but only request provider-specific
+  // options lazily when that provider is actually selected.
   useEffect(() => {
-    window.electron?.chat?.opencodeModels?.().then((result: any) => {
-      if (result?.models?.length) setOllamaModels(result.models)
-    }).catch(() => {})
+    const unsubscribeOpencode = window.electron?.chat?.onOpencodeModelsUpdated?.((payload: any) => {
+      if (payload?.models?.length) setOpencodeModels(payload.models)
+    })
+
+    return () => { unsubscribeOpencode?.() }
   }, [])
 
   useEffect(() => {
+    if (provider === 'opencode' && !requestedProviderOptionsRef.current.opencode) {
+      requestedProviderOptionsRef.current.opencode = true
+      window.electron?.chat?.opencodeModels?.().then((result: any) => {
+        if (result?.models?.length) setOpencodeModels(result.models)
+      }).catch(() => {
+        requestedProviderOptionsRef.current.opencode = false
+      })
+    }
+
+    if (provider === 'openclaw' && !requestedProviderOptionsRef.current.openclaw) {
+      requestedProviderOptionsRef.current.openclaw = true
+      window.electron?.chat?.openclawAgents?.().then((result: any) => {
+        if (result?.agents?.length) setOpenclawAgents(result.agents)
+      }).catch(() => {
+        requestedProviderOptionsRef.current.openclaw = false
+      })
+    }
+  }, [provider])
+
+  useEffect(() => {
+    latestStateRef.current = {
+      messages,
+      input,
+      attachments,
+      provider,
+      model,
+      mcpEnabled,
+      mode,
+      thinking,
+      agentMode,
+      autoAgentMode,
+      sessionId,
+      isStreaming,
+    }
+    if (stateLoadedRef.current) {
+      chatTileRuntimeState.set(tileId, latestStateRef.current)
+    }
+  }, [tileId, messages, input, attachments, provider, model, mcpEnabled, mode, thinking, agentMode, autoAgentMode, sessionId, isStreaming])
+
+  useEffect(() => {
     stateLoadedRef.current = false
-    if (!workspaceId) return
-    window.electron.canvas.loadTileState(workspaceId, tileId).then((saved: any) => {
+
+    const applySavedState = (saved: Partial<ChatTilePersistedState> | null | undefined) => {
       if (!saved) return
       if (Array.isArray(saved.messages)) setMessages(saved.messages)
       if (typeof saved.input === 'string') setInput(saved.input)
@@ -396,14 +772,32 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       if (typeof saved.mode === 'string') setMode(saved.mode)
       if (typeof saved.thinking === 'string') setThinking(saved.thinking)
       if (typeof saved.agentMode === 'boolean') setAgentMode(saved.agentMode)
+      if (typeof saved.autoAgentMode === 'boolean') setAutoAgentMode(saved.autoAgentMode)
       if (typeof saved.sessionId === 'string' || saved.sessionId === null) setSessionId(saved.sessionId)
+      if (typeof saved.isStreaming === 'boolean') setIsStreaming(saved.isStreaming)
+    }
+
+    const cached = initialRuntimeStateRef.current ?? chatTileRuntimeState.get(tileId)
+    if (cached) {
+      applySavedState(cached)
+      stateLoadedRef.current = true
+      return
+    }
+
+    if (!workspaceId) {
+      stateLoadedRef.current = true
+      return
+    }
+
+    window.electron.canvas.loadTileState(workspaceId, tileId).then((saved: any) => {
+      applySavedState(saved)
     }).catch(() => {}).finally(() => {
       stateLoadedRef.current = true
     })
   }, [workspaceId, tileId])
 
   useEffect(() => {
-    if (!workspaceId || !stateLoadedRef.current || isStreaming) return
+    if (!workspaceId || !stateLoadedRef.current) return
     window.electron.canvas.saveTileState(workspaceId, tileId, {
       messages,
       input,
@@ -414,14 +808,28 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       mode,
       thinking,
       agentMode,
+      autoAgentMode,
       sessionId,
+      isStreaming,
     }).catch(() => {})
-  }, [workspaceId, tileId, messages, input, attachments, provider, model, mcpEnabled, mode, thinking, agentMode, sessionId, isStreaming])
+  }, [workspaceId, tileId, messages, input, attachments, provider, model, mcpEnabled, mode, thinking, agentMode, autoAgentMode, sessionId, isStreaming])
+
+  useEffect(() => {
+    return () => {
+      const latest = latestStateRef.current
+      if (!latest) return
+      chatTileRuntimeState.set(tileId, latest)
+      if (!workspaceId || !stateLoadedRef.current) return
+      void window.electron.canvas.saveTileState(workspaceId, tileId, latest).catch(() => {})
+    }
+  }, [workspaceId, tileId])
 
   const providerModels: Record<Provider, ModelOption[]> = {
     claude: DEFAULT_MODELS.claude,
     codex: DEFAULT_MODELS.codex,
     opencode: opencodeModels,
+    openclaw: openclawAgents,
+    hermes: DEFAULT_MODELS.hermes,
   }
 
   // Close dropdowns on outside click or Escape
@@ -431,8 +839,10 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       const target = e.target as Node
-      // If click is inside any menu button/dropdown, let toggleMenu handle it
+      const targetEl = e.target instanceof Element ? e.target : null
+      // If click is inside any menu button or portaled dropdown, let the menu handle it.
       const insideAnyMenu = menuRefs.some(ref => ref.current?.contains(target))
+        || Boolean(targetEl?.closest('[data-chat-menu-portal="true"]'))
       if (insideAnyMenu) return
       // Click is outside all menus — close everything
       setShowModelMenu(false)
@@ -464,18 +874,29 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
     }
   }, [anyMenuOpen])
 
-  const currentModel = providerModels[provider]?.find(m => m.id === model) ?? providerModels[provider]?.[0] ?? { id: '', label: 'No model' }
+  const optionNoun = provider === 'openclaw' ? 'agent' : 'model'
+  const currentModel = providerModels[provider]?.find(m => m.id === model)
+    ?? providerModels[provider]?.[0]
+    ?? { id: '', label: provider === 'openclaw' ? 'No agent' : 'No model' }
+
+  useEffect(() => {
+    const options = providerModels[provider] ?? []
+    if (options.length === 0) return
+    if (!options.some(option => option.id === model)) {
+      setModel(options[0].id)
+    }
+  }, [provider, providerModels, model])
 
   const handleProviderChange = useCallback((p: Provider) => {
     setProvider(p)
     setModel(providerModels[p]?.[0]?.id ?? '')
     setMode(PROVIDER_MODES[p]?.[0]?.id ?? 'default')
-    if (p !== 'claude') setThinking('adaptive') // reset thinking when leaving Claude
+    // Preserve thinking preference across providers
     setShowProviderMenu(false)
   }, [providerModels])
 
   const toggleMenu = useCallback((which: 'model' | 'provider' | 'mcp' | 'mode' | 'thinking') => {
-    setShowModelMenu(prev => which === 'model' ? !prev : false)
+    setShowModelMenu(prev => { const next = which === 'model' ? !prev : false; if (!next) setModelFilter(''); return next })
     setShowProviderMenu(prev => which === 'provider' ? !prev : false)
     setShowMcpMenu(prev => which === 'mcp' ? !prev : false)
     setShowModeMenu(prev => which === 'mode' ? !prev : false)
@@ -539,7 +960,16 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           break
 
         case 'text':
-          if (event.text) updateLast(m => ({ ...m, content: m.content + event.text }))
+          if (event.text) updateLast(m => {
+            const blocks = [...(m.contentBlocks ?? [])]
+            const last = blocks[blocks.length - 1]
+            if (last?.type === 'text') {
+              blocks[blocks.length - 1] = { ...last, text: last.text + event.text }
+            } else {
+              blocks.push({ type: 'text', text: event.text })
+            }
+            return { ...m, content: m.content + event.text, contentBlocks: blocks }
+          })
           break
 
         case 'thinking_start':
@@ -553,17 +983,20 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           }))
           break
 
-        case 'tool_start':
+        case 'tool_start': {
+          const toolId = event.toolId ?? `tool-${Date.now()}`
           updateLast(m => ({
             ...m,
             toolBlocks: [...(m.toolBlocks ?? []), {
-              id: event.toolId ?? `tool-${Date.now()}`,
+              id: toolId,
               name: event.toolName ?? 'tool',
               input: '',
               status: 'running',
             }],
+            contentBlocks: [...(m.contentBlocks ?? []), { type: 'tool' as const, toolId }],
           }))
           break
+        }
 
         case 'tool_input':
           if (event.text) updateLast(m => {
@@ -579,7 +1012,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
             const blocks = [...(m.toolBlocks ?? [])]
             const idx = blocks.findIndex(b => b.name === event.toolName && b.status === 'running')
             if (idx >= 0) {
-              blocks[idx] = { ...blocks[idx], input: event.toolInput ?? blocks[idx].input }
+              blocks[idx] = { ...blocks[idx], input: event.toolInput ?? blocks[idx].input, status: 'done' }
             }
             return { ...m, toolBlocks: blocks }
           })
@@ -588,8 +1021,12 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
         case 'tool_summary':
           updateLast(m => {
             const blocks = [...(m.toolBlocks ?? [])]
-            const last = blocks[blocks.length - 1]
-            if (last) blocks[blocks.length - 1] = { ...last, summary: event.text, status: 'done' }
+            // Find the last done tool without a summary, or last running tool
+            const idx = blocks.findLastIndex(b => b.status === 'done' && !b.summary)
+            const target = idx >= 0 ? idx : blocks.findLastIndex(b => b.status === 'running')
+            if (target >= 0) {
+              blocks[target] = { ...blocks[target], summary: event.text, status: 'done' }
+            }
             return { ...m, toolBlocks: blocks }
           })
           break
@@ -604,11 +1041,19 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           break
 
         case 'block_stop':
-          // Mark thinking as done when its block stops
-          updateLast(m => ({
-            ...m,
-            thinking: m.thinking ? { ...m.thinking, done: true } : m.thinking,
-          }))
+          // Mark thinking as done and/or the last running tool as done when its block stops
+          updateLast(m => {
+            const blocks = [...(m.toolBlocks ?? [])]
+            const lastRunning = blocks.findLastIndex(b => b.status === 'running')
+            if (lastRunning >= 0) {
+              blocks[lastRunning] = { ...blocks[lastRunning], status: 'done' }
+            }
+            return {
+              ...m,
+              thinking: m.thinking ? { ...m.thinking, done: true } : m.thinking,
+              toolBlocks: blocks,
+            }
+          })
           break
 
         case 'done':
@@ -635,6 +1080,32 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       }
     })
     return cleanup
+  }, [tileId])
+
+  // Subscribe to incoming MCP peer commands on this tile's bus channel
+  useEffect(() => {
+    if (!window.electron?.bus) return
+    const unsubscribe = window.electron.bus.subscribe(`tile:${tileId}`, `chat:${tileId}:mcp`, (evt: any) => {
+      if (!evt?.type?.startsWith('mcp_') && !String(evt.source || '').startsWith('mcp:')) return
+      const payload = (evt.payload as Record<string, unknown>) || {}
+      const command = typeof payload.command === 'string' ? payload.command : ''
+      if (!command) return
+
+      if (command === 'chat_send_message' || command === 'chat_acknowledge') {
+        const text = typeof payload.message === 'string' ? payload.message : ''
+        if (!text) return
+        const prefix = command === 'chat_acknowledge' ? '🤝 ' : '📨 '
+        const incomingMsg: ChatMessage = {
+          id: `peer-${Date.now()}`,
+          role: 'user',
+          content: `${prefix}${text}`,
+          timestamp: Date.now(),
+          isStreaming: false,
+        }
+        setMessages(prev => [...prev, incomingMsg])
+      }
+    })
+    return () => unsubscribe?.()
   }, [tileId])
 
   const focusComposer = useCallback(() => {
@@ -684,7 +1155,13 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
   }, [])
 
   const handleTileDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    if (getDroppedPaths(e.dataTransfer).length === 0) return
+    // During dragover, getData() is restricted — check types instead for internal drags
+    const dt = e.dataTransfer
+    const hasFiles = dt.types.includes('Files')
+    const hasUri = dt.types.includes('text/uri-list')
+    const hasPlain = dt.types.includes('text/plain')
+    const hasFileRef = dt.types.includes('application/file-reference-path')
+    if (!hasFiles && !hasUri && !hasPlain && !hasFileRef) return
     e.preventDefault()
     e.stopPropagation()
     e.dataTransfer.dropEffect = 'copy'
@@ -697,11 +1174,13 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
   }, [])
 
   const handleTileDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    const droppedPaths = getDroppedPaths(e.dataTransfer)
-    if (droppedPaths.length === 0) return
     e.preventDefault()
     e.stopPropagation()
     setIsDropTarget(false)
+    // Check file-reference-path first (from FileTile drags), then fall back to generic extraction
+    const fileRef = e.dataTransfer.getData('application/file-reference-path')
+    const droppedPaths = fileRef ? [fileRef] : getDroppedPaths(e.dataTransfer)
+    if (droppedPaths.length === 0) return
     addAttachments(droppedPaths)
   }, [addAttachments])
 
@@ -742,13 +1221,25 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
     }])
 
     try {
+      const peers = mcpEnabled ? connectedPeers.map(p => ({
+        peerId: p.peerId,
+        peerType: p.peerType,
+        tools: p.capabilities.filter(c => c.startsWith('tool:')).map(c => stripCapabilityPrefix(c)),
+        actions: p.actions,
+        context: peerContextRef.current.get(p.peerId),
+      })) : []
+
       await window.electron?.chat?.send({
         cardId: tileId,
         provider,
         model,
         mode,
-        thinking: provider === 'claude' ? thinking : undefined,
-        messages: [...messages, userMsg].map(m => ({ role: m.role, content: m.content }))
+        thinking,
+        workspaceDir: _workspaceDir,
+        messages: [...messages, userMsg].map(m => ({ role: m.role, content: m.content })),
+        negotiatedTools: mcpEnabled ? peerToolNames : undefined,
+        peers: peers.length > 0 ? peers : undefined,
+        sessionId,
       })
     } catch (err) {
       setMessages(prev => prev.map(m =>
@@ -757,7 +1248,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       setIsStreaming(false)
       focusComposer()
     }
-  }, [input, attachments, isStreaming, messages, tileId, provider, model, mode, thinking, focusComposer])
+  }, [input, attachments, isStreaming, messages, tileId, provider, model, mode, thinking, mcpEnabled, peerToolNames, peerContextVersion, focusComposer])
 
   const stopStreaming = useCallback(() => {
     window.electron?.chat?.stop?.(tileId)
@@ -774,7 +1265,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
     window.electron?.chat?.clearSession?.(tileId)
   }, [isStreaming, tileId])
 
-  const selectAcItem = useCallback((item: { value: string }) => {
+  const selectAcItem = useCallback((item: AutocompleteItem) => {
     const ta = textareaRef.current
     if (!ta) return
     const pos = ta.selectionStart ?? input.length
@@ -794,6 +1285,12 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
     const replacement = item.value + ' '
     const newVal = input.slice(0, triggerStart) + replacement + textAfter
     setInput(newVal)
+    if (item.attachPath) {
+      setAttachments(prev => {
+        if (prev.some(existing => existing.path === item.attachPath)) return prev
+        return [...prev, { path: item.attachPath, kind: isImagePath(item.attachPath) ? 'image' : 'file' }]
+      })
+    }
     setAcType(null)
     setAcQuery('')
 
@@ -872,7 +1369,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
     setAcQuery('')
   }, [syncComposerHeight])
 
-  const fontCtxValue = React.useMemo(() => ({ sans: fontSans, mono: fontMono, size: fontSize, monoSize }), [fontSans, fontMono, fontSize, monoSize])
+  const fontCtxValue = useMemo(() => ({ sans: fontSans, secondary: fontSecondary, mono: fontMono, size: fontSize, monoSize }), [fontSans, fontSecondary, fontMono, fontSize, monoSize])
 
   return (
     <FontCtx.Provider value={fontCtxValue}>
@@ -884,7 +1381,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
         width: '100%', height: '100%',
         display: 'flex', flexDirection: 'column',
         background: theme.chat.background, color: theme.chat.text,
-        fontFamily: fontSans, fontSize,
+        fontFamily: fontSans, fontSize, lineHeight: fontLineHeight, fontWeight,
         position: 'relative',
       }}
     >
@@ -950,8 +1447,9 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
             <div key={msg.id} style={{
               display: 'flex', flexDirection: 'column',
               alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
-              maxWidth: '88%',
+              maxWidth: msg.role === 'user' ? '60%' : '70%', minWidth: 0,
               alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+              marginBottom: msg.role === 'user' ? 5 : 0,
               gap: 6,
             }}>
               {/* Thinking block — show immediately when streaming starts */}
@@ -959,41 +1457,91 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                 <ThinkingBlockView thinking={msg.thinking ?? { content: '', done: false }} />
               )}
 
-              {/* Tool call blocks */}
-              {msg.toolBlocks?.map(tb => (
-                <ToolBlockView key={tb.id} block={tb} />
-              ))}
-
-              {/* Main text bubble — only show when we have content (Thinking block handles the empty streaming state) */}
-              {msg.content && (
-                <div style={{
-                  background: msg.role === 'user' ? theme.chat.userBubble : theme.chat.assistantBubble,
-                  border: msg.role === 'user' ? `1px solid ${theme.chat.userBubbleBorder}` : `1px solid ${theme.chat.assistantBubbleBorder}`,
-                  borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
-                  padding: '8px 12px',
-                  fontSize, lineHeight: 1.55,
-                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  color: theme.chat.text, position: 'relative',
-                }}>
-                  {msg.content}
-                  {msg.isStreaming && msg.content.length > 0 && (
-                    <span style={{
-                      display: 'inline-block', width: 6, height: 14,
-                      marginLeft: 2, verticalAlign: 'text-bottom',
-                      background: `linear-gradient(90deg, ${theme.accent.hover} 0%, ${theme.accent.base} 50%, ${theme.accent.hover} 100%)`,
-                      backgroundSize: '200% 100%',
-                      animation: 'chat-shimmer 1.2s ease-in-out infinite',
-                      borderRadius: 1,
-                    }} />
+              {/* Interleaved content blocks — text and tool calls in stream order */}
+              {(msg.contentBlocks?.length ?? 0) > 0 ? (
+                <>
+                  {(() => {
+                    const elements: JSX.Element[] = []
+                    const blocks = msg.contentBlocks!
+                    let i = 0
+                    while (i < blocks.length) {
+                      const block = blocks[i]
+                      if (block.type === 'tool') {
+                        // Collect consecutive tool blocks into a horizontal row
+                        const toolGroup: JSX.Element[] = []
+                        while (i < blocks.length && blocks[i].type === 'tool') {
+                          const tb = msg.toolBlocks?.find(t => t.id === blocks[i].toolId)
+                          if (tb) toolGroup.push(<ToolBlockView key={tb.id} block={tb} />)
+                          i++
+                        }
+                        if (toolGroup.length > 0) {
+                          elements.push(
+                            <div key={`tools-${i}`} style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                              {toolGroup}
+                            </div>
+                          )
+                        }
+                      } else {
+                        const isLastBlock = i === blocks.length - 1
+                        elements.push(
+                          <div key={`text-${i}`} style={{
+                            background: msg.role === 'user' ? theme.chat.userBubble : 'transparent',
+                            border: msg.role === 'user' ? `1px solid ${theme.chat.userBubbleBorder}` : '0',
+                            borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+                            padding: '8px 12px',
+                            fontSize, lineHeight: 1.55,
+                            wordBreak: 'break-word',
+                            color: theme.chat.text, position: 'relative',
+                            width: '100%', minWidth: 0, overflow: 'hidden',
+                          }}>
+                            {msg.role === 'assistant' ? (
+                              <ChatMarkdown text={block.text} isStreaming={msg.isStreaming && isLastBlock} />
+                            ) : (
+                              <span style={{ whiteSpace: 'pre-wrap' }}>{block.text}</span>
+                            )}
+                          </div>
+                        )
+                        i++
+                      }
+                    }
+                    return elements
+                  })()}
+                </>
+              ) : (
+                <>
+                  {/* Fallback: legacy layout for messages without contentBlocks */}
+                  {msg.toolBlocks && msg.toolBlocks.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                      {msg.toolBlocks.map(tb => (
+                        <ToolBlockView key={tb.id} block={tb} />
+                      ))}
+                    </div>
                   )}
-                  {msg.isStreaming && msg.content.length === 0 && !msg.toolBlocks?.length && (
-                    <WorkingDots />
+                  {msg.content && (
+                    <div style={{
+                      background: msg.role === 'user' ? theme.chat.userBubble : 'transparent',
+                      border: msg.role === 'user' ? `1px solid ${theme.chat.userBubbleBorder}` : '0',
+                      borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+                      padding: '8px 12px',
+                      fontSize, lineHeight: 1.55,
+                      wordBreak: 'break-word',
+                      color: theme.chat.text, position: 'relative',
+                      width: '100%', minWidth: 0, overflow: 'hidden',
+                    }}>
+                      {msg.role === 'assistant' ? (
+                        <ChatMarkdown text={msg.content} isStreaming={msg.isStreaming} />
+                      ) : (
+                        <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
+                      )}
+                      {msg.isStreaming && msg.content.length === 0 && !msg.toolBlocks?.length && (
+                        <WorkingDots />
+                      )}
+                    </div>
                   )}
-                </div>
+                </>
               )}
-
-              {/* Cost/turns footer */}
-              {!msg.isStreaming && msg.cost != null && (
+              {/* Cost/turns/time footer */}
+              {!msg.isStreaming && msg.role === 'assistant' && msg.cost != null && (
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 8,
                   fontSize: monoSize - 3, color: theme.chat.muted, fontFamily: fontMono,
@@ -1005,6 +1553,16 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                   {msg.turns != null && (
                     <span>{msg.turns} turn{msg.turns !== 1 ? 's' : ''}</span>
                   )}
+                  <span>{relativeTime(msg.timestamp)}</span>
+                </div>
+              )}
+              {/* User message time footer */}
+              {!msg.isStreaming && msg.role === 'user' && (
+                <div style={{
+                  fontSize: monoSize - 3, color: theme.chat.muted, fontFamily: fontMono,
+                  padding: '0 4px', textAlign: 'right',
+                }}>
+                  {relativeTime(msg.timestamp)}
                 </div>
               )}
 
@@ -1026,9 +1584,9 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       {/* Input bar */}
       <div style={{
         flexShrink: 0,
-        width: 'calc(100% - 20px)',
-        maxWidth: CHAT_COMPOSER_MAX_WIDTH,
-        margin: '0 auto 10px auto',
+        width: `min(calc(100% - 8px), ${CHAT_COMPOSER_MAX_WIDTH}px)`,
+        minWidth: `min(${CHAT_COMPOSER_MIN_WIDTH}px, calc(100% - 8px))`,
+        margin: '0 auto 6px auto',
         minHeight: CHAT_COMPOSER_MIN_HEIGHT,
         border: isDropTarget ? `1px solid ${theme.accent.base}` : `1px solid ${composerBorder}`, borderRadius: 14,
         background: isDropTarget ? theme.surface.accentSoft : composerBackground,
@@ -1057,12 +1615,12 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                 padding: '6px 10px', fontSize: 11, color: theme.chat.muted,
                 fontFamily: fontMono,
               }}>
-                Type to search files...
+                Connected files appear first. Type to search files...
               </div>
             )}
             {acItems.map((item, i) => (
               <div
-                key={item.value}
+                key={item.key}
                 onMouseDown={(e) => { e.preventDefault(); selectAcItem(item) }}
                 onMouseEnter={() => setAcIndex(i)}
                 style={{
@@ -1106,7 +1664,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
 
         {attachments.length > 0 && (
           <div style={{
-            display: 'flex', gap: 8, padding: '8px 14px 4px 14px',
+            display: 'block', gap: 8, padding: '8px 14px 4px 14px',
             overflowX: 'auto',
           }}>
             {attachments.map(item => (
@@ -1167,6 +1725,38 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           </div>
         )}
 
+        {(agentMode || isConnected) && (
+          <div style={{
+            position: 'absolute',
+            top: -17,
+            right: 14,
+            textAlign: 'right',
+            color: theme.chat.muted,
+            fontSize: 10,
+            fontFamily: fontMono,
+            letterSpacing: 0.8,
+            textTransform: 'uppercase',
+            opacity: 0.95,
+            pointerEvents: 'none',
+            zIndex: 2,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            gap: 5,
+          }}>
+            <span style={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: theme.chat.muted,
+              opacity: 0.95,
+            }} />
+            <span>
+              CONNECTED
+            </span>
+          </div>
+        )}
+
         <textarea
           ref={textareaRef}
           value={input}
@@ -1202,34 +1792,36 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                     onClick={() => toggleMenu('mode')}
                   />
                   {showModeMenu && (
-                    <Dropdown>
-                      {PROVIDER_MODES[provider].map(m => (
-                        <DropdownItem
-                          key={m.id}
-                          icon={<ShieldCheck size={11} />}
-                          label={m.label}
-                          sublabel={m.description}
-                          active={mode === m.id}
-                          onClick={() => { setMode(m.id); setShowModeMenu(false) }}
-                        />
-                      ))}
-                    </Dropdown>
+                    <MenuPortal anchorRef={modeMenuRef}>
+                      <Dropdown>
+                        {PROVIDER_MODES[provider].map(m => (
+                          <DropdownItem
+                            key={m.id}
+                            icon={<ShieldCheck size={11} />}
+                            label={m.label}
+                            sublabel={m.description}
+                            active={mode === m.id}
+                            onClick={() => { setMode(m.id); setShowModeMenu(false) }}
+                          />
+                        ))}
+                      </Dropdown>
+                    </MenuPortal>
                   )}
                 </>
               )
             })()}
           </div>
 
-          {/* Thinking (Claude only) — brain + signal bars icon, label in dropdown */}
-          {provider === 'claude' && (
-            <div ref={thinkingMenuRef} style={{ position: 'relative' }}>
-              <ToolbarBtn
-                icon={<ThinkingIcon level={thinking} />}
-                tooltip={`Thinking: ${THINKING_OPTIONS.find(t => t.id === thinking)?.label ?? 'Adaptive'}`}
-                color={thinking === 'none' ? undefined : theme.chat.text}
-                onClick={() => toggleMenu('thinking')}
-              />
-              {showThinkingMenu && (
+          {/* Thinking — brain + signal bars icon, label in dropdown */}
+          <div ref={thinkingMenuRef} style={{ position: 'relative' }}>
+            <ToolbarBtn
+              icon={<ThinkingIcon level={thinking} />}
+              tooltip={`Thinking: ${THINKING_OPTIONS.find(t => t.id === thinking)?.label ?? 'Adaptive'}`}
+              color={thinking === 'none' ? undefined : theme.chat.text}
+              onClick={() => toggleMenu('thinking')}
+            />
+            {showThinkingMenu && (
+              <MenuPortal anchorRef={thinkingMenuRef}>
                 <Dropdown>
                   {THINKING_OPTIONS.map(t => (
                     <DropdownItem
@@ -1242,9 +1834,9 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                     />
                   ))}
                 </Dropdown>
-              )}
-            </div>
-          )}
+              </MenuPortal>
+            )}
+          </div>
 
           {/* Provider */}
           <div ref={providerMenuRef} style={{ position: 'relative' }}>
@@ -1255,17 +1847,19 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
               onClick={() => toggleMenu('provider')}
             />
             {showProviderMenu && (
-              <Dropdown>
-                {(['claude', 'codex', 'opencode'] as Provider[]).map(p => (
-                  <DropdownItem
-                    key={p}
-                    icon={PROVIDER_ICON[p]}
-                    label={PROVIDER_LABELS[p]}
-                    active={provider === p}
-                    onClick={() => handleProviderChange(p)}
-                  />
-                ))}
-              </Dropdown>
+              <MenuPortal anchorRef={providerMenuRef}>
+                <Dropdown>
+                  {(['claude', 'codex', 'opencode', 'openclaw', 'hermes'] as Provider[]).map(p => (
+                    <DropdownItem
+                      key={p}
+                      icon={PROVIDER_ICON[p]}
+                      label={PROVIDER_LABELS[p]}
+                      active={provider === p}
+                      onClick={() => handleProviderChange(p)}
+                    />
+                  ))}
+                </Dropdown>
+              </MenuPortal>
             )}
           </div>
 
@@ -1278,26 +1872,33 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
               onClick={() => toggleMenu('model')}
             />
             {showModelMenu && (
-              <Dropdown>
-                {providerModels[provider].map(m => (
-                  <DropdownItem
-                    key={m.id}
-                    icon={PROVIDER_ICON[provider]}
-                    label={m.label}
-                    active={model === m.id}
-                    onClick={() => { setModel(m.id); setShowModelMenu(false) }}
-                  />
-                ))}
-              </Dropdown>
+              <MenuPortal anchorRef={modelMenuRef}>
+                <ModelDropdown
+                  models={providerModels[provider]}
+                  activeId={model}
+                  filter={modelFilter}
+                  onFilterChange={setModelFilter}
+                  providerIcon={PROVIDER_ICON[provider]}
+                  noun={optionNoun}
+                  onSelect={(id) => { setModel(id); setShowModelMenu(false); setModelFilter('') }}
+                />
+              </MenuPortal>
             )}
           </div>
 
           {/* Agent Mode */}
           <ToolbarBtn
             icon={<Bot size={TOOLBAR_ICON_SIZE} />}
-            tooltip={agentMode ? 'Agent mode (on)' : 'Agent mode (off)'}
-            color={agentMode ? theme.chat.text : undefined}
-            onClick={() => setAgentMode(p => !p)}
+            tooltip={agentMode
+              ? ((typeof isAutoConnected === 'boolean' ? isAutoConnected : autoAgentMode)
+                ? 'Agent mode (auto-enabled by proximity)'
+                : 'Agent mode (on)')
+              : 'Agent mode (off)'}
+            color={agentMode || isConnected ? theme.accent.base : undefined}
+            onClick={() => {
+              setAgentMode(p => !p)
+              setAutoAgentMode(false) // Manual toggle clears auto flag
+            }}
           />
 
           {/* MCP — server list with toggles */}
@@ -1309,6 +1910,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
               onClick={() => toggleMenu('mcp')}
             />
             {showMcpMenu && (
+              <MenuPortal anchorRef={mcpMenuRef}>
               <Dropdown>
                 {/* Master toggle */}
                 <DropdownItem
@@ -1344,9 +1946,47 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                     No MCP servers configured
                   </div>
                 )}
+                {mcpEnabled && peerToolNames.length > 0 && (
+                  <>
+                    <div style={{ height: 1, background: dropdownBorder, margin: '4px 0' }} />
+                    <div style={{ padding: '4px 10px 2px 10px', fontSize: 11, color: theme.chat.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                      Connected peer tools
+                    </div>
+                    {peerToolNames.map(tool => (
+                      <DropdownItem
+                        key={`peer-tool-${tool}`}
+                        label={tool}
+                        sublabel="peer"
+                        active={mcpEnabled}
+                        onClick={() => { /* read-only affordance */ }}
+                      />
+                    ))}
+                  </>
+                )}
               </Dropdown>
+              </MenuPortal>
             )}
           </div>
+
+          {/* Attach files */}
+          <button
+            onClick={async () => {
+              const paths = await window.electron.chat?.selectFiles()
+              if (paths && paths.length > 0) addAttachments(paths)
+            }}
+            onMouseDown={e => e.preventDefault()}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '2px 4px', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', borderRadius: 4, color: theme.chat.muted,
+              transition: 'color 0.15s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.color = theme.chat.text)}
+            onMouseLeave={e => (e.currentTarget.style.color = theme.chat.muted)}
+            title="Attach files"
+          >
+            <Paperclip size={14} />
+          </button>
 
           <div style={{ flex: 1 }} />
 
@@ -1426,7 +2066,6 @@ function ThinkingBlockView({ thinking }: { thinking: ThinkingBlock }): JSX.Eleme
           padding: '5px 10px 5px 8px',
           background: expanded ? theme.surface.selection : 'transparent',
           border: expanded ? `1px solid ${theme.surface.selectionBorder}` : '1px solid transparent',
-          borderBottom: expanded ? '1px solid transparent' : '1px solid transparent',
           cursor: hasContent ? 'pointer' : 'default',
           color: isActive ? theme.accent.hover : theme.chat.muted,
           fontSize: 12, fontFamily: fonts.sans, fontWeight: 500,
@@ -1493,12 +2132,12 @@ function ToolBlockView({ block }: { block: ToolBlock }): JSX.Element {
   return (
     <div style={{
       background: theme.chat.assistantBubble, border: `1px solid ${theme.chat.assistantBubbleBorder}`,
-      borderRadius: 10, overflow: 'hidden', width: '100%',
+      borderRadius: 10, overflow: 'hidden', maxWidth: '100%', width: 'fit-content',
     }}>
       <button
         onClick={() => setExpanded(e => !e)}
         style={{
-          width: '100%', display: 'flex', alignItems: 'center', gap: 6,
+          display: 'flex', alignItems: 'center', gap: 6, width: '100%',
           padding: '5px 10px', background: 'none', border: 'none',
           cursor: 'pointer', color: isRunning ? theme.chat.textSecondary : theme.chat.muted,
           fontSize: 12, fontFamily: fonts.sans, lineHeight: 1,
@@ -1663,20 +2302,115 @@ function ToolbarPill({ prefix, label, color, active, onClick }: {
   )
 }
 
+// Renders children in a portal at document.body so they escape tile overflow:hidden clipping.
+// Positions above the anchor element, right-aligned so menus don't overflow off the right edge.
+function MenuPortal({ anchorRef, children }: { anchorRef: React.RefObject<HTMLElement | null>; children: React.ReactNode }): JSX.Element | null {
+  const [pos, setPos] = useState<{ bottom: number; right: number } | null>(null)
+
+  useLayoutEffect(() => {
+    const el = anchorRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    setPos({
+      bottom: window.innerHeight - rect.top + 4,
+      right: window.innerWidth - rect.right,
+    })
+  }, [anchorRef])
+
+  if (!pos) return null
+  return createPortal(
+    <div
+      data-chat-menu-portal="true"
+      style={{ position: 'fixed', bottom: pos.bottom, right: pos.right, zIndex: 99999 }}
+      onMouseDown={e => e.stopPropagation()}
+      onClick={e => e.stopPropagation()}
+    >
+      {children}
+    </div>,
+    document.body
+  )
+}
+
 function Dropdown({ children }: { children: React.ReactNode }): JSX.Element {
   const theme = useTheme()
   const dropdownBackground = theme.chat.dropdownBackground
   const dropdownBorder = theme.chat.dropdownBorder
   return (
     <div style={{
-      position: 'absolute', bottom: '100%', left: 0,
-      marginBottom: 4, minWidth: 160,
+      minWidth: 160,
       background: dropdownBackground, border: `1px solid ${dropdownBorder}`,
       borderRadius: 8, padding: 4,
       boxShadow: theme.shadow.panel,
-      zIndex: 9999,
     }}>
       {children}
+    </div>
+  )
+}
+
+function ModelDropdown({ models, activeId, filter, onFilterChange, providerIcon, noun, onSelect }: {
+  models: ModelOption[]; activeId: string; filter: string; onFilterChange: (v: string) => void
+  providerIcon: React.ReactNode; noun: 'model' | 'agent'; onSelect: (id: string) => void
+}): JSX.Element {
+  const theme = useTheme()
+  const fonts = useFonts()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const hasMany = models.length > 6
+
+  useEffect(() => { if (hasMany) inputRef.current?.focus() }, [hasMany])
+
+  const filtered = filter
+    ? models.filter(m => m.label.toLowerCase().includes(filter.toLowerCase()) || m.id.toLowerCase().includes(filter.toLowerCase()))
+    : models
+
+  return (
+    <div style={{
+      minWidth: 200, maxWidth: 280,
+      background: theme.chat.dropdownBackground, border: `1px solid ${theme.chat.dropdownBorder}`,
+      borderRadius: 8, padding: 4,
+      boxShadow: theme.shadow.panel,
+      zIndex: 9999,
+      display: 'flex', flexDirection: 'column',
+    }}>
+      {hasMany && (
+        <div style={{ padding: '4px 4px 2px' }}>
+          <input
+            ref={inputRef}
+            type="text"
+            value={filter}
+            onChange={e => onFilterChange(e.target.value)}
+            placeholder={`Filter ${noun}s...`}
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              padding: '5px 8px', fontSize: 11,
+              background: (theme.chat as any).inputBackground ?? theme.chat.background,
+              color: theme.chat.text, border: `1px solid ${theme.chat.dropdownBorder}`,
+              borderRadius: 5, outline: 'none',
+              fontFamily: fonts.mono,
+            }}
+            onKeyDown={e => e.stopPropagation()}
+          />
+        </div>
+      )}
+      <div style={{
+        maxHeight: 240, overflowY: 'auto', overflowX: 'hidden',
+        scrollbarWidth: 'thin',
+      }}>
+        {filtered.length === 0 && (
+          <div style={{ padding: '8px 10px', fontSize: 11, color: theme.chat.muted, fontFamily: fonts.sans }}>
+            {`No matching ${noun}s`}
+          </div>
+        )}
+        {filtered.map(m => (
+          <DropdownItem
+            key={m.id}
+            icon={providerIcon}
+            label={m.label}
+            sublabel={m.description ?? (m.id.includes('/') ? m.id.split('/')[0] : undefined)}
+            active={activeId === m.id}
+            onClick={() => onSelect(m.id)}
+          />
+        ))}
+      </div>
     </div>
   )
 }

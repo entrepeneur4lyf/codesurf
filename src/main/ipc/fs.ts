@@ -3,6 +3,7 @@ import { promises as fs, watch as fsWatch, FSWatcher } from 'fs'
 import path from 'node:path'
 import { basename, extname, join, parse } from 'path'
 import { homedir } from 'os'
+import { CONTEX_HOME, CONTEX_HOME_DIRNAME } from '../paths'
 
 const watchers = new Map<string, FSWatcher>()
 
@@ -12,10 +13,8 @@ const SENSITIVE_DIRS = ['.ssh', '.gnupg', '.aws', '.config']
 function validateFsPath(filePath: string): string {
   const resolved = path.resolve(resolveFsPath(filePath))
   const home = resolveHome()
-  const contexConfig = path.join(home, '.contex')
-
-  // Always allow ~/.contex/* paths (app config)
-  if (resolved.startsWith(contexConfig + path.sep) || resolved === contexConfig) return resolved
+  // Always allow app config paths
+  if (resolved.startsWith(CONTEX_HOME + path.sep) || resolved === CONTEX_HOME) return resolved
 
   // Reject paths to sensitive directories
   for (const dir of SENSITIVE_DIRS) {
@@ -43,15 +42,21 @@ const resolveHome = (): string => app.getPath('home') || process.env.HOME || pro
 function resolveFsPath(rawPath: string): string {
   const home = resolveHome()
   if (rawPath === '~') return home
+  // Support both legacy ~/.contex/ and new ~/.codesurf/ paths
   if (rawPath.startsWith('~/.contex/')) {
-    return join(home, '.contex', rawPath.slice('~/.contex/'.length))
+    return join(CONTEX_HOME, rawPath.slice('~/.contex/'.length))
   }
   if (rawPath.startsWith('~\\.contex\\')) {
-    return join(home, '.contex', rawPath.slice('~\\.contex\\'.length))
+    return join(CONTEX_HOME, rawPath.slice('~\\.contex\\'.length))
+  }
+  if (rawPath.startsWith(`~/${CONTEX_HOME_DIRNAME}/`)) {
+    return join(CONTEX_HOME, rawPath.slice(`~/${CONTEX_HOME_DIRNAME}/`.length))
   }
   if (rawPath.startsWith('~/') || rawPath.startsWith('~\\')) return join(home, rawPath.slice(2))
-  if (rawPath.startsWith('/.contex/')) return join(home, rawPath.slice(1))
-  if (rawPath === '/.contex') return join(home, '.contex')
+  if (rawPath.startsWith('/.contex/')) return join(CONTEX_HOME, rawPath.slice('/.contex/'.length))
+  if (rawPath === '/.contex') return CONTEX_HOME
+  if (rawPath.startsWith(`/${CONTEX_HOME_DIRNAME}/`)) return join(CONTEX_HOME, rawPath.slice(`/${CONTEX_HOME_DIRNAME}/`.length))
+  if (rawPath === `/${CONTEX_HOME_DIRNAME}`) return CONTEX_HOME
   return rawPath
 }
 
@@ -76,6 +81,31 @@ async function getUniqueCopyPath(destDir: string, sourcePath: string): Promise<s
     } catch {
       return candidate
     }
+  }
+}
+
+async function isProbablyTextFile(filePath: string): Promise<boolean> {
+  const resolved = validateFsPath(filePath)
+  const handle = await fs.open(resolved, 'r')
+  try {
+    const sampleSize = 8192
+    const buffer = Buffer.alloc(sampleSize)
+    const { bytesRead } = await handle.read(buffer, 0, sampleSize, 0)
+    if (bytesRead === 0) return true
+
+    let suspicious = 0
+    for (let i = 0; i < bytesRead; i += 1) {
+      const byte = buffer[i]
+      if (byte === 0) return false
+      const isAllowedControl = byte === 9 || byte === 10 || byte === 13 || byte === 12 || byte === 8
+      const isPrintableAscii = byte >= 32 && byte <= 126
+      const isExtended = byte >= 128
+      if (!isAllowedControl && !isPrintableAscii && !isExtended) suspicious += 1
+    }
+
+    return suspicious / bytesRead < 0.1
+  } finally {
+    await handle.close()
   }
 }
 
@@ -144,7 +174,7 @@ export function registerFsIPC(): void {
 
   ipcMain.handle('fs:writeBrief', async (_, cardId: string, content: string) => {
     const { join } = await import('path')
-    const briefDir = join(resolveHome(), '.contex', 'briefs')
+    const briefDir = join(CONTEX_HOME, 'briefs')
     await fs.mkdir(briefDir, { recursive: true })
     const briefPath = join(briefDir, `${cardId}.md`)
     await fs.writeFile(briefPath, content, 'utf8')
@@ -159,6 +189,12 @@ export function registerFsIPC(): void {
       isFile: stats.isFile(),
       isDir: stats.isDirectory(),
     }
+  })
+
+  ipcMain.handle('fs:isProbablyTextFile', async (_, filePath: string) => {
+    const stats = await fs.stat(validateFsPath(filePath))
+    if (!stats.isFile()) return false
+    return isProbablyTextFile(filePath)
   })
 
   ipcMain.handle('fs:copyIntoDir', async (_, sourcePath: string, destDir: string) => {

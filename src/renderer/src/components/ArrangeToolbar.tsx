@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Settings } from 'lucide-react'
 import type { TileState, GroupState } from '../../../shared/types'
+import { useTheme } from '../ThemeContext'
 
 const GAP = 50
 const GROUP_PAD = 20
@@ -55,7 +56,6 @@ function arrangeTiles(
 
   // Grid: keep each tile's natural size, pack into rows
   const cols = Math.max(1, Math.round(Math.sqrt(tiles.length * 1.6)))
-  // Use a uniform column width so tiles align, but keep individual heights
   const colW = Math.max(...tiles.map(t => t.width))
 
   const result: TileState[] = []
@@ -83,6 +83,9 @@ function Btn({ label, title, active, loading, onClick }: {
   loading: boolean
   onClick: () => void
 }): JSX.Element {
+  const theme = useTheme()
+  const baseColor = active ? theme.text.primary : theme.text.muted
+  const hoverColor = theme.text.primary
   return (
     <button
       title={title}
@@ -95,7 +98,7 @@ function Btn({ label, title, active, loading, onClick }: {
         // @ts-ignore
         WebkitAppRegion: 'no-drag',
         background: 'transparent',
-        color: active ? '#edf6ff' : '#9ca6b3',
+        color: baseColor,
         cursor: loading ? 'wait' : 'pointer',
         transition: 'color 0.12s ease, opacity 0.12s ease, transform 0.12s ease',
         fontSize: 12,
@@ -105,13 +108,13 @@ function Btn({ label, title, active, loading, onClick }: {
       }}
       onMouseEnter={e => {
         if (!active) {
-          e.currentTarget.style.color = '#dde5ee'
+          e.currentTarget.style.color = hoverColor
           e.currentTarget.style.opacity = '1'
         }
       }}
       onMouseLeave={e => {
         if (!active) {
-          e.currentTarget.style.color = '#9ca6b3'
+          e.currentTarget.style.color = baseColor
           e.currentTarget.style.opacity = loading ? '0.45' : '0.82'
         }
       }}
@@ -157,7 +160,15 @@ const RowIcon = () => (
 
 // ─── Toolbar ─────────────────────────────────────────────────────────────────
 export function ArrangeToolbar({ tiles, groups, onArrange, zoom, onZoomToggle, onToggleTabs, onOpenSettings, isTabbedView = false, activeCanvasMode = null }: Props): JSX.Element {
+  const theme = useTheme()
   const [loading, setLoading] = useState(false)
+
+  const isLight = theme.mode === 'light'
+  const dividerBg = isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.08)'
+  const zoomBg = isLight ? 'rgba(255,255,255,0.72)' : 'rgba(20,20,20,0.56)'
+  const zoomBgHover = isLight ? 'rgba(255,255,255,0.88)' : 'rgba(20,20,20,0.68)'
+  const zoomBorder = isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.08)'
+  const zoomBorderHover = isLight ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.14)'
 
   const run = async (mode: Mode) => {
     if (tiles.length < 2 || loading) return
@@ -200,17 +211,17 @@ export function ArrangeToolbar({ tiles, groups, onArrange, zoom, onZoomToggle, o
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: '#9ca6b3',
+          color: theme.text.muted,
           transition: 'color 0.12s ease, opacity 0.12s ease',
           opacity: 0.82,
           padding: 0,
         }}
         onMouseEnter={e => {
-          e.currentTarget.style.color = '#e1e6ec'
+          e.currentTarget.style.color = theme.text.primary
           e.currentTarget.style.opacity = '1'
         }}
         onMouseLeave={e => {
-          e.currentTarget.style.color = '#9ca6b3'
+          e.currentTarget.style.color = theme.text.muted
           e.currentTarget.style.opacity = '0.82'
         }}
       >
@@ -231,25 +242,25 @@ export function ArrangeToolbar({ tiles, groups, onArrange, zoom, onZoomToggle, o
           alignItems: 'center',
         }}
       >
-        <Btn label={<TabsIcon />}   title="Tabbed view"              active={isTabbedView}                              loading={false}   onClick={onToggleTabs} />
-        <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.08)', margin: '0 2px' }} />
+        <Btn label={<TabsIcon />}   title="Fullview"                 active={isTabbedView}                              loading={false}   onClick={onToggleTabs} />
+        <div style={{ width: 1, height: 14, background: dividerBg, margin: '0 2px' }} />
         <Btn label={<GridIcon />}   title="Grid layout (ELK)"        active={!isTabbedView && activeCanvasMode === 'grid'}   loading={loading} onClick={() => run('grid')} />
         <Btn label={<ColumnIcon />} title="Stack in column (ELK)"    active={!isTabbedView && activeCanvasMode === 'column'} loading={loading} onClick={() => run('column')} />
         <Btn label={<RowIcon />}    title="Arrange in row (ELK)"     active={!isTabbedView && activeCanvasMode === 'row'}    loading={loading} onClick={() => run('row')} />
-        <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.08)', margin: '0 2px' }} />
+        <div style={{ width: 1, height: 14, background: dividerBg, margin: '0 2px' }} />
         <button
           onClick={onZoomToggle}
           title="Toggle zoom to 100%"
           style={{
             fontSize: 10,
-            color: zoom === 1 ? '#69afff' : '#a3abb6',
-            background: 'rgba(20,20,20,0.56)',
+            color: zoom === 1 ? theme.accent.base : theme.text.muted,
+            background: zoomBg,
             display: 'flex',
             alignItems: 'center',
             height: '100%',
             // @ts-ignore
             WebkitAppRegion: 'no-drag',
-            border: '1px solid rgba(255,255,255,0.08)',
+            border: `1px solid ${zoomBorder}`,
             cursor: 'pointer',
             padding: '0 8px',
             borderRadius: 8,
@@ -261,14 +272,14 @@ export function ArrangeToolbar({ tiles, groups, onArrange, zoom, onZoomToggle, o
             WebkitBackdropFilter: 'blur(10px)',
           }}
           onMouseEnter={e => {
-            e.currentTarget.style.color = '#e1e6ec'
-            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.14)'
-            e.currentTarget.style.background = 'rgba(20,20,20,0.68)'
+            e.currentTarget.style.color = theme.text.primary
+            e.currentTarget.style.borderColor = zoomBorderHover
+            e.currentTarget.style.background = zoomBgHover
           }}
           onMouseLeave={e => {
-            e.currentTarget.style.color = zoom === 1 ? '#69afff' : '#a3abb6'
-            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'
-            e.currentTarget.style.background = 'rgba(20,20,20,0.56)'
+            e.currentTarget.style.color = zoom === 1 ? theme.accent.base : theme.text.muted
+            e.currentTarget.style.borderColor = zoomBorder
+            e.currentTarget.style.background = zoomBg
           }}
         >
           {Math.round(zoom * 100)}%

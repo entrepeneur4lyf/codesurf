@@ -13,9 +13,11 @@ interface Props {
   height: number
   fontSize?: number
   fontFamily?: string
+  launchBin?: string
+  launchArgs?: string[]
 }
 
-export function TerminalTile({ tileId, workspaceDir, width, height, fontSize = 13, fontFamily }: Props): JSX.Element {
+export function TerminalTile({ tileId, workspaceDir, width, height, fontSize = 13, fontFamily, launchBin, launchArgs }: Props): JSX.Element {
   const appFonts = useAppFonts()
   const theme = useTheme()
   const resolvedFont = fontFamily ?? appFonts.mono
@@ -88,7 +90,24 @@ export function TerminalTile({ tileId, workspaceDir, width, height, fontSize = 1
     // Initial fit after paint
     requestAnimationFrame(() => requestAnimationFrame(() => doFit()))
 
-    window.electron.terminal.create(tileId, workspaceDir).then(({ buffer }) => {
+    // Track PTY readiness so key handler can write safely
+    let ptyReady = false
+
+    // Shift+Enter → send escaped newline so shells continue on next line
+    // and TUI apps (Claude CLI) treat it as multi-line input.
+    term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
+      if (ev.key === 'Enter' && ev.shiftKey && ev.type === 'keydown') {
+        if (ptyReady) {
+          // Send backslash + carriage return — universal shell line continuation
+          window.electron.terminal.write(tileId, '\\\r')
+          return false
+        }
+      }
+      return true
+    })
+
+    window.electron.terminal.create(tileId, workspaceDir, launchBin, launchArgs).then(({ buffer }) => {
+      ptyReady = true
       if (buffer) term.write(buffer)
       const cleanup = window.electron.terminal.onData(tileId, (data: string) => {
         term.write(data)
@@ -109,9 +128,11 @@ export function TerminalTile({ tileId, workspaceDir, width, height, fontSize = 1
       mountedRef.current = false
       ro.disconnect()
       cleanupRef.current?.()
+      // Detach (not destroy) so tmux sessions survive unmount/reload
+      window.electron?.terminal?.detach?.(tileId)
       term.dispose()
     }
-  }, [tileId, workspaceDir])
+  }, [tileId, workspaceDir, launchBin, launchArgs])
 
   // Also refit when tile width/height props change (drag resize)
   useEffect(() => {
@@ -147,7 +168,13 @@ export function TerminalTile({ tileId, workspaceDir, width, height, fontSize = 1
   }, [theme])
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    if (getDroppedPaths(e.dataTransfer).length === 0) return
+    // During dragover, getData() is restricted — check types instead
+    const dt = e.dataTransfer
+    const hasFiles = dt.types.includes('Files')
+    const hasUri = dt.types.includes('text/uri-list')
+    const hasPlain = dt.types.includes('text/plain')
+    const hasFileRef = dt.types.includes('application/file-reference-path')
+    if (!hasFiles && !hasUri && !hasPlain && !hasFileRef) return
     e.preventDefault()
     e.stopPropagation()
     e.dataTransfer.dropEffect = 'copy'
@@ -160,11 +187,11 @@ export function TerminalTile({ tileId, workspaceDir, width, height, fontSize = 1
   }, [])
 
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    const droppedPaths = getDroppedPaths(e.dataTransfer)
-    if (droppedPaths.length === 0) return
     e.preventDefault()
     e.stopPropagation()
     setIsDropTarget(false)
+    const droppedPaths = getDroppedPaths(e.dataTransfer)
+    if (droppedPaths.length === 0) return
     const payload = droppedPaths.map(shellEscapePath).join(' ')
     if (!payload) return
     termRef.current?.focus()

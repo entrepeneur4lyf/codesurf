@@ -5,6 +5,7 @@
   "description": "Live markdown preview tile. Watches files via the event bus and renders with syntax highlighting.",
   "author": "contex",
   "tier": "safe",
+  "ui": { "mode": "native" },
   "contributes": {
     "tiles": [
       {

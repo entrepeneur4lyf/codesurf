@@ -6,9 +6,12 @@ import type { Config, Workspace, AppSettings } from '../../shared/types'
 import { DEFAULT_SETTINGS, withDefaultSettings } from '../../shared/types'
 import { writeMCPConfigToWorkspace } from '../mcp-server'
 import { applyWindowAppearance } from '../windowAppearance'
+import { CONTEX_HOME } from '../paths'
+import { ensureCodeSurfStructure } from '../session-sources'
 
-const CONTEX_DIR = join(homedir(), '.contex')
+const CONTEX_DIR = CONTEX_HOME
 const CONFIG_PATH = join(CONTEX_DIR, 'config.json')
+const DEFAULT_WORKSPACES_DIR = join(homedir(), 'codesurf', 'workspaces')
 
 async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true })
@@ -42,13 +45,36 @@ async function writeConfig(config: Config): Promise<void> {
   await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 2))
 }
 
+/** Filesystem path for a workspace id (from ~/.contex/config.json). */
+export async function getWorkspacePathById(workspaceId: string): Promise<string | null> {
+  const config = await readConfig()
+  return config.workspaces.find(w => w.id === workspaceId)?.path ?? null
+}
+
+/**
+ * All workspace ids that point at the same underlying workspace path.
+ * Used so alias workspaces created via createWithPath(...) can share persisted canvas/tile state.
+ */
+export async function getWorkspaceStorageIds(workspaceId: string): Promise<string[]> {
+  const config = await readConfig()
+  const workspace = config.workspaces.find(w => w.id === workspaceId)
+  if (!workspace) return [workspaceId]
+
+  const ids = config.workspaces
+    .filter(w => w.path === workspace.path)
+    .map(w => w.id)
+
+  return ids.length > 0 ? ids : [workspaceId]
+}
+
 export async function initWorkspaces(): Promise<void> {
   await ensureDir(CONTEX_DIR)
+  await ensureCodeSurfStructure()
   let config = await readConfig()
 
   if (config.workspaces.length === 0) {
     const defaultId = 'default'
-    const defaultPath = join(CONTEX_DIR, 'workspaces', defaultId)
+    const defaultPath = join(DEFAULT_WORKSPACES_DIR, defaultId)
     await ensureDir(defaultPath)
     config = {
       workspaces: [{ id: defaultId, name: 'Default', path: defaultPath }],
@@ -61,6 +87,7 @@ export async function initWorkspaces(): Promise<void> {
   for (const ws of config.workspaces) {
     const wsPath = ws.path.startsWith('~') ? resolve(homedir(), ws.path.slice(2)) : ws.path
     await ensureDir(wsPath)
+    await ensureCodeSurfStructure(wsPath)
   }
 }
 
@@ -78,8 +105,22 @@ export function registerWorkspaceIPC(): void {
   ipcMain.handle('workspace:create', async (_, name: string) => {
     const config = await readConfig()
     const id = `ws-${Date.now()}`
-    const wsPath = join(CONTEX_DIR, 'workspaces', id)
+    const wsPath = join(DEFAULT_WORKSPACES_DIR, id)
     await ensureDir(wsPath)
+    const workspace: Workspace = { id, name, path: wsPath }
+    config.workspaces.push(workspace)
+    config.activeWorkspaceIndex = config.workspaces.length - 1
+    await writeConfig(config)
+    return workspace
+  })
+
+  // Create a workspace with an explicit path (used by layouts — views within the same project)
+  ipcMain.handle('workspace:createWithPath', async (_, name: string, projectPath: string) => {
+    const config = await readConfig()
+    const id = `ws-${Date.now()}`
+    const wsPath = projectPath || join(DEFAULT_WORKSPACES_DIR, id)
+    if (!projectPath) await ensureDir(wsPath)
+    await ensureCodeSurfStructure(wsPath)
     const workspace: Workspace = { id, name, path: wsPath }
     config.workspaces.push(workspace)
     config.activeWorkspaceIndex = config.workspaces.length - 1
@@ -110,6 +151,7 @@ export function registerWorkspaceIPC(): void {
     }
     const id = `ws-${Date.now()}`
     const name = basename(folderPath)
+    await ensureCodeSurfStructure(folderPath)
     const workspace: Workspace = { id, name, path: folderPath }
     config.workspaces.push(workspace)
     config.activeWorkspaceIndex = config.workspaces.length - 1
@@ -124,6 +166,7 @@ export function registerWorkspaceIPC(): void {
     if (idx !== -1) {
       config.activeWorkspaceIndex = idx
       await writeConfig(config)
+      await ensureCodeSurfStructure(config.workspaces[idx].path)
       writeMCPConfigToWorkspace(config.workspaces[idx].path).catch(() => {})
     }
   })

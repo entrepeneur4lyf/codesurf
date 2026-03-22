@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import { useAppFonts } from '../FontContext'
 import { useTheme } from '../ThemeContext'
+import { ensureMonacoConfigured } from '../monaco'
 
 interface Props {
   filePath?: string
@@ -22,6 +23,8 @@ function getLang(filePath?: string): string {
   }
   return map[ext] ?? 'plaintext'
 }
+
+ensureMonacoConfigured()
 
 export function CodeTile({ filePath, initialContent = '' }: Props): JSX.Element {
   const [content, setContent] = useState<string | undefined>(undefined)
@@ -71,14 +74,14 @@ export function CodeTile({ filePath, initialContent = '' }: Props): JSX.Element 
         loading={
           <div style={{
             height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: theme.editor.background, color: theme.text.muted, fontSize: 12
+            background: theme.editor.background, color: theme.text.muted, fontSize: fonts.size
           }}>
             Loading…
           </div>
         }
         options={{
           minimap: { enabled: false },
-          fontSize: 13,
+          fontSize: fonts.monoSize,
           lineNumbers: 'on',
           scrollBeyondLastLine: false,
           wordWrap: 'on',

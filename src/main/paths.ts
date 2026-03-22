@@ -1,10 +1,10 @@
 import { homedir } from 'os'
 import { join } from 'path'
 
-export const APP_NAME = 'Contex'
-export const APP_ID = 'com.huggiapps.contex'
-export const CONTEX_HOME_DIRNAME = '.contex'
-export const LEGACY_HOME_DIRNAME = 'clawd-collab'
+export const APP_NAME = 'CodeSurf'
+export const APP_ID = 'com.huggiapps.codesurf'
+export const CONTEX_HOME_DIRNAME = '.codesurf'
+export const LEGACY_HOME_DIRNAME = '.contex'
 export const TILE_CONTEXT_DIRNAME = '.contex'
 export const LEGACY_TILE_CONTEXT_DIRNAME = '.collab'
 
@@ -26,4 +26,12 @@ export function workspaceTileContextDir(workspacePath: string, tileId: string): 
 
 export function legacyWorkspaceTileContextDir(workspacePath: string, tileId: string): string {
   return join(legacyWorkspaceTileDir(workspacePath, tileId), 'context')
+}
+
+export function workspaceTileMessagesDir(workspacePath: string, tileId: string): string {
+  return join(workspaceTileDir(workspacePath, tileId), 'messages')
+}
+
+export function workspaceTileMessageMailboxDir(workspacePath: string, tileId: string, mailbox: string): string {
+  return join(workspaceTileMessagesDir(workspacePath, tileId), mailbox)
 }
