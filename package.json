@@ -67,7 +67,6 @@
     },
     "files": [
       "dist-electron/**/*",
-      "out/**/*",
       "package.json"
     ],
     "asar": true,

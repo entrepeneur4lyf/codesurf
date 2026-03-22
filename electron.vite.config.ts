@@ -66,6 +66,7 @@ export default defineConfig({
           },
           plugins: [react()],
           build: {
+            outDir: 'dist-electron/renderer',
             modulePreload: false,
             reportCompressedSize: false
           },
