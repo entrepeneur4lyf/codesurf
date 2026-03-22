@@ -57,11 +57,22 @@ type KanbanMode = 'board' | 'overview'
 // ─── Agent Overview (auto-generated from activity store) ────────────────────
 
 const STATUS_ORDER: Record<string, number> = { running: 0, pending: 1, error: 2, done: 3 }
-const STATUS_COLORS: Record<string, string> = {
-  pending: '#8b949e', running: '#58a6ff', done: '#3fb950', error: '#f85149',
-}
 const TYPE_ICONS: Record<string, string> = {
   task: 'T', tool: 'W', file: 'F', note: 'N',
+}
+
+function getStatusColor(theme: ReturnType<typeof useTheme>, status: string): string {
+  switch (status) {
+    case 'running':
+      return theme.accent.base
+    case 'done':
+      return theme.status.success
+    case 'error':
+      return theme.status.danger
+    case 'pending':
+    default:
+      return theme.text.muted
+  }
 }
 
 function AgentOverview({ workspaceId, onFocusTile }: {
@@ -136,34 +147,34 @@ function AgentOverview({ workspaceId, onFocusTile }: {
             style={{
               flex: 1, minWidth: 200, maxWidth: 320,
               display: 'flex', flexDirection: 'column',
-              borderRight: i < agentKeys.length - 1 ? '1px solid #21262d' : 'none',
+              borderRight: i < agentKeys.length - 1 ? `1px solid ${theme.border.subtle}` : 'none',
             }}
           >
             {/* Column header */}
             <div style={{
               padding: '8px 10px 6px', flexShrink: 0,
               display: 'flex', alignItems: 'center', gap: 6,
-              borderBottom: '1px solid #21262d',
+              borderBottom: `1px solid ${theme.border.subtle}`,
             }}>
               {running > 0 && (
                 <span style={{
                   width: 6, height: 6, borderRadius: '50%',
-                  background: '#58a6ff', boxShadow: '0 0 6px #58a6ff',
+                  background: theme.accent.base, boxShadow: `0 0 6px ${theme.accent.base}`,
                   display: 'inline-block', flexShrink: 0,
                 }} />
               )}
               <span style={{
                 flex: 1, fontSize: 11, fontWeight: 700,
-                color: isAgent ? '#58a6ff' : '#8b949e',
+                color: isAgent ? theme.accent.base : theme.text.muted,
                 textTransform: 'uppercase', letterSpacing: 0.5,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>
                 {label}
               </span>
               <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                {running > 0 && <StatusPill count={running} color="#58a6ff" />}
-                {pending > 0 && <StatusPill count={pending} color="#8b949e" />}
-                {done > 0 && <StatusPill count={done} color="#3fb950" />}
+                {running > 0 && <StatusPill count={running} color={theme.accent.base} />}
+                {pending > 0 && <StatusPill count={pending} color={theme.text.muted} />}
+                {done > 0 && <StatusPill count={done} color={theme.status.success} />}
               </div>
             </div>
 
@@ -185,10 +196,12 @@ function AgentOverview({ workspaceId, onFocusTile }: {
 }
 
 function StatusPill({ count, color }: { count: number; color: string }): JSX.Element {
+  const theme = useTheme()
   return (
     <span style={{
       fontSize: 9, fontWeight: 700, color,
       background: `${color}18`, borderRadius: 8,
+      border: `1px solid ${theme.border.subtle}`,
       padding: '1px 5px', minWidth: 16, textAlign: 'center',
     }}>
       {count}
@@ -200,8 +213,9 @@ function ActivityRecordRow({ record, onFocusTile }: {
   record: ActivityRecord
   onFocusTile?: (tileId: string) => void
 }): JSX.Element {
+  const theme = useTheme()
   const [hovered, setHovered] = useState(false)
-  const statusColor = STATUS_COLORS[record.status] ?? '#555'
+  const statusColor = getStatusColor(theme, record.status)
   const typeIcon = TYPE_ICONS[record.type] ?? '?'
 
   return (
@@ -209,7 +223,7 @@ function ActivityRecordRow({ record, onFocusTile }: {
       style={{
         padding: '5px 6px', marginBottom: 2,
         borderRadius: 5,
-        background: hovered ? '#161b22' : 'transparent',
+        background: hovered ? theme.surface.hover : 'transparent',
         display: 'flex', alignItems: 'flex-start', gap: 6,
         cursor: onFocusTile ? 'pointer' : 'default',
         transition: 'background 0.1s',
@@ -239,14 +253,14 @@ function ActivityRecordRow({ record, onFocusTile }: {
       {/* Content */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
-          fontSize: 11, color: '#c9d1d9',
+          fontSize: 11, color: theme.text.secondary,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>
           {record.title}
         </div>
         {record.detail && (
           <div style={{
-            fontSize: 10, color: '#555', marginTop: 1,
+            fontSize: 10, color: theme.text.disabled, marginTop: 1,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
             {record.detail}
@@ -255,7 +269,7 @@ function ActivityRecordRow({ record, onFocusTile }: {
       </div>
 
       {/* Time */}
-      <span style={{ fontSize: 9, color: '#333', flexShrink: 0, marginTop: 2 }}>
+      <span style={{ fontSize: 9, color: theme.text.disabled, flexShrink: 0, marginTop: 2 }}>
         {new Date(record.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
       </span>
     </div>
@@ -667,8 +681,8 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
                 {cards.length} card{cards.length !== 1 ? 's' : ''}
               </span>
               {Object.keys(activeTerminals).filter(id => isActive(id)).length > 0 && (
-                <span style={{ fontSize: 10, color: '#3fb950', display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3fb950', boxShadow: '0 0 6px #3fb950', display: 'inline-block' }} />
+                <span style={{ fontSize: 10, color: theme.status.success, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.status.success, boxShadow: `0 0 6px ${theme.status.success}`, display: 'inline-block' }} />
                   {Object.keys(activeTerminals).filter(id => isActive(id)).length} active
                 </span>
               )}
@@ -705,22 +719,22 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
                   onClick={() => jumpToCard(card.id)}
                   style={{
                     fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer',
-                    borderRadius: 6, border: `1px solid ${isLive ? '#3fb95055' : '#30363d'}`,
-                    background: isLive ? '#162e20' : '#121820',
+                    borderRadius: 6, border: `1px solid ${isLive ? `${theme.status.success}55` : theme.border.default}`,
+                    background: isLive ? `${theme.status.success}14` : theme.surface.panelMuted,
                     padding: 7, minWidth: 180, maxWidth: 280,
-                    color: '#c9d1d9',
+                    color: theme.text.secondary,
                     display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0
                   }}
                   title={`Jump to ${card.title}`}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = '#58a6ff66' }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = isLive ? '#3fb95055' : '#30363d' }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = `${theme.accent.base}66` }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = isLive ? `${theme.status.success}55` : theme.border.default }}
                 >
-                  <span style={{ fontSize: 11, color: '#58a6ff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.title}</span>
-                  <span style={{ fontSize: 10, color: hasAny ? '#8b949e' : '#333', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: isLive ? '#3fb950' : '#30363d', boxShadow: isLive ? '0 0 6px #3fb950' : 'none', display: 'inline-block' }} />
+                  <span style={{ fontSize: 11, color: theme.accent.base, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.title}</span>
+                  <span style={{ fontSize: 10, color: hasAny ? theme.text.muted : theme.text.disabled, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: isLive ? theme.status.success : theme.border.default, boxShadow: isLive ? `0 0 6px ${theme.status.success}` : 'none', display: 'inline-block' }} />
                     {hasAny ? ev.message : 'No terminal output yet'}
                   </span>
-                  <span style={{ fontSize: 9, color: '#555', letterSpacing: 0.2 }}>
+                  <span style={{ fontSize: 9, color: theme.text.disabled, letterSpacing: 0.2 }}>
                     {hasAny ? new Date(ev.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '---'}
                   </span>
                 </button>
@@ -756,19 +770,19 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
                   <input autoFocus value={renameVal} onChange={e => setRenameVal(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') { setColumns(p => p.map(c => c.id === col.id ? { ...c, title: renameVal } : c)); setRenamingCol(null) } if (e.key === 'Escape') setRenamingCol(null) }}
                     onBlur={() => { setColumns(p => p.map(c => c.id === col.id ? { ...c, title: renameVal } : c)); setRenamingCol(null) }}
-                    style={{ flex: 1, fontSize: 11, fontWeight: 700, background: 'transparent', color: '#58a6ff', border: 'none', borderBottom: '1px solid #58a6ff', outline: 'none', textTransform: 'uppercase', letterSpacing: 0.5 }}
+                    style={{ flex: 1, fontSize: 11, fontWeight: 700, background: 'transparent', color: theme.accent.base, border: 'none', borderBottom: `1px solid ${theme.accent.base}`, outline: 'none', textTransform: 'uppercase', letterSpacing: 0.5 }}
                   />
                 ) : (
-                  <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: '#8b949e', textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'text' }}
+                  <span style={{ flex: 1, fontSize: 11, fontWeight: 700, color: theme.text.muted, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'text' }}
                     onDoubleClick={() => { setRenamingCol(col.id); setRenameVal(col.title) }}>
                     {col.title}
                   </span>
                 )}
-                <span style={{ fontSize: 10, color: '#444', background: '#1c2128', borderRadius: 8, padding: '1px 5px', border: '1px solid #21262d' }}>{colCards.length}</span>
+                <span style={{ fontSize: 10, color: theme.text.disabled, background: theme.surface.panelElevated, borderRadius: 8, padding: '1px 5px', border: `1px solid ${theme.border.subtle}` }}>{colCards.length}</span>
                 <button onClick={() => { cards.filter(c => c.columnId === col.id).forEach(c => c.linkedTileId && window.electron?.terminal?.destroy?.(c.linkedTileId)); setCards(p => p.filter(c => c.columnId !== col.id)); setColumns(p => p.filter(c => c.id !== col.id)) }}
-                  style={{ fontSize: 10, color: '#2d333b', background: 'none', border: 'none', cursor: 'pointer', padding: '0 1px' }}
-                  onMouseEnter={e => (e.currentTarget.style.color = '#ff7b72')}
-                  onMouseLeave={e => (e.currentTarget.style.color = '#2d333b')}
+                  style={{ fontSize: 10, color: theme.text.disabled, background: 'none', border: 'none', cursor: 'pointer', padding: '0 1px' }}
+                  onMouseEnter={e => (e.currentTarget.style.color = theme.status.danger)}
+                  onMouseLeave={e => (e.currentTarget.style.color = theme.text.disabled)}
                 >✕</button>
               </div>
 
@@ -795,15 +809,15 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
 
                 {/* Add card */}
                 {addingTo === col.id ? (
-                  <div style={{ background: '#1c2128', border: '1px solid #30363d', borderRadius: 6, padding: 8, flexShrink: 0 }}>
+                  <div style={{ background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`, borderRadius: 6, padding: 8, flexShrink: 0 }}>
                     <input autoFocus value={addTitle} onChange={e => setAddTitle(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') addCard(col.id); if (e.key === 'Escape') { setAddingTo(null); setAddTitle('') } }}
                       placeholder="Card title…"
-                      style={{ width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 4, background: '#0d1117', color: '#e6edf3', border: '1px solid #58a6ff', outline: 'none', fontFamily: 'inherit', marginBottom: 6 }}
+                      style={{ width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 4, background: theme.surface.input, color: theme.text.primary, border: `1px solid ${theme.accent.base}`, outline: 'none', fontFamily: 'inherit', marginBottom: 6 }}
                     />
                     <div style={{ display: 'flex', gap: 5 }}>
-                      <button onClick={() => addCard(col.id)} style={{ flex: 1, padding: '4px 0', borderRadius: 4, background: '#1f6feb', color: '#fff', border: 'none', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>Add</button>
-                      <button onClick={() => { setAddingTo(null); setAddTitle('') }} style={{ padding: '4px 8px', borderRadius: 4, background: '#21262d', color: '#8b949e', border: '1px solid #30363d', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
+                      <button onClick={() => addCard(col.id)} style={{ flex: 1, padding: '4px 0', borderRadius: 4, background: theme.accent.base, color: theme.text.inverse, border: 'none', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>Add</button>
+                      <button onClick={() => { setAddingTo(null); setAddTitle('') }} style={{ padding: '4px 8px', borderRadius: 4, background: theme.surface.panel, color: theme.text.muted, border: `1px solid ${theme.border.default}`, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
                     </div>
                   </div>
                 ) : (
@@ -813,7 +827,7 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
                       width: '100%',
                       padding: '4px 0 2px',
                       fontSize: 11,
-                      color: '#8b949e',
+                      color: theme.text.muted,
                       background: 'transparent',
                       border: 'none',
                       cursor: 'pointer',
@@ -822,8 +836,8 @@ export function KanbanTile({ tileId, workspaceId, workspaceDir, width, height, o
                       fontWeight: 500,
                       textAlign: 'left',
                     }}
-                    onMouseEnter={e => { e.currentTarget.style.color = '#b7c1cc' }}
-                    onMouseLeave={e => { e.currentTarget.style.color = '#8b949e' }}
+                    onMouseEnter={e => { e.currentTarget.style.color = theme.text.primary }}
+                    onMouseLeave={e => { e.currentTarget.style.color = theme.text.muted }}
                   >
                     + Add card
                   </button>
