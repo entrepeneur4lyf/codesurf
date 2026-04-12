@@ -176,11 +176,23 @@ export function ExtensionTile({ tileId, extType, width, height, workspaceId, wor
     switch (method) {
       case 'tile.getState':
         if (!workspaceId) return null
-        return el.canvas?.loadTileState?.(workspaceId, tileId) ?? null
+        {
+          const state = await el.canvas?.loadTileState?.(workspaceId, tileId) ?? null
+          const key = typeof params?.key === 'string' ? params.key : null
+          if (!key) return state
+          return state && typeof state === 'object' ? (state as Record<string, unknown>)[key] ?? null : null
+        }
 
       case 'tile.setState':
         if (!workspaceId) return false
-        await el.canvas?.saveTileState?.(workspaceId, tileId, params ?? {})
+        if (params && typeof params === 'object' && typeof params.key === 'string') {
+          const prev = await el.canvas?.loadTileState?.(workspaceId, tileId)
+          const next = prev && typeof prev === 'object' ? { ...prev } : {}
+          ;(next as Record<string, unknown>)[params.key] = params.value
+          await el.canvas?.saveTileState?.(workspaceId, tileId, next)
+          return true
+        }
+        await el.canvas?.saveTileState?.(workspaceId, tileId, params?.data ?? params ?? {})
         return true
 
       case 'tile.getSize':
@@ -306,7 +318,9 @@ export function ExtensionTile({ tileId, extType, width, height, workspaceId, wor
       case 'context.get': {
         if (!workspaceId) return null
         const key = String(params?.key ?? '')
-        return el.tileContext?.get?.(workspaceId, tileId, key) ?? null
+        const entry = await el.tileContext?.get?.(workspaceId, tileId, key)
+        if (!entry || typeof entry !== 'object') return null
+        return (entry as { value?: unknown }).value ?? null
       }
 
       case 'context.set': {
@@ -335,7 +349,7 @@ export function ExtensionTile({ tileId, extType, width, height, workspaceId, wor
         const peerId = String(params?.peerId ?? '')
         const tagPrefix = typeof params?.tagPrefix === 'string' ? params.tagPrefix : undefined
         if (!peerId) return null
-        return el.tileContext?.get?.(workspaceId, peerId, tagPrefix) ?? null
+        return el.tileContext?.getAll?.(workspaceId, peerId, tagPrefix) ?? []
       }
 
       case 'context.getAllPeerContext': {

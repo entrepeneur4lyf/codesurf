@@ -305,6 +305,12 @@
     bridge.tile.getMeta().then(meta => {
       if (meta?.tileId) currentQuery._tileId = meta.tileId
     }).catch(() => {})
+    bridge.tile.getState('model-hub-selection').then(saved => {
+      if (saved && saved.modelId) {
+        activeModelId = saved.modelId
+        doSearch()
+      }
+    }).catch(() => {})
   }
 
   window.addEventListener('message', e => {
@@ -517,7 +523,9 @@
 
     // Publish to context
     if (bridge) {
+      bridge.tile.setState('model-hub-selection', payload).catch(() => {})
       bridge.context.set('ctx:model-hub:selected', payload).catch(() => {})
+      bridge.context.set('ctx:model-hub:inference-models', [payload]).catch(() => {})
 
       // Try to forward to any connected local-models peer via setModel action
       bridge.tile.getMeta().then(meta => {

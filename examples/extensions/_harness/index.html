@@ -390,7 +390,7 @@ async function handleRpc(method, params) {
       delete contextStore[params.key]
       renderContextList()
       return true
-    case 'context.getPeerContext':    return null
+    case 'context.getPeerContext':    return []
     case 'context.getAllPeerContext':  return {}
 
     case 'actions.register':

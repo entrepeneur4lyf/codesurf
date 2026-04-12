@@ -166,7 +166,15 @@ contextBridge.exposeInMainWorld('electron', {
 
   // Chat — send messages to LLM providers (Claude, Codex, OpenCode, OpenClaw, Hermes)
   chat: {
-    send: (req: { cardId: string; provider: string; model: string; messages: { role: string; content: string }[]; negotiatedTools?: string[]; peers?: { peerId: string; peerType: string; tools: string[] }[] }) =>
+    send: (req: {
+      cardId: string
+      provider: string
+      model: string
+      messages: { role: string; content: string }[]
+      negotiatedTools?: string[]
+      peers?: { peerId: string; peerType: string; tools: string[] }[]
+      providerTransport?: import('../../shared/types').ExtensionChatTransportConfig | null
+    }) =>
       ipcRenderer.invoke('chat:send', req),
     stop: (cardId: string) => ipcRenderer.invoke('chat:stop', cardId),
     clearSession: (cardId: string) => ipcRenderer.invoke('chat:clearSession', cardId),

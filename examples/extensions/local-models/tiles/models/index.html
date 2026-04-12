@@ -409,6 +409,8 @@ async function init() {
     }
   } catch (_) {}
 
+  hydrateFromPeers()
+
   document.getElementById('search-input').addEventListener('input', function(e) {
     searchQuery = e.target.value.toLowerCase().trim()
     renderContent()
@@ -418,6 +420,18 @@ async function init() {
 
   document.getElementById('tab-popular').addEventListener('click', function() { switchTab('popular') })
   document.getElementById('tab-running').addEventListener('click', function() { switchTab('running') })
+
+  if (window.contex && window.contex.context && window.contex.context.onPeerContextChanged) {
+    window.contex.context.onPeerContextChanged(function(data) {
+      if (!data || !data.key) return
+      if (data.key === 'ctx:model-hub:selected' && data.value && data.value.modelId) {
+        applyInboundModel(data.value)
+      }
+      if (data.key === 'ctx:model-hub:inference-models' && Array.isArray(data.value) && data.value[0] && data.value[0].modelId) {
+        applyInboundModel(data.value[0])
+      }
+    })
+  }
 
   renderContent()
 }
@@ -439,6 +453,8 @@ function handleActionMsg(msg) {
 async function setActiveModel(model) {
   activeModel = model
   try { await rpc('context.set', { key: 'ctx:models:active-model', value: model }) } catch (_) {}
+  try { await rpc('context.set', { key: 'ctx:models:inference-models', value: model ? [model] : [] }) } catch (_) {}
+  try { await rpc('tile.setState', { key: 'active-model', value: model }) } catch (_) {}
   updateActiveBanner()
   renderContent()
 }
@@ -446,8 +462,58 @@ async function setActiveModel(model) {
 async function clearActiveModel() {
   activeModel = null
   try { await rpc('context.set', { key: 'ctx:models:active-model', value: null }) } catch (_) {}
+  try { await rpc('context.set', { key: 'ctx:models:inference-models', value: [] }) } catch (_) {}
+  try { await rpc('tile.setState', { key: 'active-model', value: null }) } catch (_) {}
   updateActiveBanner()
   renderContent()
+}
+
+function normalizeIncomingModel(value) {
+  if (!value || typeof value !== 'object') return null
+  var modelId = typeof value.modelId === 'string' ? value.modelId.trim() : ''
+  if (!modelId && typeof value.id === 'string') modelId = value.id.trim()
+  if (!modelId) return null
+  return {
+    modelId: modelId,
+    name: typeof value.name === 'string' && value.name.trim() ? value.name.trim() : modelId,
+    size: typeof value.size === 'string' ? value.size : '',
+  }
+}
+
+function sameModel(a, b) {
+  if (!a && !b) return true
+  if (!a || !b) return false
+  return a.modelId === b.modelId && a.name === b.name && a.size === b.size
+}
+
+function applyInboundModel(value) {
+  var next = normalizeIncomingModel(value)
+  if (!next || sameModel(activeModel, next)) return
+  void setActiveModel(next)
+}
+
+function hydrateFromPeers() {
+  if (!window.contex || !window.contex.context || !window.contex.context.getAllPeerContext) return
+  window.contex.context.getAllPeerContext('ctx:model-hub:').then(function(map) {
+    if (!map) return
+    var inferred = null
+    Object.keys(map).forEach(function(peerId) {
+      var entries = map[peerId] || []
+      if (!Array.isArray(entries)) return
+      entries.forEach(function(entry) {
+        if (!entry || !entry.key) return
+        if (entry.key === 'ctx:model-hub:selected') {
+          var selected = normalizeIncomingModel(entry.value)
+          if (selected) inferred = selected
+        }
+        if (entry.key === 'ctx:model-hub:inference-models' && Array.isArray(entry.value) && entry.value[0] && entry.value[0].modelId) {
+          var first = normalizeIncomingModel(entry.value[0])
+          if (first) inferred = first
+        }
+      })
+    })
+    if (inferred && !sameModel(activeModel, inferred)) void setActiveModel(inferred)
+  }).catch(function() {})
 }
 
 function updateActiveBanner() {
@@ -494,13 +560,33 @@ function switchTab(tab) {
 // ── Filtering ─────────────────────────────────────────────────────────────────
 
 function getFilteredModels() {
-  if (!searchQuery) return MODELS.slice()
   return MODELS.filter(function(m) {
     return m.name.toLowerCase().indexOf(searchQuery) !== -1 ||
            m.author.toLowerCase().indexOf(searchQuery) !== -1 ||
            m.size.toLowerCase().indexOf(searchQuery) !== -1 ||
            m.id.toLowerCase().indexOf(searchQuery) !== -1
   })
+}
+
+function getExternalActiveModelCard() {
+  if (!activeModel || findModelById(activeModel.modelId)) return null
+  var modelId = activeModel.modelId
+  var author = modelId.indexOf('/') !== -1 ? modelId.split('/')[0] : 'Extension'
+  return {
+    id: modelId,
+    name: activeModel.name || modelId,
+    author: author,
+    size: activeModel.size || 'Selected',
+    sourceTag: 'Hub',
+  }
+}
+
+function matchesExternalModelSearch(model) {
+  if (!searchQuery) return true
+  return model.name.toLowerCase().indexOf(searchQuery) !== -1 ||
+         model.author.toLowerCase().indexOf(searchQuery) !== -1 ||
+         model.size.toLowerCase().indexOf(searchQuery) !== -1 ||
+         model.id.toLowerCase().indexOf(searchQuery) !== -1
 }
 
 function ramLabel(ramGB) {
@@ -518,7 +604,9 @@ function renderContent() {
 }
 
 function updateTabCounts() {
-  document.getElementById('popular-count').textContent = getFilteredModels().length
+  var external = getExternalActiveModelCard()
+  var popularCount = getFilteredModels().length + (external && matchesExternalModelSearch(external) ? 1 : 0)
+  document.getElementById('popular-count').textContent = popularCount
   document.getElementById('running-count').textContent = runningModels.length
 }
 
@@ -526,12 +614,29 @@ function updateTabCounts() {
 
 function renderPopular(container) {
   var filtered = getFilteredModels()
-  if (filtered.length === 0) {
+  var external = getExternalActiveModelCard()
+  var showExternal = !!(external && matchesExternalModelSearch(external))
+
+  if (!showExternal && filtered.length === 0) {
     var noRes = document.createElement('div')
     noRes.className = 'no-results'
     noRes.textContent = 'No models match "' + searchQuery + '"'
     container.appendChild(noRes)
     return
+  }
+
+  if (showExternal && external) {
+    var selectedLabel = document.createElement('div')
+    selectedLabel.className = 'section-label'
+    selectedLabel.textContent = 'Selected From Chain'
+    container.appendChild(selectedLabel)
+    container.appendChild(buildModelCard(external))
+
+    if (filtered.length > 0) {
+      var selectedDivider = document.createElement('div')
+      selectedDivider.className = 'section-divider'
+      container.appendChild(selectedDivider)
+    }
   }
 
   var groups = {}
@@ -560,6 +665,7 @@ function renderPopular(container) {
 
 function buildModelCard(m) {
   var isActive = activeModel && activeModel.modelId === m.id
+  var isCatalogModel = !!findModelById(m.id)
 
   var card = document.createElement('div')
   card.className = 'model-card' + (isActive ? ' is-active' : '')
@@ -580,7 +686,7 @@ function buildModelCard(m) {
 
   var badgeFmt = document.createElement('span')
   badgeFmt.className = 'badge badge-format'
-  badgeFmt.textContent = 'GGUF'
+  badgeFmt.textContent = isCatalogModel ? 'GGUF' : (m.sourceTag || 'Hub')
   row1.appendChild(badgeFmt)
 
   if (isActive) {
@@ -617,17 +723,19 @@ function buildModelCard(m) {
     p.setAttribute('d', d)
     ramIcon.appendChild(p)
   })
-  meta.appendChild(ramIcon)
+  if (typeof m.ramGB === 'number' && m.ramGB > 0) {
+    meta.appendChild(ramIcon)
 
-  var ramSpan = document.createElement('span')
-  ramSpan.textContent = ramLabel(m.ramGB)
-  meta.appendChild(ramSpan)
+    var ramSpan = document.createElement('span')
+    ramSpan.textContent = ramLabel(m.ramGB)
+    meta.appendChild(ramSpan)
 
-  var sep = document.createElement('span')
-  sep.textContent = '\u00b7'
-  sep.style.margin = '0 4px'
-  sep.style.color = 'var(--border)'
-  meta.appendChild(sep)
+    var sep = document.createElement('span')
+    sep.textContent = '\u00b7'
+    sep.style.margin = '0 4px'
+    sep.style.color = 'var(--border)'
+    meta.appendChild(sep)
+  }
 
   var authorSpan = document.createElement('span')
   authorSpan.textContent = m.author

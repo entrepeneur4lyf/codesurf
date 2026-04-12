@@ -114,8 +114,13 @@ export function getBridgeScript(tileId: string, extId: string): string {
     extId: _extId,
 
     tile: {
-      getState: () => _rpc('tile.getState'),
-      setState: (data) => _rpc('tile.setState', data),
+      getState: (key) => _rpc('tile.getState', { key: key ?? null }),
+      setState: (keyOrData, maybeValue) => {
+        if (typeof keyOrData === 'string') {
+          return _rpc('tile.setState', { key: keyOrData, value: maybeValue });
+        }
+        return _rpc('tile.setState', { data: keyOrData });
+      },
       getSize: () => _rpc('tile.getSize'),
       onResize: (cb) => _on('tile.resize', cb),
       getMeta: () => _rpc('tile.getMeta'),

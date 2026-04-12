@@ -87,6 +87,29 @@ export interface ExtensionActionContrib {
   description: string
 }
 
+export interface ExtensionChatModel {
+  id: string
+  label: string
+  description?: string
+}
+
+export interface ExtensionChatTransportConfig {
+  type: 'local-proxy'
+  baseUrl: string
+  apiKey?: string
+  autoStart?: boolean
+}
+
+export interface ExtensionChatProviderConfig {
+  id: string
+  label: string
+  description?: string
+  noun?: 'model' | 'agent'
+  icon?: 'bot' | 'server' | 'plug'
+  models: ExtensionChatModel[]
+  transport: ExtensionChatTransportConfig
+}
+
 export interface ExtensionUIContrib {
   /** Native = should look/feel like core app UI. Custom = extension owns its bespoke surface. */
   mode?: 'native' | 'custom'

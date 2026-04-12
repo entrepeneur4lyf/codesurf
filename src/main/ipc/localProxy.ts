@@ -22,6 +22,7 @@ interface ProxyStats {
 
 // Module-level singleton
 let proxyServer: http.Server | null = null
+let proxyPort: number | null = null
 let stats: ProxyStats = {
   requestsServed: 0,
   requestsFailed: 0,
@@ -353,40 +354,53 @@ export function getProxyStatus(): { running: boolean; port: number; stats: Proxy
   const settings = readSettingsSync()
   return {
     running: proxyServer !== null,
-    port: settings.localProxyPort ?? 1337,
+    port: proxyPort ?? settings.localProxyPort ?? 1337,
     stats: { ...stats, activeConnections: [...stats.activeConnections] },
   }
+}
+
+async function startProxyServer(port: number): Promise<{ ok: boolean; port?: number; message?: string }> {
+  if (proxyServer) {
+    if (proxyPort === port) return { ok: true, port }
+    return { ok: false, message: `Proxy already running on port ${proxyPort}` }
+  }
+
+  const free = await isPortFree(port)
+  if (!free) {
+    return { ok: false, message: `Port ${port} is already in use` }
+  }
+
+  return new Promise(resolve => {
+    try {
+      proxyServer = createProxyServer(port)
+      proxyServer.listen(port, '127.0.0.1', () => {
+        proxyPort = port
+        stats = { requestsServed: 0, requestsFailed: 0, startedAt: Date.now(), activeConnections: [] }
+        bus.publish({ channel: 'localProxy:stats', type: 'data', source: 'localProxy', payload: { action: 'started', port } })
+        resolve({ ok: true, port })
+      })
+      proxyServer.on('error', (err: NodeJS.ErrnoException) => {
+        proxyServer = null
+        proxyPort = null
+        resolve({ ok: false, message: err.message })
+      })
+    } catch (err: unknown) {
+      proxyServer = null
+      proxyPort = null
+      resolve({ ok: false, message: String(err) })
+    }
+  })
+}
+
+export async function ensureLocalProxyRunning(portOverride?: number): Promise<{ ok: boolean; port?: number; message?: string }> {
+  const settings = readSettingsSync()
+  return startProxyServer(portOverride ?? settings.localProxyPort ?? 1337)
 }
 
 export function registerLocalProxyIPC(): void {
   ipcMain.handle('localProxy:start', async () => {
     if (proxyServer) return { ok: true, message: 'Already running' }
-
-    const settings = readSettingsSync()
-    const port = settings.localProxyPort ?? 1337
-
-    const free = await isPortFree(port)
-    if (!free) {
-      return { ok: false, message: `Port ${port} is already in use` }
-    }
-
-    return new Promise(resolve => {
-      try {
-        proxyServer = createProxyServer(port)
-        proxyServer.listen(port, '127.0.0.1', () => {
-          stats = { requestsServed: 0, requestsFailed: 0, startedAt: Date.now(), activeConnections: [] }
-          bus.publish({ channel: 'localProxy:stats', type: 'data', source: 'localProxy', payload: { action: 'started', port } })
-          resolve({ ok: true, port })
-        })
-        proxyServer.on('error', (err: NodeJS.ErrnoException) => {
-          proxyServer = null
-          resolve({ ok: false, message: err.message })
-        })
-      } catch (err: unknown) {
-        proxyServer = null
-        resolve({ ok: false, message: String(err) })
-      }
-    })
+    return ensureLocalProxyRunning()
   })
 
   ipcMain.handle('localProxy:stop', async () => {
@@ -394,6 +408,7 @@ export function registerLocalProxyIPC(): void {
     return new Promise(resolve => {
       proxyServer!.close(() => {
         proxyServer = null
+        proxyPort = null
         stats = { ...stats, startedAt: null, activeConnections: [] }
         bus.publish({ channel: 'localProxy:stats', type: 'data', source: 'localProxy', payload: { action: 'stopped' } })
         resolve({ ok: true })

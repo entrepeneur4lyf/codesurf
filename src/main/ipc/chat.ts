@@ -9,10 +9,14 @@
 import { ipcMain, BrowserWindow, dialog } from 'electron'
 import { query, type Query, type Options } from '@anthropic-ai/claude-agent-sdk'
 import { spawn, ChildProcess, execFileSync } from 'child_process'
+import * as http from 'http'
 import * as net from 'net'
 import { getMCPPort, getMCPToken, getContexMcpToolNames } from '../mcp-server'
 import { getAgentPath, getShellEnvPath } from '../agent-paths'
 import { updateLinks } from '../peer-state'
+import { parseClaudeStream } from '../agent-stream'
+import { ensureLocalProxyRunning } from './localProxy'
+import type { ExtensionChatTransportConfig } from '../../shared/types'
 // Lazy-loaded: @opencode-ai/sdk only exports ESM, Electron main is CJS.
 // externalizeDepsPlugin converts dynamic import() to require() which can't
 // resolve ESM-only exports — wrap in try/catch so the app still starts.
@@ -53,7 +57,7 @@ interface PeerContext {
 
 interface ChatRequest {
   cardId: string
-  provider: 'claude' | 'codex' | 'opencode' | 'openclaw' | 'hermes'
+  provider: string
   model: string
   messages: ChatMessage[]
   mode?: string
@@ -62,6 +66,7 @@ interface ChatRequest {
   negotiatedTools?: string[]
   peers?: PeerContext[]
   sessionId?: string | null
+  providerTransport?: ExtensionChatTransportConfig | null
 }
 
 function log(...args: unknown[]): void {
@@ -81,8 +86,118 @@ function sendStream(cardId: string, event: Record<string, unknown>): void {
 const activeQueries = new Map<string, Query>()
 // Active CLI subprocesses (codex)
 const activeProcesses = new Map<string, ChildProcess>()
+// Active HTTP requests (proxy-backed providers)
+const activeHttpRequests = new Map<string, http.ClientRequest>()
 // Stored session IDs for multi-turn conversations
 const sessionIds = new Map<string, string>()
+
+function bufferHttpResponse(res: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    res.on('data', (chunk: Buffer) => chunks.push(chunk))
+    res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    res.on('error', reject)
+  })
+}
+
+function chatLocalProxy(req: ChatRequest): void {
+  const transport = req.providerTransport
+  if (!transport || transport.type !== 'local-proxy') {
+    sendStream(req.cardId, { type: 'error', error: `Unsupported provider: ${req.provider}` })
+    sendStream(req.cardId, { type: 'done' })
+    return
+  }
+
+  void (async () => {
+    if (transport.autoStart !== false) {
+      const configuredPort = (() => {
+        try {
+          const url = new URL(transport.baseUrl)
+          return url.port ? Number(url.port) : 80
+        } catch {
+          return undefined
+        }
+      })()
+      const started = await ensureLocalProxyRunning(configuredPort)
+      if (!started.ok) {
+        throw new Error(started.message || 'Failed to start the local proxy')
+      }
+    }
+
+    const baseUrl = transport.baseUrl.replace(/\/+$/, '')
+    const targetUrl = new URL(`${baseUrl}/messages`)
+    const body = JSON.stringify({
+      model: req.model,
+      stream: true,
+      max_tokens: 4096,
+      messages: req.messages.map(message => ({
+        role: message.role,
+        content: message.content,
+      })),
+    })
+
+    const request = http.request({
+      hostname: targetUrl.hostname,
+      port: targetUrl.port ? Number(targetUrl.port) : 80,
+      path: `${targetUrl.pathname}${targetUrl.search}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'anthropic-version': '2023-06-01',
+        ...(transport.apiKey ? {
+          'x-api-key': transport.apiKey,
+          Authorization: `Bearer ${transport.apiKey}`,
+        } : {}),
+      },
+      timeout: 120_000,
+    }, (res) => {
+      if ((res.statusCode ?? 500) >= 400) {
+        void bufferHttpResponse(res).then((raw) => {
+          activeHttpRequests.delete(req.cardId)
+          let errorMessage = `Proxy request failed (${res.statusCode ?? 500})`
+          try {
+            const parsed = JSON.parse(raw)
+            errorMessage = parsed?.error?.message ?? errorMessage
+          } catch {
+            if (raw.trim()) errorMessage = raw.trim()
+          }
+          sendStream(req.cardId, { type: 'error', error: errorMessage })
+          sendStream(req.cardId, { type: 'done' })
+        }).catch((err: Error) => {
+          activeHttpRequests.delete(req.cardId)
+          sendStream(req.cardId, { type: 'error', error: err.message })
+          sendStream(req.cardId, { type: 'done' })
+        })
+        return
+      }
+
+      res.on('close', () => {
+        activeHttpRequests.delete(req.cardId)
+      })
+      parseClaudeStream(req.cardId, res)
+    })
+
+    request.on('timeout', () => {
+      request.destroy(new Error('Proxy request timed out'))
+    })
+
+    request.on('error', (err) => {
+      if (!activeHttpRequests.has(req.cardId)) return
+      activeHttpRequests.delete(req.cardId)
+      sendStream(req.cardId, { type: 'error', error: err.message })
+      sendStream(req.cardId, { type: 'done' })
+    })
+
+    activeHttpRequests.set(req.cardId, request)
+    request.write(body)
+    request.end()
+  })().catch((err: Error) => {
+    activeHttpRequests.delete(req.cardId)
+    sendStream(req.cardId, { type: 'error', error: err.message })
+    sendStream(req.cardId, { type: 'done' })
+  })
+}
 
 // --- OpenCode Server Manager (spawns `opencode serve`, manages lifecycle) --------
 
@@ -1299,6 +1414,11 @@ export function registerChatIPC(): void {
       existingProc.kill('SIGTERM')
       activeProcesses.delete(req.cardId)
     }
+    const existingHttpRequest = activeHttpRequests.get(req.cardId)
+    if (existingHttpRequest) {
+      existingHttpRequest.destroy()
+      activeHttpRequests.delete(req.cardId)
+    }
 
     switch (req.provider) {
       case 'claude': chatClaude(req); break
@@ -1306,6 +1426,13 @@ export function registerChatIPC(): void {
       case 'opencode': chatOpencode(req); break
       case 'openclaw': chatOpenclaw(req); break
       case 'hermes': chatHermes(req); break
+      default:
+        if (req.providerTransport?.type === 'local-proxy') {
+          chatLocalProxy(req)
+        } else {
+          sendStream(req.cardId, { type: 'error', error: `Unsupported provider: ${req.provider}` })
+          sendStream(req.cardId, { type: 'done' })
+        }
     }
 
     return { ok: true }
@@ -1321,6 +1448,11 @@ export function registerChatIPC(): void {
     if (proc) {
       proc.kill('SIGTERM')
       activeProcesses.delete(cardId)
+    }
+    const httpRequest = activeHttpRequests.get(cardId)
+    if (httpRequest) {
+      httpRequest.destroy()
+      activeHttpRequests.delete(cardId)
     }
     // Abort any active OpenCode session
     const ocSessionId = opencodeSessionIds.get(cardId)

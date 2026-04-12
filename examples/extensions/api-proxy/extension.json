@@ -16,8 +16,8 @@
     }],
     "contextMenu": [{ "label": "New API Proxy", "action": "createTile", "tileType": "ext:api-proxy-config" }],
     "context": {
-      "produces": ["ctx:api-proxy:config"],
-      "consumes": []
+      "produces": ["ctx:api-proxy:config", "ctx:chat:providers"],
+      "consumes": ["ctx:models:active-model", "ctx:models:inference-models", "ctx:model-hub:selected", "ctx:model-hub:inference-models"]
     },
     "actions": [
       { "name": "configure", "description": "Update proxy config. Params: { port?: number, apiKey?: string, enabled?: boolean }" },

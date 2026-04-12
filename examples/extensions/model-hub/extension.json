@@ -15,7 +15,7 @@
     }],
     "contextMenu": [{ "label": "New Model Hub", "action": "createTile", "tileType": "ext:model-hub-browser" }],
     "context": {
-      "produces": ["ctx:model-hub:selected"],
+      "produces": ["ctx:model-hub:selected", "ctx:model-hub:inference-models"],
       "consumes": []
     },
     "actions": [

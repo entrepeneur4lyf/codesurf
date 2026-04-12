@@ -260,7 +260,7 @@
 const TID = (new URLSearchParams(location.search)).get('tileId') || 'api-proxy'
 
 let bridge = null
-let cfg = { port: 1337, apiKey: '', allowedHosts: ['localhost', '127.0.0.1'], enabled: false }
+let cfg = { port: 1337, apiKey: '', allowedHosts: ['localhost', '127.0.0.1'], enabled: false, models: [] }
 let pollTimer = null
 
 /* ── Bridge ── */
@@ -271,8 +271,18 @@ function initBridge(b) {
       cfg = Object.assign(cfg, s)
       applyConfig()
     }
-  }).catch(() => {})
-  pollStatus()
+  }).catch(() => {}).finally(() => {
+    hydrateModelsFromPeers()
+    if (bridge.context && bridge.context.onPeerContextChanged) {
+      bridge.context.onPeerContextChanged(function(data) {
+        if (!data || !data.key) return
+        if (data.key.indexOf('ctx:models:') === 0 || data.key.indexOf('ctx:model-hub:') === 0) {
+          hydrateModelsFromPeers()
+        }
+      })
+    }
+    pollStatus()
+  })
 }
 window.addEventListener('message', e => {
   if (e.data && e.data.type === 'contex-bridge-ready') initBridge(e.data.bridge || window.contex)
@@ -287,6 +297,7 @@ function onAction(msg) {
     if (p.port !== undefined) cfg.port = parseInt(p.port) || cfg.port
     if (p.apiKey !== undefined) cfg.apiKey = p.apiKey
     if (p.enabled !== undefined) cfg.enabled = Boolean(p.enabled)
+    if (Array.isArray(p.models)) cfg.models = p.models
     applyConfig(); saveConfig()
   }
   if (msg.action === 'getUrl') {
@@ -325,8 +336,94 @@ function saveConfig() {
     port: cfg.port,
     url: 'http://localhost:' + cfg.port + '/v1',
     apiKey: cfg.apiKey,
-    enabled: cfg.enabled
+    enabled: cfg.enabled,
+    models: cfg.models
   }).catch(() => {})
+  bridge.context.set('ctx:chat:providers', buildChatProviders()).catch(() => {})
+}
+
+function normalizeInferenceModel(model) {
+  if (!model || typeof model !== 'object') return null
+  var modelId = typeof model.modelId === 'string' ? model.modelId.trim() : ''
+  if (!modelId && typeof model.id === 'string') modelId = model.id.trim()
+  if (!modelId) return null
+  return {
+    modelId: modelId,
+    name: typeof model.name === 'string' && model.name.trim() ? model.name.trim() : modelId,
+    size: typeof model.size === 'string' ? model.size : '',
+    source: typeof model.source === 'string' ? model.source : 'extension',
+  }
+}
+
+function extractInferenceModels(peerMap) {
+  var byId = {}
+  var keys = Object.keys(peerMap || {})
+  keys.forEach(function(peerId) {
+    var entries = peerMap[peerId] || []
+    if (!Array.isArray(entries)) return
+    entries.forEach(function(entry) {
+      if (!entry || !entry.key) return
+      if (entry.key === 'ctx:models:inference-models' || entry.key === 'ctx:model-hub:inference-models') {
+        if (!Array.isArray(entry.value)) return
+        entry.value.forEach(function(item) {
+          var normalized = normalizeInferenceModel(item)
+          if (normalized) byId[normalized.modelId] = normalized
+        })
+      }
+      if (entry.key === 'ctx:models:active-model' || entry.key === 'ctx:model-hub:selected') {
+        var normalizedSingle = normalizeInferenceModel(entry.value)
+        if (normalizedSingle) byId[normalizedSingle.modelId] = normalizedSingle
+      }
+    })
+  })
+  return Object.keys(byId).sort().map(function(id) { return byId[id] })
+}
+
+function sameModelList(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+  for (var i = 0; i < a.length; i++) {
+    if (!a[i] || !b[i]) return false
+    if (a[i].modelId !== b[i].modelId || a[i].name !== b[i].name || a[i].size !== b[i].size) return false
+  }
+  return true
+}
+
+function hydrateModelsFromPeers() {
+  if (!bridge || !bridge.context || !bridge.context.getAllPeerContext) return
+  bridge.context.getAllPeerContext('ctx:').then(function(map) {
+    var inferred = extractInferenceModels(map)
+    if (sameModelList(cfg.models, inferred)) return
+    cfg.models = inferred
+    if (cfg.models.length > 0) cfg.enabled = true
+    saveConfig()
+  }).catch(() => {})
+}
+
+function buildChatProviders() {
+  if (!Array.isArray(cfg.models) || cfg.models.length === 0) return []
+  var baseUrl = 'http://localhost:' + cfg.port + '/v1'
+  return cfg.models.map(function(model) {
+    var modelId = model.modelId || model.id
+    var label = 'Proxy:' + modelId
+    return {
+      id: 'proxy:' + TID + ':' + modelId,
+      label: label,
+      description: 'Local API proxy · ' + (model.name || modelId) + ' · ' + baseUrl,
+      noun: 'model',
+      icon: 'server',
+      models: [{
+        id: modelId,
+        label: model.name || modelId,
+        description: model.size ? 'Estimated footprint ' + model.size : undefined,
+      }],
+      transport: {
+        type: 'local-proxy',
+        baseUrl: baseUrl,
+        apiKey: cfg.apiKey || 'sk-contex-local',
+        autoStart: true,
+      },
+    }
+  })
 }
 
 /* ── URL banner ── */

@@ -3,7 +3,12 @@ import { createPortal } from 'react-dom'
 import { Streamdown } from 'streamdown'
 import { code } from '@streamdown/code'
 import 'streamdown/styles.css'
-import type { AppSettings } from '../../../shared/types'
+import type {
+  AppSettings,
+  ExtensionChatModel,
+  ExtensionChatProviderConfig,
+  ExtensionChatTransportConfig,
+} from '../../../shared/types'
 import { basename, getDroppedPaths, isImagePath } from '../utils/dnd'
 import {
   ShieldCheck, ChevronDown,
@@ -141,7 +146,7 @@ interface ChatTilePersistedState {
   messages: ChatMessage[]
   input: string
   attachments: PendingAttachment[]
-  provider: 'claude' | 'codex' | 'opencode' | 'openclaw' | 'hermes'
+  provider: string
   model: string
   mcpEnabled: boolean
   mode: string
@@ -426,7 +431,7 @@ const ChatMarkdown = React.memo(({ text, isStreaming, className }: {
 
 // --- Provider / Model config -----------------------------------------------------
 
-type Provider = 'claude' | 'codex' | 'opencode' | 'openclaw' | 'hermes'
+type BuiltinProvider = 'claude' | 'codex' | 'opencode' | 'openclaw' | 'hermes'
 
 interface ModelOption {
   id: string
@@ -434,7 +439,18 @@ interface ModelOption {
   description?: string
 }
 
-const DEFAULT_MODELS: Record<Provider, ModelOption[]> = {
+interface ProviderEntry {
+  id: string
+  label: string
+  description?: string
+  noun: 'model' | 'agent'
+  icon: React.ReactNode
+  models: ModelOption[]
+  kind: 'builtin' | 'extension'
+  transport?: ExtensionChatTransportConfig | null
+}
+
+const DEFAULT_MODELS: Record<BuiltinProvider, ModelOption[]> = {
   claude: [
     { id: 'claude-opus-4-6', label: 'Opus 4.6' },
     { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
@@ -468,11 +484,13 @@ const DEFAULT_MODELS: Record<Provider, ModelOption[]> = {
   ],
 }
 
+const DEFAULT_PROVIDER_ID: BuiltinProvider = 'claude'
+
 // --- Safety mode config (per-provider, matching Paseo) ---------------------------
 
 interface ModeOption { id: string; label: string; description: string; color: string }
 
-const PROVIDER_MODES: Record<Provider, ModeOption[]> = {
+const PROVIDER_MODES: Record<BuiltinProvider, ModeOption[]> = {
   claude: [
     { id: 'bypassPermissions', label: 'Bypass', description: 'Full auto, no approval', color: '#e54d2e' },
     { id: 'acceptEdits', label: 'Accept Edits', description: 'Auto-approve file edits', color: '#ffb432' },
@@ -502,6 +520,13 @@ const PROVIDER_MODES: Record<Provider, ModeOption[]> = {
   ],
 }
 
+const EXTENSION_PROVIDER_MODE: ModeOption = {
+  id: 'proxy',
+  label: 'Proxy',
+  description: 'Connected extension transport',
+  color: '#58a6ff',
+}
+
 // --- Thinking budget config (Claude only) ----------------------------------------
 
 interface ThinkingOption { id: string; label: string; description: string }
@@ -515,7 +540,7 @@ const THINKING_OPTIONS: ThinkingOption[] = [
   { id: 'max', label: 'Max', description: '~128K tokens budget' },
 ]
 
-const PROVIDER_ICON: Record<Provider, React.ReactNode> = {
+const PROVIDER_ICON: Record<BuiltinProvider, React.ReactNode> = {
   claude: <ClaudeIcon size={TOOLBAR_PILL_ICON_SIZE} />,
   codex: <CodexIcon size={TOOLBAR_PILL_ICON_SIZE} />,
   opencode: <Bot size={TOOLBAR_PILL_ICON_SIZE} />,
@@ -523,12 +548,85 @@ const PROVIDER_ICON: Record<Provider, React.ReactNode> = {
   hermes: <HermesIcon size={TOOLBAR_PILL_ICON_SIZE} />,
 }
 
-const PROVIDER_LABELS: Record<Provider, string> = {
+const PROVIDER_LABELS: Record<BuiltinProvider, string> = {
   claude: 'Claude',
   codex: 'Codex',
   opencode: 'OpenCode',
   openclaw: 'OpenClaw',
   hermes: 'Hermes',
+}
+
+function isBuiltinProvider(providerId: string): providerId is BuiltinProvider {
+  return providerId === 'claude'
+    || providerId === 'codex'
+    || providerId === 'opencode'
+    || providerId === 'openclaw'
+    || providerId === 'hermes'
+}
+
+function getExtensionProviderIcon(icon: ExtensionChatProviderConfig['icon'] | undefined): React.ReactNode {
+  switch (icon) {
+    case 'server':
+      return <ShieldCheck size={TOOLBAR_PILL_ICON_SIZE} />
+    case 'plug':
+      return <Wrench size={TOOLBAR_PILL_ICON_SIZE} />
+    case 'bot':
+    default:
+      return <Bot size={TOOLBAR_PILL_ICON_SIZE} />
+  }
+}
+
+function normalizeExtensionModels(value: unknown): ExtensionChatModel[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item): ExtensionChatModel[] => {
+    if (!item || typeof item !== 'object') return []
+    const model = item as Record<string, unknown>
+    const id = typeof model.id === 'string' ? model.id.trim() : ''
+    const label = typeof model.label === 'string' ? model.label.trim() : id
+    if (!id || !label) return []
+    return [{
+      id,
+      label,
+      description: typeof model.description === 'string' ? model.description : undefined,
+    }]
+  })
+}
+
+function normalizeExtensionProviders(value: unknown): ExtensionChatProviderConfig[] {
+  const rawProviders = Array.isArray(value) ? value : [value]
+  return rawProviders.flatMap((item): ExtensionChatProviderConfig[] => {
+    if (!item || typeof item !== 'object') return []
+    const provider = item as Record<string, unknown>
+    const id = typeof provider.id === 'string' ? provider.id.trim() : ''
+    const label = typeof provider.label === 'string' ? provider.label.trim() : ''
+    const transport = provider.transport
+    if (!id || !label || !transport || typeof transport !== 'object') return []
+
+    const transportConfig = transport as Record<string, unknown>
+    if (transportConfig.type !== 'local-proxy') return []
+    const baseUrl = typeof transportConfig.baseUrl === 'string' ? transportConfig.baseUrl.trim() : ''
+    if (!baseUrl) return []
+
+    const models = normalizeExtensionModels(provider.models)
+    if (models.length === 0) return []
+
+    return [{
+      id,
+      label,
+      description: typeof provider.description === 'string' ? provider.description : undefined,
+      noun: provider.noun === 'agent' ? 'agent' : 'model',
+      icon: provider.icon === 'server' || provider.icon === 'plug' || provider.icon === 'bot'
+        ? provider.icon
+        : undefined,
+      models,
+      transport: {
+        type: 'local-proxy',
+        baseUrl,
+        apiKey: typeof transportConfig.apiKey === 'string' ? transportConfig.apiKey : undefined,
+        autoStart: transportConfig.autoStart === false ? false : true,
+      },
+    }]
+  })
 }
 
 // --- Shimmer keyframes (injected once, lifted from Paseo) ------------------------
@@ -672,13 +770,23 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
   const monoSize = settings?.fonts?.mono?.size ?? settings?.monoFont?.size ?? MONO_SIZE_DEFAULT
   const fontSecondary = settings?.fonts?.secondary?.family ?? settings?.secondaryFont?.family ?? FONT_SANS
   const initialRuntimeStateRef = useRef<ChatTilePersistedState | null>(getChatTileRuntimeState<ChatTilePersistedState>(tileId))
-  const initialProvider = initialRuntimeStateRef.current?.provider ?? 'claude'
+  const initialProvider = initialRuntimeStateRef.current?.provider ?? DEFAULT_PROVIDER_ID
+  const initialModel = initialRuntimeStateRef.current?.model
+    ?? (isBuiltinProvider(initialProvider)
+      ? DEFAULT_MODELS[initialProvider][0]?.id
+      : DEFAULT_MODELS[DEFAULT_PROVIDER_ID][0]?.id)
+    ?? ''
+  const initialMode = initialRuntimeStateRef.current?.mode
+    ?? (isBuiltinProvider(initialProvider)
+      ? PROVIDER_MODES[initialProvider][0]?.id
+      : EXTENSION_PROVIDER_MODE.id)
+    ?? EXTENSION_PROVIDER_MODE.id
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => initialRuntimeStateRef.current?.messages ?? [])
   const [input, setInput] = useState(() => initialRuntimeStateRef.current?.input ?? '')
   const [isStreaming, setIsStreaming] = useState(() => initialRuntimeStateRef.current?.isStreaming ?? false)
-  const [provider, setProvider] = useState<Provider>(() => initialProvider)
-  const [model, setModel] = useState(() => initialRuntimeStateRef.current?.model ?? DEFAULT_MODELS[initialProvider][0].id)
+  const [provider, setProvider] = useState<string>(() => initialProvider)
+  const [model, setModel] = useState(() => initialModel)
   const [mcpEnabled, setMcpEnabled] = useState(() => initialRuntimeStateRef.current?.mcpEnabled ?? true)
   const mcpServers = useMCPServers()
   const [disabledServers, setDisabledServers] = useState<Set<string>>(new Set())
@@ -708,6 +816,44 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
   // Track current context values published by peer extension tiles
   const peerContextRef = useRef<Map<string, Record<string, unknown>>>(new Map())
   const [peerContextVersion, setPeerContextVersion] = useState(0)
+  const connectedPeerSignature = useMemo(
+    () => connectedPeers.map(peer => peer.peerId).sort().join('|'),
+    [connectedPeers],
+  )
+
+  useEffect(() => {
+    if (!workspaceId || connectedPeers.length === 0 || !window.electron?.tileContext) {
+      if (peerContextRef.current.size > 0) {
+        peerContextRef.current = new Map()
+        setPeerContextVersion(v => v + 1)
+      }
+      return
+    }
+
+    let cancelled = false
+
+    void Promise.all(connectedPeers.map(async (peer) => {
+      const entries = await window.electron.tileContext.getAll(workspaceId, peer.peerId, 'ctx:')
+      return [peer.peerId, Array.isArray(entries) ? entries : []] as const
+    })).then((results) => {
+      if (cancelled) return
+      const next = new Map<string, Record<string, unknown>>()
+      for (const [peerId, entries] of results) {
+        const values: Record<string, unknown> = {}
+        for (const entry of entries) {
+          if (!entry || typeof entry !== 'object') continue
+          const contextEntry = entry as { key?: unknown; value?: unknown }
+          if (typeof contextEntry.key !== 'string') continue
+          values[contextEntry.key] = contextEntry.value
+        }
+        next.set(peerId, values)
+      }
+      peerContextRef.current = next
+      setPeerContextVersion(v => v + 1)
+    }).catch(() => {})
+
+    return () => { cancelled = true }
+  }, [workspaceId, connectedPeerSignature])
 
   useEffect(() => {
     if (!window.electron?.bus) return
@@ -728,8 +874,8 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
     }
 
     return () => { for (const u of unsubs) u() }
-  }, [connectedPeers, tileId])
-  const [mode, setMode] = useState(() => initialRuntimeStateRef.current?.mode ?? PROVIDER_MODES[initialProvider][0].id)
+  }, [connectedPeerSignature, tileId])
+  const [mode, setMode] = useState(() => initialMode)
   const [thinking, setThinking] = useState(() => initialRuntimeStateRef.current?.thinking ?? 'adaptive')
   const [agentMode, setAgentMode] = useState(() => initialRuntimeStateRef.current?.agentMode ?? false)
   const [autoAgentMode, setAutoAgentMode] = useState(() => initialRuntimeStateRef.current?.autoAgentMode ?? false)
@@ -1001,13 +1147,102 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
     }
   }, [tileId, persistLatestState])
 
-  const providerModels: Record<Provider, ModelOption[]> = {
-    claude: DEFAULT_MODELS.claude,
-    codex: DEFAULT_MODELS.codex,
-    opencode: opencodeModels,
-    openclaw: openclawAgents,
-    hermes: DEFAULT_MODELS.hermes,
-  }
+  const builtinProviderEntries = useMemo<Record<BuiltinProvider, ProviderEntry>>(() => ({
+    claude: {
+      id: 'claude',
+      label: PROVIDER_LABELS.claude,
+      noun: 'model',
+      icon: PROVIDER_ICON.claude,
+      models: DEFAULT_MODELS.claude,
+      kind: 'builtin',
+    },
+    codex: {
+      id: 'codex',
+      label: PROVIDER_LABELS.codex,
+      noun: 'model',
+      icon: PROVIDER_ICON.codex,
+      models: DEFAULT_MODELS.codex,
+      kind: 'builtin',
+    },
+    opencode: {
+      id: 'opencode',
+      label: PROVIDER_LABELS.opencode,
+      noun: 'model',
+      icon: PROVIDER_ICON.opencode,
+      models: opencodeModels,
+      kind: 'builtin',
+    },
+    openclaw: {
+      id: 'openclaw',
+      label: PROVIDER_LABELS.openclaw,
+      noun: 'agent',
+      icon: PROVIDER_ICON.openclaw,
+      models: openclawAgents,
+      kind: 'builtin',
+    },
+    hermes: {
+      id: 'hermes',
+      label: PROVIDER_LABELS.hermes,
+      noun: 'model',
+      icon: PROVIDER_ICON.hermes,
+      models: DEFAULT_MODELS.hermes,
+      kind: 'builtin',
+    },
+  }), [opencodeModels, openclawAgents])
+
+  const extensionProviderEntries = useMemo<ProviderEntry[]>(() => {
+    void peerContextVersion
+    const entries = new Map<string, ProviderEntry>()
+
+    for (const peer of connectedPeers) {
+      const peerContext = peerContextRef.current.get(peer.peerId) ?? {}
+      const providers = normalizeExtensionProviders(peerContext['ctx:chat:providers'])
+      for (const providerConfig of providers) {
+        entries.set(providerConfig.id, {
+          id: providerConfig.id,
+          label: providerConfig.label,
+          description: providerConfig.description,
+          noun: providerConfig.noun ?? 'model',
+          icon: getExtensionProviderIcon(providerConfig.icon),
+          models: providerConfig.models.map(modelOption => ({
+            id: modelOption.id,
+            label: modelOption.label,
+            description: modelOption.description,
+          })),
+          kind: 'extension',
+          transport: providerConfig.transport,
+        })
+      }
+    }
+
+    return Array.from(entries.values()).sort((a, b) => a.label.localeCompare(b.label))
+  }, [connectedPeers, peerContextVersion])
+
+  const providerEntries = useMemo<ProviderEntry[]>(() => [
+    builtinProviderEntries.claude,
+    builtinProviderEntries.codex,
+    builtinProviderEntries.opencode,
+    builtinProviderEntries.openclaw,
+    builtinProviderEntries.hermes,
+    ...extensionProviderEntries,
+  ], [builtinProviderEntries, extensionProviderEntries])
+
+  const providerEntryById = useMemo(() => {
+    const next = new Map<string, ProviderEntry>()
+    for (const entry of providerEntries) next.set(entry.id, entry)
+    return next
+  }, [providerEntries])
+
+  const currentProviderEntry = providerEntryById.get(provider)
+    ?? providerEntryById.get(DEFAULT_PROVIDER_ID)
+    ?? providerEntries[0]
+
+  const modeOptions = useMemo<ModeOption[]>(() => {
+    if (!currentProviderEntry) return [EXTENSION_PROVIDER_MODE]
+    return currentProviderEntry.kind === 'builtin'
+      ? PROVIDER_MODES[currentProviderEntry.id as BuiltinProvider]
+      : [EXTENSION_PROVIDER_MODE]
+  }, [currentProviderEntry])
 
   // Close dropdowns on outside click or Escape
   const anyMenuOpen = showModelMenu || showProviderMenu || showMcpMenu || showModeMenu || showThinkingMenu
@@ -1051,26 +1286,44 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
     }
   }, [anyMenuOpen])
 
-  const optionNoun = provider === 'openclaw' ? 'agent' : 'model'
-  const currentModel = providerModels[provider]?.find(m => m.id === model)
-    ?? providerModels[provider]?.[0]
-    ?? { id: '', label: provider === 'openclaw' ? 'No agent' : 'No model' }
+  const optionNoun = currentProviderEntry?.noun ?? 'model'
+  const currentModel = currentProviderEntry?.models.find(m => m.id === model)
+    ?? currentProviderEntry?.models[0]
+    ?? { id: '', label: optionNoun === 'agent' ? 'No agent' : 'No model' }
 
   useEffect(() => {
-    const options = providerModels[provider] ?? []
+    if (!currentProviderEntry) return
+    if (currentProviderEntry.id !== provider) {
+      setProvider(currentProviderEntry.id)
+      setModel(currentProviderEntry.models[0]?.id ?? '')
+      setMode(modeOptions[0]?.id ?? EXTENSION_PROVIDER_MODE.id)
+      return
+    }
+
+    const options = currentProviderEntry.models
     if (options.length === 0) return
     if (!options.some(option => option.id === model)) {
       setModel(options[0].id)
     }
-  }, [provider, providerModels, model])
+  }, [currentProviderEntry, provider, modeOptions, model])
 
-  const handleProviderChange = useCallback((p: Provider) => {
-    setProvider(p)
-    setModel(providerModels[p]?.[0]?.id ?? '')
-    setMode(PROVIDER_MODES[p]?.[0]?.id ?? 'default')
+  useEffect(() => {
+    if (!modeOptions.some(option => option.id === mode)) {
+      setMode(modeOptions[0]?.id ?? EXTENSION_PROVIDER_MODE.id)
+    }
+  }, [modeOptions, mode])
+
+  const handleProviderChange = useCallback((providerId: string) => {
+    const nextProvider = providerEntryById.get(providerId)
+    if (!nextProvider) return
+    setProvider(nextProvider.id)
+    setModel(nextProvider.models[0]?.id ?? '')
+    setMode(nextProvider.kind === 'builtin'
+      ? (PROVIDER_MODES[nextProvider.id as BuiltinProvider]?.[0]?.id ?? 'default')
+      : EXTENSION_PROVIDER_MODE.id)
     // Preserve thinking preference across providers
     setShowProviderMenu(false)
-  }, [providerModels])
+  }, [providerEntryById])
 
   const toggleMenu = useCallback((which: 'model' | 'provider' | 'mcp' | 'mode' | 'thinking') => {
     setShowModelMenu(prev => { const next = which === 'model' ? !prev : false; if (!next) setModelFilter(''); return next })
@@ -1443,6 +1696,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
         cardId: tileId,
         provider,
         model,
+        providerTransport: currentProviderEntry?.transport ?? null,
         mode,
         thinking,
         workspaceDir: _workspaceDir,
@@ -1458,7 +1712,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       setIsStreaming(false)
       focusComposer()
     }
-  }, [input, attachments, isStreaming, messages, tileId, provider, model, mode, thinking, mcpEnabled, peerToolNames, peerContextVersion, focusComposer])
+  }, [input, attachments, isStreaming, messages, tileId, provider, model, currentProviderEntry, mode, thinking, mcpEnabled, peerToolNames, peerContextVersion, focusComposer])
 
   const stopStreaming = useCallback(() => {
     window.electron?.chat?.stop?.(tileId)
@@ -2037,7 +2291,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           {/* Safety / Mode — icon only, label in dropdown */}
           <div ref={modeMenuRef} style={{ position: 'relative' }}>
             {(() => {
-              const currentMode = PROVIDER_MODES[provider].find(m => m.id === mode) ?? PROVIDER_MODES[provider][0]
+              const currentMode = modeOptions.find(m => m.id === mode) ?? modeOptions[0] ?? EXTENSION_PROVIDER_MODE
               return (
                 <>
                   <ToolbarBtn
@@ -2049,7 +2303,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                   {showModeMenu && (
                     <MenuPortal anchorRef={modeMenuRef}>
                       <Dropdown>
-                        {PROVIDER_MODES[provider].map(m => (
+                        {modeOptions.map(m => (
                           <DropdownItem
                             key={m.id}
                             icon={<ShieldCheck size={11} />}
@@ -2096,21 +2350,22 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           {/* Provider */}
           <div ref={providerMenuRef} style={{ position: 'relative' }}>
             <ToolbarPill
-              prefix={PROVIDER_ICON[provider]}
-              label={PROVIDER_LABELS[provider]}
+              prefix={currentProviderEntry?.icon ?? <Bot size={TOOLBAR_PILL_ICON_SIZE} />}
+              label={currentProviderEntry?.label ?? 'Provider'}
               active={showProviderMenu}
               onClick={() => toggleMenu('provider')}
             />
             {showProviderMenu && (
               <MenuPortal anchorRef={providerMenuRef}>
                 <Dropdown>
-                  {(['claude', 'codex', 'opencode', 'openclaw', 'hermes'] as Provider[]).map(p => (
+                  {providerEntries.map(entry => (
                     <DropdownItem
-                      key={p}
-                      icon={PROVIDER_ICON[p]}
-                      label={PROVIDER_LABELS[p]}
-                      active={provider === p}
-                      onClick={() => handleProviderChange(p)}
+                      key={entry.id}
+                      icon={entry.icon}
+                      label={entry.label}
+                      sublabel={entry.description}
+                      active={provider === entry.id}
+                      onClick={() => handleProviderChange(entry.id)}
                     />
                   ))}
                 </Dropdown>
@@ -2121,7 +2376,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           {/* Model */}
           <div ref={modelMenuRef} style={{ position: 'relative' }}>
             <ToolbarPill
-              prefix={PROVIDER_ICON[provider]}
+              prefix={currentProviderEntry?.icon ?? <Bot size={TOOLBAR_PILL_ICON_SIZE} />}
               label={currentModel.label}
               active={showModelMenu}
               onClick={() => toggleMenu('model')}
@@ -2129,11 +2384,11 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
             {showModelMenu && (
               <MenuPortal anchorRef={modelMenuRef}>
                 <ModelDropdown
-                  models={providerModels[provider]}
+                  models={currentProviderEntry?.models ?? []}
                   activeId={model}
                   filter={modelFilter}
                   onFilterChange={setModelFilter}
-                  providerIcon={PROVIDER_ICON[provider]}
+                  providerIcon={currentProviderEntry?.icon ?? <Bot size={TOOLBAR_PILL_ICON_SIZE} />}
                   noun={optionNoun}
                   onSelect={(id) => { setModel(id); setShowModelMenu(false); setModelFilter('') }}
                 />
