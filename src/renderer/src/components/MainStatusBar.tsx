@@ -69,7 +69,6 @@ export function MainStatusBar(): JSX.Element {
       : theme.accent.base
 
   const barBackground = theme.mode === 'light' ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)'
-  const panelBackground = theme.mode === 'light' ? 'rgba(255,255,255,0.72)' : 'rgba(12,14,18,0.7)'
   const title = stats
     ? `Main heap ${formatBytes(usage.heapUsed)} / ${formatBytes(usage.heapLimit || usage.heapTotal)} - RSS ${formatBytes(stats.rss)} - external ${formatBytes(stats.external)}`
     : 'Loading memory stats'
@@ -83,10 +82,6 @@ export function MainStatusBar(): JSX.Element {
         alignItems: 'center',
         justifyContent: 'flex-end',
         padding: '0 16px',
-        borderTop: `1px solid ${theme.border.subtle}`,
-        background: panelBackground,
-        backdropFilter: 'blur(10px)',
-        WebkitBackdropFilter: 'blur(10px)',
         pointerEvents: 'none',
       }}
     >

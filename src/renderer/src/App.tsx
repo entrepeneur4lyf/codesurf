@@ -3579,6 +3579,7 @@ function App(): JSX.Element {
           height: sidebarFooterHeight,
           zIndex: 95,
           pointerEvents: 'none',
+          transform: 'translateY(5px)',
           transition: 'left 0.15s ease',
         }}
       >
