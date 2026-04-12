@@ -14,6 +14,13 @@ const ELECTRON_CACHE = path.join(CACHE_DIR, 'electron')
 const UPDATE_CHECK_FILE = path.join(CACHE_DIR, 'last-update-check')
 const PID_FILE = path.join(CACHE_DIR, 'codesurf.pid')
 const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000
+const DEFAULT_MAX_OLD_SPACE_SIZE_MB = 8192
+
+function getMaxOldSpaceSizeMb() {
+  const raw = process.env.CODESURF_MAX_OLD_SPACE_SIZE_MB
+  const parsed = raw ? parseInt(raw, 10) : NaN
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_OLD_SPACE_SIZE_MB
+}
 
 // ---------------------------------------------------------------------------
 // Legacy migration
@@ -336,9 +343,10 @@ async function launch() {
     checkForUpdates()
     checkBuilt()
     const electronPath = await ensureElectron()
+    const jsFlags = `--expose-gc --max-old-space-size=${getMaxOldSpaceSizeMb()}`
 
     // Launch Electron with the app
-    const child = spawn(electronPath, [APP_DIR], {
+    const child = spawn(electronPath, [`--js-flags=${jsFlags}`, APP_DIR], {
       stdio: 'inherit',
       env: {
         ...process.env,

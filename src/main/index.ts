@@ -32,9 +32,15 @@ import { stopAllRelayServices } from './relay/service'
 import { readSettingsSync } from './ipc/workspace'
 // browserTile BrowserView IPC was removed — renderer uses <webview> tag directly
 
-// Expose global.gc() in renderer processes and give them a larger heap.
-// (Main process gets these flags via the electron CLI in package.json/dev script.)
-app.commandLine.appendSwitch('js-flags', '--expose-gc --max-old-space-size=8192')
+const DEFAULT_MAX_OLD_SPACE_SIZE_MB = 8192
+const envMaxOldSpaceSizeMb = Number.parseInt(process.env.CODESURF_MAX_OLD_SPACE_SIZE_MB ?? '', 10)
+const maxOldSpaceSizeMb = Number.isFinite(envMaxOldSpaceSizeMb) && envMaxOldSpaceSizeMb > 0
+  ? envMaxOldSpaceSizeMb
+  : DEFAULT_MAX_OLD_SPACE_SIZE_MB
+
+// Expose global.gc() in renderer processes and keep the Electron V8 flag budget
+// aligned with the standalone launcher override.
+app.commandLine.appendSwitch('js-flags', `--expose-gc --max-old-space-size=${maxOldSpaceSizeMb}`)
 
 // Per-window display titles (webContents.id → label set by renderer via workspace name)
 const windowTitles = new Map<number, string>()
