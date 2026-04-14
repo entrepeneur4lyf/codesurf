@@ -46,10 +46,6 @@ app.commandLine.appendSwitch('js-flags', `--expose-gc --max-old-space-size=${max
 const windowTitles = new Map<number, string>()
 const freshWindowIds = new Set<number>()
 let extensionRegistry: ExtensionRegistry | null = null
-const TRAFFIC_LIGHT_Y = 15
-const TRAFFIC_LIGHT_X_EXPANDED = 170
-const TRAFFIC_LIGHT_X_COLLAPSED = 16
-
 function resolveAppIconPath(): string | null {
   const candidates = [
     join(process.resourcesPath, 'icon.png'),
@@ -80,16 +76,6 @@ function applyRuntimeAppBranding(): void {
   app.setAboutPanelOptions({
     applicationName: APP_NAME,
   })
-}
-
-function setWindowTrafficLights(win: BrowserWindow, opts?: { sidebarCollapsed?: boolean }): void {
-  if (process.platform !== 'darwin') return
-  const x = opts?.sidebarCollapsed ? TRAFFIC_LIGHT_X_COLLAPSED : TRAFFIC_LIGHT_X_EXPANDED
-  try {
-    win.setWindowButtonPosition({ x, y: TRAFFIC_LIGHT_Y })
-  } catch (err) {
-    console.warn('[window] Failed to set traffic light position:', err)
-  }
 }
 
 function getLiveWindows(): BrowserWindow[] {
@@ -130,7 +116,6 @@ function createWindow(opts?: { fresh?: boolean }): BrowserWindow {
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: TRAFFIC_LIGHT_X_EXPANDED, y: TRAFFIC_LIGHT_Y },
     ...(iconPath ? { icon: iconPath } : {}),
     ...getWindowAppearanceOptions(),
     webPreferences: {
@@ -146,7 +131,6 @@ function createWindow(opts?: { fresh?: boolean }): BrowserWindow {
   win.on('ready-to-show', () => {
     if (win.isDestroyed() || win.webContents.isDestroyed()) return
     applyWindowAppearance(win)
-    setWindowTrafficLights(win, { sidebarCollapsed: false })
     win.setTitle('') // hide native title text; our pill tabs show workspace name
     win.show()
     broadcastWindowList()
@@ -497,9 +481,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('window:setSidebarCollapsed', (event, collapsed: boolean) => {
     const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win) return false
-    setWindowTrafficLights(win, { sidebarCollapsed: !!collapsed })
-    return true
+    return !!win && typeof collapsed === 'boolean'
   })
 
   ipcMain.handle('app:relaunch', () => {

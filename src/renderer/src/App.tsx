@@ -1,6 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo, Suspense } from 'react'
 import { Ungroup, Grid2x2X, Scissors, ClipboardPaste, Maximize2, LayoutGrid } from 'lucide-react'
-import morphLogo from './assets/morph.png'
 import type { TileState, GroupState, CanvasState, Workspace, AppSettings, TileType, LockedConnection } from '../../shared/types'
 import { TileColorProvider } from './TileColorContext'
 import { withDefaultSettings, DEFAULT_SETTINGS } from '../../shared/types'
@@ -18,21 +17,6 @@ import { disposeMediaTile } from './components/MediaTile'
 import { MainStatusBar } from './components/MainStatusBar'
 
 const LazyPanelLayout = React.lazy(() => import('./components/PanelLayout').then(m => ({ default: m.PanelLayout })))
-
-const textIconStyle = (size: number): React.CSSProperties => ({
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  width: size,
-  height: size,
-  fontSize: Math.max(10, size - 2),
-  lineHeight: 1,
-  userSelect: 'none'
-})
-
-const Icon = ({ glyph, size = 15 }: { glyph: string; size?: number }): JSX.Element => (
-  <span style={textIconStyle(size)}>{glyph}</span>
-)
 
 type SidebarSessionEntry = {
   id: string
@@ -60,6 +44,7 @@ type SidebarSessionEntry = {
 
 const LazyTileChrome = React.lazy(() => import('./components/TileChrome').then(m => ({ default: m.TileChrome })))
 const LazySidebar = React.lazy(() => import('./components/Sidebar').then(m => ({ default: m.Sidebar })))
+const LazySidebarFooter = React.lazy(() => import('./components/Sidebar').then(m => ({ default: m.SidebarFooter })))
 const LazyContextMenu = React.lazy(() => import('./components/ContextMenu').then(m => ({ default: m.ContextMenu })))
 const LazyImageTile = React.lazy(() => import('./components/ImageTile').then(m => ({ default: m.ImageTile })))
 const LazyMediaTile = React.lazy(() => import('./components/MediaTile').then(m => ({ default: m.MediaTile })))
@@ -2157,37 +2142,6 @@ function App(): JSX.Element {
     setOpenWorkspaceIds(prev => prev.includes(ws.id) ? prev : [...prev, ws.id])
   }, [workspace])
 
-  // Launch a new empty view within the current project, defaulting to layout selection
-  const handleNewBlankView = useCallback(async () => {
-    const currentPath = workspace?.path ?? ''
-    const projectBase = currentPath ? currentPath.split('/').filter(Boolean).pop() ?? '' : ''
-    const viewName = projectBase ? `${projectBase}:canvas` : 'canvas'
-    const ws = await window.electron.workspace.createWithPath(viewName, currentPath)
-    const updatedList = await window.electron.workspace.list()
-    setWorkspaces(updatedList)
-    const emptyPanel = createLeaf([])
-    const state: CanvasState = {
-      tiles: [],
-      groups: [],
-      viewport: { tx: 0, ty: 0, zoom: 1 },
-      panelLayout: emptyPanel,
-      activePanelId: emptyPanel.id,
-      tabViewActive: true,
-    }
-    await window.electron.canvas.save(ws.id, state)
-    await window.electron.workspace.setActive(ws.id)
-    setWorkspace(ws)
-    setTiles([])
-    setGroups([])
-    setLockedConnections([])
-    setViewport({ tx: 0, ty: 0, zoom: 1 })
-    savedLayoutRef.current = emptyPanel
-    setPanelLayout(emptyPanel)
-    setActivePanelId(emptyPanel.id)
-    setExpandedTileId(null)
-    setOpenWorkspaceIds(prev => prev.includes(ws.id) ? prev : [...prev, ws.id])
-  }, [workspace])
-
   const handleOpenFile = useCallback((filePath: string) => {
     setSidebarSelectedPath(filePath)
 
@@ -3417,26 +3371,13 @@ function App(): JSX.Element {
           WebkitBackdropFilter: 'blur(12px)',
           borderRadius: 0,
           border: 'none',
-          paddingTop: '43px',
+          paddingTop: 0,
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
           pointerEvents: 'auto',
           position: 'relative',
         }}>
-          {/* Titlebar drag strip — keeps the traffic-light area draggable without pushing content down */}
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: 43,
-              zIndex: 1,
-              // @ts-ignore
-              WebkitAppRegion: 'drag',
-            }}
-          />
           {/* Sidebar content */}
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', paddingBottom: sidebarFooterHeight, position: 'relative', zIndex: 2 }}>
             <Suspense fallback={
@@ -3507,79 +3448,27 @@ function App(): JSX.Element {
         <div
           style={{
             position: 'absolute',
-            left: 20,
-            top: 7,
-            zIndex: 120,
-            width: 'max-content',
-            height: 28,
-            overflow: 'visible',
+            left: sidebarFooterLeft,
+            bottom: sidebarFooterBottom,
+            width: sidebarWidth,
+            height: sidebarFooterHeight,
+            zIndex: 110,
             pointerEvents: 'auto',
-            userSelect: 'none',
-            // @ts-ignore
-            WebkitAppRegion: 'no-drag',
+            transition: 'width 0.15s ease',
           }}
         >
-          <button
-            type="button"
-            title="Previous/next logo"
-            aria-label="Change CodeSurf logo"
-            onClick={() => setBrandWordmarkIndex(index => (index + 1) % brandWordmarks.length)}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '50%',
-              background: 'transparent',
-              border: 'none',
-              padding: 0,
-              margin: 0,
-              cursor: 'pointer',
-            }}
-          />
-          <button
-            type="button"
-            title="Cycle logo colors"
-            aria-label="Change CodeSurf logo colors"
-            onClick={() => setBrandPaletteIndex(index => (index + 1) % brandPalettes.length)}
-            style={{
-              position: 'absolute',
-              top: 0,
-              right: 0,
-              bottom: 0,
-              width: '50%',
-              background: 'transparent',
-              border: 'none',
-              padding: 0,
-              margin: 0,
-              cursor: 'pointer',
-            }}
-          />
-          <div style={{
-            pointerEvents: 'none',
-            fontFamily: settings.fonts?.mono?.family || appFonts.mono,
-            lineHeight: 0.9,
-            textShadow: theme.mode === 'dark'
-              ? '0 1px 8px rgba(0, 0, 0, 0.35)'
-              : '0 1px 3px rgba(255, 255, 255, 0.7)',
-            textAlign: 'left',
-            transform: `translateY(10px) scale(${activeBrandWordmarkScale})`,
-            transformOrigin: 'top left',
-          }}>
-            {activeBrandWordmark.map((text, index) => (
-              <span
-                key={`${brandWordmarkIndex}-${brandPaletteIndex}-${index}`}
-                style={{
-                  display: 'block',
-                  fontSize: activeBrandWordmark.length <= 3 ? 7 : activeBrandWordmark.length <= 5 ? 5.9 : 5.1,
-                  fontWeight: 700,
-                  letterSpacing: activeBrandWordmark.length <= 3 ? 0.15 : 0,
-                  color: activeBrandPalette[index % activeBrandPalette.length],
-                  whiteSpace: 'pre',
-                }}
-              >
-                {text}
-              </span>
-            ))}
-          </div>
+          <Suspense fallback={null}>
+            <LazySidebarFooter
+              onNewTerminal={() => addTile('terminal')}
+              onNewKanban={() => addTile('kanban')}
+              onNewBrowser={() => addTile('browser')}
+              onNewChat={() => addTile('chat')}
+              onNewFiles={() => addTile('files')}
+              onOpenSettings={(tab) => setShowSettings(tab)}
+              extensionTiles={settings.extensionsDisabled ? [] : extensionTiles.filter(e => e.type !== 'ext:md-preview' && !(settings.hiddenFromSidebarExtIds ?? []).includes(e.extId))}
+              onAddExtensionTile={(type) => addTile(type as TileType)}
+            />
+          </Suspense>
         </div>
       )}
 
@@ -3615,84 +3504,6 @@ function App(): JSX.Element {
             paddingTop: 2,
           }}
         >
-          {/* Workspace pill tabs */}
-          <div style={{ display: 'flex', gap: 4, alignItems: 'center', WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-            {openWorkspaceIds.map((id, index) => {
-              const ws = workspaces.find(w => w.id === id)
-              if (!ws) return null
-              const isActive = id === workspace?.id
-              return (
-                <button
-                  key={id}
-                  title={ws.name}
-                  onClick={() => { if (!isActive) handleSwitchWorkspace(id) }}
-                  style={{
-                    height: 26, paddingLeft: 12, paddingRight: openWorkspaceIds.length > 1 ? 6 : 12,
-                    marginLeft: index > 0 ? -10 : 0,
-                    borderRadius: 8,
-                    background: 'transparent',
-                    border: '1px solid transparent',
-                    color: isActive ? theme.text.primary : theme.text.disabled,
-                    fontSize: appFonts.secondarySize, fontWeight: isActive ? 700 : 400,
-                    cursor: isActive ? 'default' : 'pointer',
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    whiteSpace: 'nowrap', transition: 'color 0.1s',
-                    boxShadow: 'none',
-                    position: 'relative',
-                  }}
-                  onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = theme.accent.hover }}
-                  onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = theme.text.disabled }}
-                >
-                  <span style={{ textTransform: 'uppercase', letterSpacing: 0.3 }}>{ws.name}</span>
-                  {openWorkspaceIds.length > 1 && (
-                    <span
-                      onClick={e => {
-                        e.stopPropagation()
-                        setOpenWorkspaceIds(prev => {
-                          const next = prev.filter(x => x !== id)
-                          if (isActive && next.length > 0) handleSwitchWorkspace(next[next.length - 1])
-                          return next
-                        })
-                      }}
-                      style={{ fontSize: 14, lineHeight: 1, color: isActive ? theme.text.muted : theme.text.disabled, cursor: 'pointer', padding: '0 2px' }}
-                      onMouseEnter={e => { e.currentTarget.style.color = theme.accent.hover }}
-                      onMouseLeave={e => { e.currentTarget.style.color = isActive ? theme.text.muted : theme.text.disabled }}
-                    >×</span>
-                  )}
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      position: 'absolute',
-                      left: 10,
-                      right: 10,
-                      bottom: -2,
-                      height: 2,
-                      borderRadius: 999,
-                      background: theme.accent.base,
-                      opacity: isActive ? 0.95 : 0.4,
-                      boxShadow: isActive ? `0 0 8px ${theme.accent.base}44` : 'none',
-                      pointerEvents: 'none',
-                    }}
-                  />
-                </button>
-              )
-            })}
-            {/* New empty view in current project */}
-            <button
-              title="New layout view (same project)"
-              onClick={handleNewBlankView}
-              style={{
-                width: 26, height: 26, borderRadius: 8,
-                background: 'transparent', border: '1px solid transparent',
-                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: theme.text.disabled, transition: 'all 0.1s',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = theme.surface.hover; e.currentTarget.style.color = theme.text.secondary }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = theme.text.disabled }}
-            >
-              <Icon glyph="+" size={18} />
-            </button>
-          </div>
         </div>
 
         {/* Sidebar collapse pill — floats over the canvas left edge */}
@@ -4766,14 +4577,6 @@ function App(): JSX.Element {
               if (panelLayout) exitExpandedMode()
               else enterTabbedView()
             }}
-            onOpenSettings={() => setShowSettings('general')}
-            onNewTerminal={() => addTile('terminal')}
-            onNewKanban={() => addTile('kanban')}
-            onNewBrowser={() => addTile('browser')}
-            onNewChat={() => addTile('chat')}
-            onNewFiles={() => addTile('files')}
-            extensionTiles={settings.extensionsDisabled ? [] : extensionTiles.filter(e => e.type !== 'ext:md-preview' && !(settings.hiddenFromSidebarExtIds ?? []).includes(e.extId))}
-            onAddExtensionTile={(type) => addTile(type as TileType)}
             onZoomToggle={() => {
               setViewport(prev => {
                 if (prev.zoom === 1) {

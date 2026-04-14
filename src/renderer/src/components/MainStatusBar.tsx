@@ -95,13 +95,13 @@ export function MainStatusBar(): JSX.Element {
           justifyContent: 'flex-end',
           color: theme.text.secondary,
           fontFamily: fonts.secondary,
-          fontSize: fonts.secondarySize,
+          fontSize: Math.max(10, fonts.secondarySize - 2),
           fontWeight: 500,
           fontVariantNumeric: 'tabular-nums',
           letterSpacing: 0.2,
         }}
       >
-        <span style={{ color: theme.text.disabled, textTransform: 'uppercase', letterSpacing: 0.8, fontSize: fonts.secondarySize - 1 }}>
+        <span style={{ color: theme.text.secondary, textTransform: 'uppercase', letterSpacing: 0.8, fontSize: Math.max(9, fonts.secondarySize - 3) }}>
           Memory
         </span>
 
@@ -145,11 +145,11 @@ export function MainStatusBar(): JSX.Element {
           </span>
         </div>
 
-        <span style={{ whiteSpace: 'nowrap', color: theme.text.disabled }}>
+        <span style={{ whiteSpace: 'nowrap', color: theme.text.secondary }}>
           RSS {formatBytes(stats?.rss ?? 0)}
         </span>
 
-        <span style={{ whiteSpace: 'nowrap', color: fillColor }}>
+        <span style={{ whiteSpace: 'nowrap', color: theme.text.secondary }}>
           {Math.round(usage.ratio * 100)}%
         </span>
       </div>
