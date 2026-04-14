@@ -419,9 +419,6 @@ export function Sidebar({
   const theme = useTheme()
   const widthRef = useRef(width)
   useEffect(() => { widthRef.current = width }, [width])
-  const [wsDropdownOpen, setWsDropdownOpen] = useState(false)
-  const [newWsInput, setNewWsInput] = useState(false)
-  const [newWsName, setNewWsName] = useState('')
   const [sectionsCollapsed, setSectionsCollapsed] = useState<Record<string, boolean>>({})
   const [tileCtx, setTileCtx] = useState<{ x: number; y: number; tile: TileState } | null>(null)
   const [sessionCtx, setSessionCtx] = useState<{ x: number; y: number; session: SessionEntry } | null>(null)
@@ -663,86 +660,6 @@ export function Sidebar({
       position: 'relative', overflow: 'hidden',
       transition: 'width 0.15s ease',
     }}>
-      {/* ── WORKSPACES ── */}
-      <div style={{ padding: '4px 10px 2px' }}>
-        <div
-          style={{
-            display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
-            padding: '5px 10px', borderRadius: 8,
-            background: theme.surface.panelMuted, border: `1px solid ${theme.border.default}`
-          }}
-          onClick={() => setWsDropdownOpen(p => !p)}
-        >
-          <span style={{
-            fontSize: fonts.size, color: theme.text.primary, fontWeight: 500,
-            flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'inherit'
-          }}>
-            {workspace?.name ?? 'No workspace'}
-          </span>
-          <span style={{ fontSize: 9, color: theme.text.disabled }}>{wsDropdownOpen ? '\u25B4' : '\u25BE'}</span>
-        </div>
-
-        {wsDropdownOpen && (
-          <div style={{ marginTop: 4, background: theme.surface.panelElevated, border: `1px solid ${theme.border.default}`, borderRadius: 8, overflow: 'hidden' }}>
-            {workspaces.map(ws => (
-              <div key={ws.id}
-                style={{
-                  padding: '7px 10px 7px 14px', fontSize: fonts.size, fontFamily: 'inherit', color: ws.id === workspace?.id ? theme.accent.base : theme.text.secondary, cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 8,
-                }}
-                onMouseEnter={e => (e.currentTarget.style.background = theme.surface.hover)}
-                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                onClick={() => { onSwitchWorkspace(ws.id); setWsDropdownOpen(false) }}
-              >
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ws.name}</span>
-                <button
-                  title="Delete workspace record"
-                  onClick={e => {
-                    e.stopPropagation()
-                    onDeleteWorkspace(ws.id)
-                  }}
-                  style={{
-                    width: 18, height: 18, borderRadius: 4, border: 'none', background: 'transparent',
-                    color: theme.text.disabled, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0,
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted; e.currentTarget.style.color = theme.status.danger }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = theme.text.disabled }}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            <div style={{ height: 1, background: theme.border.default, margin: '2px 0' }} />
-            {newWsInput ? (
-              <div style={{ padding: '4px 8px' }}>
-                <input autoFocus value={newWsName} onChange={e => setNewWsName(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && newWsName.trim()) { onNewWorkspace(newWsName.trim()); setNewWsName(''); setNewWsInput(false); setWsDropdownOpen(false) }
-                    if (e.key === 'Escape') { setNewWsInput(false); setNewWsName('') }
-                  }}
-                  placeholder="Workspace name..."
-                  style={{ width: '100%', padding: '4px 8px', fontSize: fonts.size, borderRadius: 4, background: theme.surface.input, color: theme.text.secondary, border: `1px solid ${theme.accent.base}`, outline: 'none', fontFamily: 'inherit' }}
-                />
-              </div>
-            ) : (
-              <>
-                <div style={{ padding: '7px 14px', fontSize: fonts.size, color: theme.text.muted, cursor: 'pointer', fontFamily: 'inherit' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = theme.surface.hover)}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                  onClick={() => { onOpenFolder(); setWsDropdownOpen(false) }}
-                >Open Folder...</div>
-                <div style={{ padding: '7px 14px', fontSize: fonts.size, color: theme.text.muted, cursor: 'pointer', fontFamily: 'inherit' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = theme.surface.hover)}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                  onClick={() => setNewWsInput(true)}
-                >+ New empty workspace</div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-
       {/* Scrollable sections */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingTop: 6 }}>
 
@@ -1104,10 +1021,10 @@ export function Sidebar({
                           <svg width="16" height="16" viewBox="0 0 14 14" fill="none"><path d="M6 1.5h2a.5.5 0 01.5.5v1.5H8a1 1 0 00-1 1v0a1 1 0 001 1h.5V7a.5.5 0 01-.5.5H6V7a1 1 0 00-1-1v0a1 1 0 00-1 1v.5H2.5A.5.5 0 012 7V5.5h.5a1 1 0 001-1v0a1 1 0 00-1-1H2V2a.5.5 0 01.5-.5H6z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" /></svg>
                         </span>
                         <span style={{
-                          fontSize: fonts.secondarySize,
+                          fontSize: fonts.secondarySize - 2,
                           fontWeight: 700,
-                          color: theme.text.muted,
-                          letterSpacing: 0.5,
+                          color: theme.text.disabled,
+                          letterSpacing: 1.2,
                           textTransform: 'uppercase',
                           flex: 1,
                           minWidth: 0,
