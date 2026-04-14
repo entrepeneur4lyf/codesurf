@@ -8,9 +8,13 @@
 
 import { ipcMain, BrowserWindow, dialog } from 'electron'
 import { query, type Query, type Options } from '@anthropic-ai/claude-agent-sdk'
-import { spawn, ChildProcess, execFileSync } from 'child_process'
+import { spawn, ChildProcess, execFileSync, execFile } from 'child_process'
 import * as http from 'http'
 import * as net from 'net'
+import { promises as fs } from 'fs'
+import { tmpdir } from 'os'
+import { dirname, join, relative, resolve, sep } from 'path'
+import { promisify } from 'util'
 import { getMCPPort, getMCPToken, getContexMcpToolNames } from '../mcp-server'
 import { getAgentPath, getShellEnvPath } from '../agent-paths'
 import { updateLinks } from '../peer-state'
@@ -90,6 +94,30 @@ const activeProcesses = new Map<string, ChildProcess>()
 const activeHttpRequests = new Map<string, http.ClientRequest>()
 // Stored session IDs for multi-turn conversations
 const sessionIds = new Map<string, string>()
+const execFileAsync = promisify(execFile)
+
+interface StreamToolFileChange {
+  path: string
+  previousPath?: string
+  changeType: 'add' | 'update' | 'delete' | 'move'
+  additions: number
+  deletions: number
+  diff: string
+}
+
+interface StreamToolCommandEntry {
+  label: string
+  command?: string
+  output?: string
+  kind?: 'search' | 'read' | 'command'
+}
+
+interface CodexFileSnapshot {
+  displayPath: string
+  changeType: StreamToolFileChange['changeType']
+  existed: boolean
+  content: string | null
+}
 
 function bufferHttpResponse(res: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -708,6 +736,181 @@ function chatClaude(req: ChatRequest): void {
 
 // --- Codex via Codex CLI ---------------------------------------------------------
 
+function normalizeCodexShellCommand(command: string): string {
+  const trimmed = command.trim()
+  const quotedMatch = trimmed.match(/^\/bin\/zsh -lc '([\s\S]*)'$/)
+  if (quotedMatch) return quotedMatch[1].replace(/'\\''/g, "'")
+  const plainMatch = trimmed.match(/^\/bin\/zsh -lc (.+)$/)
+  if (plainMatch) return plainMatch[1].trim()
+  return trimmed
+}
+
+function classifyCodexCommand(command: string): StreamToolCommandEntry['kind'] {
+  const normalized = command.trim()
+  if (/(^|\s)(rg|grep|fd|findstr)\b/.test(normalized)) return 'search'
+  if (/(^|\s)(cat|sed|head|tail|less|more|bat|ls)\b/.test(normalized)) return 'read'
+  return 'command'
+}
+
+function buildExploreToolName(entries: StreamToolCommandEntry[]): string {
+  const readCount = entries.filter(entry => entry.kind === 'read').length
+  const searchCount = entries.filter(entry => entry.kind === 'search').length
+  const labelParts: string[] = []
+  if (readCount > 0) labelParts.push(`${readCount} file${readCount === 1 ? '' : 's'}`)
+  if (searchCount > 0) labelParts.push(`${searchCount} search${searchCount === 1 ? '' : 'es'}`)
+  return labelParts.length > 0 ? `Explored ${labelParts.join(', ')}` : 'Explored workspace'
+}
+
+function buildEditedToolName(fileChanges: StreamToolFileChange[]): string {
+  return `Edited ${fileChanges.length} file${fileChanges.length === 1 ? '' : 's'}`
+}
+
+function countDiffStats(diff: string): { additions: number; deletions: number } {
+  let additions = 0
+  let deletions = 0
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue
+    if (line.startsWith('+')) additions += 1
+    if (line.startsWith('-')) deletions += 1
+  }
+  return { additions, deletions }
+}
+
+function changeTypeFromCodexKind(kind: unknown): StreamToolFileChange['changeType'] {
+  if (kind === 'add' || kind === 'delete' || kind === 'move') return kind
+  return 'update'
+}
+
+function mergeFileChanges(fileChanges: StreamToolFileChange[]): StreamToolFileChange[] {
+  const merged = new Map<string, StreamToolFileChange>()
+
+  for (const change of fileChanges) {
+    const key = `${change.path}::${change.previousPath ?? ''}::${change.changeType}`
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, { ...change })
+      continue
+    }
+    existing.additions += change.additions
+    existing.deletions += change.deletions
+    existing.diff = `${existing.diff}\n\n${change.diff}`.trim()
+  }
+
+  return Array.from(merged.values())
+}
+
+async function readSnapshotContent(filePath: string): Promise<{ existed: boolean; content: string | null }> {
+  try {
+    const buffer = await fs.readFile(filePath)
+    if (buffer.includes(0)) return { existed: true, content: null }
+    return { existed: true, content: buffer.toString('utf8') }
+  } catch {
+    return { existed: false, content: null }
+  }
+}
+
+function getDisplayPath(filePath: string, workspaceDir?: string): string {
+  const resolvedPath = resolve(filePath)
+  const resolvedWorkspace = workspaceDir ? resolve(workspaceDir) : ''
+  if (resolvedWorkspace && (resolvedPath === resolvedWorkspace || resolvedPath.startsWith(`${resolvedWorkspace}${sep}`))) {
+    const rel = relative(resolvedWorkspace, resolvedPath)
+    return rel || resolvedPath.split(sep).pop() || resolvedPath
+  }
+  return resolvedPath
+}
+
+function resolveCodexFilePath(filePath: string, workspaceDir?: string): string {
+  if (workspaceDir && !filePath.startsWith('/')) return resolve(workspaceDir, filePath)
+  return resolve(filePath)
+}
+
+function normalizeNoIndexDiffPaths(diff: string, beforePath: string | null, afterPath: string | null, displayPath: string): string {
+  let normalized = diff
+  if (beforePath) normalized = normalized.split(beforePath).join(`a/${displayPath}`)
+  if (afterPath) normalized = normalized.split(afterPath).join(`b/${displayPath}`)
+  return normalized.trim()
+}
+
+async function buildSnapshotDiff(before: CodexFileSnapshot, currentPath: string): Promise<Pick<StreamToolFileChange, 'diff' | 'additions' | 'deletions'>> {
+  const after = await readSnapshotContent(currentPath)
+  if (before.content == null || (after.existed && after.content == null)) {
+    return { diff: '', additions: 0, deletions: 0 }
+  }
+
+  const tempRoot = await fs.mkdtemp(join(tmpdir(), 'codesurf-codex-diff-'))
+  const beforeTempPath = before.existed ? join(tempRoot, 'before', before.displayPath) : null
+  const afterTempPath = after.existed ? join(tempRoot, 'after', before.displayPath) : null
+
+  try {
+    if (beforeTempPath) {
+      await fs.mkdir(dirname(beforeTempPath), { recursive: true })
+      await fs.writeFile(beforeTempPath, before.content ?? '', 'utf8')
+    }
+    if (afterTempPath) {
+      await fs.mkdir(dirname(afterTempPath), { recursive: true })
+      await fs.writeFile(afterTempPath, after.content ?? '', 'utf8')
+    }
+
+    const args = ['diff', '--no-index', '--no-ext-diff', '--unified=3', '--']
+    args.push(beforeTempPath ?? '/dev/null', afterTempPath ?? '/dev/null')
+
+    let diff = ''
+    try {
+      const result = await execFileAsync('git', args, { maxBuffer: 1024 * 1024 * 4 })
+      diff = result.stdout || result.stderr || ''
+    } catch (error: any) {
+      if (error?.code === 1) {
+        diff = error.stdout || error.stderr || ''
+      } else {
+        throw error
+      }
+    }
+
+    const normalizedDiff = normalizeNoIndexDiffPaths(diff, beforeTempPath, afterTempPath, before.displayPath)
+    const { additions, deletions } = countDiffStats(normalizedDiff)
+    return { diff: normalizedDiff, additions, deletions }
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+async function summarizeCodexFileChanges(
+  changes: Array<{ path?: unknown; kind?: unknown }>,
+  snapshots: Map<string, CodexFileSnapshot>,
+  workspaceDir?: string,
+): Promise<StreamToolFileChange[]> {
+  const fileChanges: StreamToolFileChange[] = []
+
+  for (const change of changes) {
+    if (typeof change?.path !== 'string') continue
+    const resolvedPath = resolveCodexFilePath(change.path, workspaceDir)
+    const snapshot = snapshots.get(resolvedPath) ?? {
+      displayPath: getDisplayPath(resolvedPath, workspaceDir),
+      changeType: changeTypeFromCodexKind(change.kind),
+      existed: false,
+      content: null,
+    }
+
+    const diffSummary = await buildSnapshotDiff(snapshot, resolvedPath).catch(() => ({
+      diff: '',
+      additions: 0,
+      deletions: 0,
+    }))
+
+    fileChanges.push({
+      path: snapshot.displayPath,
+      changeType: snapshot.changeType,
+      additions: diffSummary.additions,
+      deletions: diffSummary.deletions,
+      diff: diffSummary.diff,
+    })
+
+    snapshots.delete(resolvedPath)
+  }
+
+  return mergeFileChanges(fileChanges)
+}
+
 function chatCodex(req: ChatRequest): void {
   const lastUserMsg = [...req.messages].reverse().find(m => m.role === 'user')
   if (!lastUserMsg) {
@@ -715,19 +918,128 @@ function chatCodex(req: ChatRequest): void {
     return
   }
 
-  // Map mode to codex --approval-mode flag
-  const codexMode = req.mode ?? 'auto'
   const codexBin = getAgentPath('codex') || 'codex'
   const shellPath = getShellEnvPath()
-  const proc = spawn(codexBin, ['exec', '--model', req.model, '--approval-mode', codexMode, lastUserMsg.content], {
+  const args = ['exec', '--json', '--model', req.model, '--dangerously-bypass-approvals-and-sandbox']
+  if (req.workspaceDir) {
+    args.push('--skip-git-repo-check', '-C', req.workspaceDir)
+  } else {
+    args.push('--skip-git-repo-check')
+  }
+  args.push(lastUserMsg.content)
+
+  const proc = spawn(codexBin, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, ...(shellPath && { PATH: shellPath }) },
   })
 
   activeProcesses.set(req.cardId, proc)
+  const pendingSnapshots = new Map<string, CodexFileSnapshot>()
+  const aggregatedFileChanges = new Map<string, StreamToolFileChange>()
+  const exploreEntries: StreamToolCommandEntry[] = []
+  let editsStarted = false
+  let exploreStarted = false
+  let pendingStdout = ''
+  let stdoutChain = Promise.resolve()
+
+  const handleCodexJsonEvent = async (evt: any): Promise<void> => {
+    if (!evt || typeof evt !== 'object') return
+
+    if (evt.type === 'thread.started' && typeof evt.thread_id === 'string') {
+      sessionIds.set(req.cardId, evt.thread_id)
+      sendStream(req.cardId, { type: 'session', sessionId: evt.thread_id })
+      return
+    }
+
+    if (evt.type === 'item.started') {
+      const item = evt.item
+      if (item?.type === 'file_change' && Array.isArray(item.changes)) {
+        for (const change of item.changes) {
+          if (typeof change?.path !== 'string') continue
+          const resolvedPath = resolveCodexFilePath(change.path, req.workspaceDir)
+          const snapshot = await readSnapshotContent(resolvedPath)
+          pendingSnapshots.set(resolvedPath, {
+            displayPath: getDisplayPath(resolvedPath, req.workspaceDir),
+            changeType: changeTypeFromCodexKind(change.kind),
+            existed: snapshot.existed,
+            content: snapshot.content,
+          })
+        }
+      }
+      return
+    }
+
+    if (evt.type !== 'item.completed') return
+    const item = evt.item
+    if (!item || typeof item !== 'object') return
+
+    if (item.type === 'agent_message' && typeof item.text === 'string' && item.text) {
+      sendStream(req.cardId, { type: 'text', text: item.text })
+      return
+    }
+
+    if (item.type === 'command_execution' && typeof item.command === 'string') {
+      const command = normalizeCodexShellCommand(item.command)
+      const kind = classifyCodexCommand(command)
+      if (kind === 'search' || kind === 'read') {
+        if (!exploreStarted) {
+          sendStream(req.cardId, { type: 'tool_start', toolId: 'codex-explore', toolName: 'Exploring workspace' })
+          exploreStarted = true
+        }
+        exploreEntries.push({
+          label: command,
+          command,
+          output: typeof item.aggregated_output === 'string' ? item.aggregated_output : '',
+          kind,
+        })
+        sendStream(req.cardId, {
+          type: 'tool_summary',
+          toolId: 'codex-explore',
+          toolName: buildExploreToolName(exploreEntries),
+          commandEntries: [...exploreEntries],
+        })
+      }
+      return
+    }
+
+    if (item.type === 'file_change' && Array.isArray(item.changes)) {
+      const fileChanges = await summarizeCodexFileChanges(item.changes, pendingSnapshots, req.workspaceDir)
+      if (fileChanges.length === 0) return
+      for (const change of fileChanges) {
+        const key = `${change.path}::${change.previousPath ?? ''}::${change.changeType}`
+        aggregatedFileChanges.set(key, change)
+      }
+      const mergedFileChanges = Array.from(aggregatedFileChanges.values())
+      if (!editsStarted) {
+        sendStream(req.cardId, { type: 'tool_start', toolId: 'codex-file-changes', toolName: buildEditedToolName(mergedFileChanges) })
+        editsStarted = true
+      }
+      sendStream(req.cardId, {
+        type: 'tool_summary',
+        toolId: 'codex-file-changes',
+        toolName: buildEditedToolName(mergedFileChanges),
+        fileChanges: mergedFileChanges,
+      })
+    }
+  }
 
   proc.stdout?.on('data', (chunk: Buffer) => {
-    sendStream(req.cardId, { type: 'text', text: chunk.toString() })
+    pendingStdout += chunk.toString()
+    const lines = pendingStdout.split(/\r?\n/)
+    pendingStdout = lines.pop() ?? ''
+
+    stdoutChain = stdoutChain.then(async () => {
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        try {
+          const evt = JSON.parse(trimmed)
+          await handleCodexJsonEvent(evt)
+        } catch {
+          sendStream(req.cardId, { type: 'text', text: `${line}\n` })
+        }
+      }
+    }).catch(() => {})
   })
 
   let stderrBuf = ''
@@ -735,10 +1047,24 @@ function chatCodex(req: ChatRequest): void {
 
   proc.on('close', (code) => {
     activeProcesses.delete(req.cardId)
-    if (code !== 0 && stderrBuf.trim()) {
-      sendStream(req.cardId, { type: 'error', error: stderrBuf.trim() })
-    }
-    sendStream(req.cardId, { type: 'done' })
+    stdoutChain = stdoutChain.then(async () => {
+      if (pendingStdout.trim()) {
+        try {
+          await handleCodexJsonEvent(JSON.parse(pendingStdout.trim()))
+        } catch {
+          sendStream(req.cardId, { type: 'text', text: pendingStdout })
+        }
+      }
+      if (code !== 0 && stderrBuf.trim()) {
+        sendStream(req.cardId, { type: 'error', error: stderrBuf.trim() })
+      }
+      sendStream(req.cardId, { type: 'done', sessionId: sessionIds.get(req.cardId) })
+    }).catch(() => {
+      if (code !== 0 && stderrBuf.trim()) {
+        sendStream(req.cardId, { type: 'error', error: stderrBuf.trim() })
+      }
+      sendStream(req.cardId, { type: 'done', sessionId: sessionIds.get(req.cardId) })
+    })
   })
 
   proc.on('error', (err) => {

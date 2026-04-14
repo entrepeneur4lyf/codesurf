@@ -203,6 +203,9 @@ contextBridge.exposeInMainWorld('electron', {
   // Git
   git: {
     status: (dirPath: string) => ipcRenderer.invoke('git:status', dirPath),
+    branches: (dirPath: string) => ipcRenderer.invoke('git:branches', dirPath),
+    checkoutBranch: (dirPath: string, branchName: string) => ipcRenderer.invoke('git:checkoutBranch', dirPath, branchName),
+    createBranch: (dirPath: string, branchName: string) => ipcRenderer.invoke('git:createBranch', dirPath, branchName),
   },
 
   // Window management

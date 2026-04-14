@@ -37,6 +37,9 @@ interface ElectronAPI {
   }
   git?: {
     status(dirPath: string): Promise<{ isRepo: boolean; root: string; files: Array<{ path: string; status: string }> }>
+    branches(dirPath: string): Promise<{ isRepo: boolean; root: string; current: string | null; branches: Array<{ name: string; current: boolean }> }>
+    checkoutBranch(dirPath: string, branchName: string): Promise<{ ok: boolean; error?: string }>
+    createBranch(dirPath: string, branchName: string): Promise<{ ok: boolean; error?: string }>
   }
   stream?: {
     start(req: { cardId: string; agentId: string; url: string; method?: string; headers?: Record<string, string>; body?: string }): Promise<void>

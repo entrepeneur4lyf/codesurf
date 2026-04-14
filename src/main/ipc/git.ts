@@ -19,6 +19,18 @@ export interface GitStatusResult {
   files: GitFileStatus[]
 }
 
+export interface GitBranchSummary {
+  name: string
+  current: boolean
+}
+
+export interface GitBranchesResult {
+  isRepo: boolean
+  root: string
+  current: string | null
+  branches: GitBranchSummary[]
+}
+
 function parseStatus(code: string): GitStatus {
   if (code === '??' || code === '!!') return 'untracked'
   if (code.includes('A')) return 'added'
@@ -57,6 +69,67 @@ export function registerGitIPC(): void {
       return { isRepo: true, root, files }
     } catch {
       return { isRepo: false, root: dirPath, files: [] }
+    }
+  })
+
+  ipcMain.handle('git:branches', async (_, dirPath: string): Promise<GitBranchesResult> => {
+    try {
+      const resolvedDir = path.resolve(dirPath)
+      if (!existsSync(resolvedDir) || !statSync(resolvedDir).isDirectory()) {
+        return { isRepo: false, root: dirPath, current: null, branches: [] }
+      }
+
+      const { stdout: rootRaw } = await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd: resolvedDir })
+      const root = rootRaw.trim()
+      const { stdout: currentRaw } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root })
+      const current = currentRaw.trim() || null
+      const { stdout: branchRaw } = await execFileAsync('git', ['for-each-ref', '--format=%(refname:short)|%(HEAD)', 'refs/heads'], { cwd: root })
+
+      const branches = branchRaw
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => {
+          const [name, headMarker] = line.split('|')
+          return {
+            name: name.trim(),
+            current: headMarker?.trim() === '*' || name.trim() === current,
+          }
+        })
+
+      return { isRepo: true, root, current, branches }
+    } catch {
+      return { isRepo: false, root: dirPath, current: null, branches: [] }
+    }
+  })
+
+  ipcMain.handle('git:checkoutBranch', async (_, dirPath: string, branchName: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const resolvedDir = path.resolve(dirPath)
+      if (!existsSync(resolvedDir) || !statSync(resolvedDir).isDirectory()) {
+        return { ok: false, error: 'Directory not found' }
+      }
+      const { stdout: rootRaw } = await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd: resolvedDir })
+      const root = rootRaw.trim()
+      await execFileAsync('git', ['checkout', branchName], { cwd: root })
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'checkout-failed' }
+    }
+  })
+
+  ipcMain.handle('git:createBranch', async (_, dirPath: string, branchName: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const resolvedDir = path.resolve(dirPath)
+      if (!existsSync(resolvedDir) || !statSync(resolvedDir).isDirectory()) {
+        return { ok: false, error: 'Directory not found' }
+      }
+      const { stdout: rootRaw } = await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd: resolvedDir })
+      const root = rootRaw.trim()
+      await execFileAsync('git', ['checkout', '-b', branchName], { cwd: root })
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'create-branch-failed' }
     }
   })
 }

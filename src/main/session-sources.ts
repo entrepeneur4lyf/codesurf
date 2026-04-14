@@ -14,6 +14,9 @@ export interface ImportedChatMessage {
   role: ChatRole
   content: string
   timestamp: number
+  thinking?: ImportedThinkingBlock
+  toolBlocks?: ImportedToolBlock[]
+  contentBlocks?: ImportedContentBlock[]
 }
 
 export interface ImportedChatState {
@@ -22,6 +25,42 @@ export interface ImportedChatState {
   sessionId: string | null
   messages: ImportedChatMessage[]
 }
+
+export interface ImportedThinkingBlock {
+  content: string
+  done: boolean
+}
+
+export interface ImportedToolFileChange {
+  path: string
+  previousPath?: string
+  changeType: 'add' | 'update' | 'delete' | 'move'
+  additions: number
+  deletions: number
+  diff: string
+}
+
+export interface ImportedToolCommandEntry {
+  label: string
+  command?: string
+  output?: string
+  kind?: 'search' | 'read' | 'command'
+}
+
+export interface ImportedToolBlock {
+  id: string
+  name: string
+  input: string
+  summary?: string
+  elapsed?: number
+  status: 'running' | 'done' | 'error'
+  fileChanges?: ImportedToolFileChange[]
+  commandEntries?: ImportedToolCommandEntry[]
+}
+
+export type ImportedContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool'; toolId: string }
 
 export interface AggregatedSessionEntry {
   id: string
@@ -189,6 +228,40 @@ function makeImportedMessage(id: string, role: ChatRole, content: string, timest
   return { id, role, content: trimmed, timestamp }
 }
 
+function makeImportedRichMessage(params: {
+  id: string
+  role: ChatRole
+  content: string
+  timestamp: number
+  thinking?: ImportedThinkingBlock
+  toolBlocks?: ImportedToolBlock[]
+}): ImportedChatMessage | null {
+  const trimmedContent = params.content.trim()
+  const toolBlocks = params.toolBlocks?.filter(block => {
+    return Boolean(block.name.trim())
+      && (Boolean(block.input.trim()) || Boolean(block.summary?.trim()) || (block.fileChanges?.length ?? 0) > 0 || (block.commandEntries?.length ?? 0) > 0)
+  }) ?? []
+  const thinking = params.thinking && params.thinking.content.trim()
+    ? { ...params.thinking, content: params.thinking.content.trim() }
+    : undefined
+
+  if (!trimmedContent && !thinking && toolBlocks.length === 0) return null
+
+  const contentBlocks: ImportedContentBlock[] = []
+  for (const block of toolBlocks) contentBlocks.push({ type: 'tool', toolId: block.id })
+  if (trimmedContent) contentBlocks.push({ type: 'text', text: trimmedContent })
+
+  return {
+    id: params.id,
+    role: params.role,
+    content: trimmedContent,
+    timestamp: params.timestamp,
+    thinking,
+    toolBlocks: toolBlocks.length > 0 ? toolBlocks : undefined,
+    contentBlocks: contentBlocks.length > 0 ? contentBlocks : undefined,
+  }
+}
+
 function extractTextParts(content: unknown): string {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
@@ -208,6 +281,250 @@ function extractTextParts(content: unknown): string {
     if (typeof (content as any).value === 'string') return (content as any).value
   }
   return ''
+}
+
+function truncateToolPreview(text: string | null | undefined, length = 800): string {
+  if (!text) return ''
+  return text.length > length ? `${text.slice(0, length)}\n…` : text
+}
+
+function extractReasoningSummary(payload: any): string {
+  if (!Array.isArray(payload?.summary)) return ''
+  return payload.summary
+    .map((entry: any) => typeof entry?.text === 'string' ? entry.text.trim() : '')
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function parseJsonObject(raw: string): Record<string, any> | null {
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, any> : null
+  } catch {
+    return null
+  }
+}
+
+function extractCommandFromToolCall(name: string, rawInput: string): string {
+  const parsed = parseJsonObject(rawInput)
+  if (name === 'exec_command') return typeof parsed?.cmd === 'string' ? parsed.cmd : rawInput
+  if (name === 'shell_command') return typeof parsed?.command === 'string' ? parsed.command : rawInput
+  if (name === 'shell') {
+    if (Array.isArray(parsed?.command)) return parsed.command.map((part: unknown) => String(part)).join(' ')
+    if (typeof parsed?.command === 'string') return parsed.command
+  }
+  return rawInput
+}
+
+function extractApplyPatchText(rawInput: string): string | null {
+  const beginIndex = rawInput.indexOf('*** Begin Patch')
+  const endIndex = rawInput.lastIndexOf('*** End Patch')
+  if (beginIndex === -1 || endIndex === -1 || endIndex < beginIndex) return null
+  return rawInput.slice(beginIndex, endIndex + '*** End Patch'.length)
+}
+
+function parseApplyPatchFileChanges(patchText: string): ImportedToolFileChange[] {
+  const lines = patchText.replace(/\r\n/g, '\n').split('\n')
+  const changes: ImportedToolFileChange[] = []
+  let current: (ImportedToolFileChange & { lines: string[] }) | null = null
+
+  const flush = () => {
+    if (!current) return
+    current.diff = current.lines.join('\n').trim()
+    current.additions = current.lines.filter(line => line.startsWith('+')).length
+    current.deletions = current.lines.filter(line => line.startsWith('-')).length
+    changes.push({
+      path: current.path,
+      previousPath: current.previousPath,
+      changeType: current.changeType,
+      additions: current.additions,
+      deletions: current.deletions,
+      diff: current.diff,
+    })
+    current = null
+  }
+
+  for (const line of lines) {
+    if (line.startsWith('*** Add File: ')) {
+      flush()
+      current = {
+        path: line.slice('*** Add File: '.length).trim(),
+        changeType: 'add',
+        additions: 0,
+        deletions: 0,
+        diff: '',
+        lines: [line],
+      }
+      continue
+    }
+    if (line.startsWith('*** Update File: ')) {
+      flush()
+      current = {
+        path: line.slice('*** Update File: '.length).trim(),
+        changeType: 'update',
+        additions: 0,
+        deletions: 0,
+        diff: '',
+        lines: [line],
+      }
+      continue
+    }
+    if (line.startsWith('*** Delete File: ')) {
+      flush()
+      current = {
+        path: line.slice('*** Delete File: '.length).trim(),
+        changeType: 'delete',
+        additions: 0,
+        deletions: 0,
+        diff: '',
+        lines: [line],
+      }
+      continue
+    }
+    if (line.startsWith('*** Move to: ')) {
+      if (current) {
+        current.previousPath = current.path
+        current.path = line.slice('*** Move to: '.length).trim()
+        current.changeType = 'move'
+        current.lines.push(line)
+      }
+      continue
+    }
+    if (line === '*** End Patch') {
+      if (current) current.lines.push(line)
+      flush()
+      continue
+    }
+    if (current) current.lines.push(line)
+  }
+
+  flush()
+  return changes
+}
+
+type ImportedCommandKind = 'search' | 'read' | 'command'
+
+function classifyCommand(command: string): ImportedCommandKind {
+  const normalized = command.trim()
+  if (/(^|\s)(rg|grep|fd|findstr)\b/.test(normalized)) return 'search'
+  if (/(^|\s)(cat|sed|head|tail|less|more|bat)\b/.test(normalized)) return 'read'
+  if (/(^|\s)ls\b/.test(normalized)) return 'read'
+  return 'command'
+}
+
+interface PendingImportedToolCall {
+  id: string
+  name: string
+  input: string
+  output?: string
+  status: 'done' | 'error'
+  fileChanges?: ImportedToolFileChange[]
+  commandEntry?: ImportedToolCommandEntry
+}
+
+function buildImportedToolBlocks(calls: PendingImportedToolCall[]): ImportedToolBlock[] {
+  const blocks: ImportedToolBlock[] = []
+  const handledIds = new Set<string>()
+
+  const fileChangeMap = new Map<string, ImportedToolFileChange>()
+  for (const change of calls.flatMap(call => call.fileChanges ?? [])) {
+    const key = `${change.path}::${change.previousPath ?? ''}::${change.changeType}`
+    const existing = fileChangeMap.get(key)
+    if (!existing) {
+      fileChangeMap.set(key, { ...change })
+      continue
+    }
+    existing.additions += change.additions
+    existing.deletions += change.deletions
+    existing.diff = `${existing.diff}\n\n${change.diff}`.trim()
+  }
+  const fileChanges = Array.from(fileChangeMap.values())
+  if (fileChanges.length > 0) {
+    blocks.push({
+      id: 'tool-edits',
+      name: `Edited ${fileChanges.length} file${fileChanges.length === 1 ? '' : 's'}`,
+      input: calls.filter(call => (call.fileChanges?.length ?? 0) > 0).map(call => call.input).join('\n\n'),
+      status: 'done',
+      fileChanges,
+    })
+    for (const call of calls) {
+      if ((call.fileChanges?.length ?? 0) > 0) handledIds.add(call.id)
+    }
+  }
+
+  const exploreEntries = calls
+    .filter(call => call.commandEntry && (call.commandEntry.kind === 'search' || call.commandEntry.kind === 'read'))
+    .map(call => call.commandEntry!) 
+
+  if (exploreEntries.length > 0) {
+    const readCount = exploreEntries.filter(entry => entry.kind === 'read').length
+    const searchCount = exploreEntries.filter(entry => entry.kind === 'search').length
+    const labelParts: string[] = []
+    if (readCount > 0) labelParts.push(`${readCount} file${readCount === 1 ? '' : 's'}`)
+    if (searchCount > 0) labelParts.push(`${searchCount} search${searchCount === 1 ? '' : 'es'}`)
+
+    blocks.push({
+      id: 'tool-explore',
+      name: `Explored ${labelParts.join(', ')}`,
+      input: exploreEntries.map(entry => entry.command ?? entry.label).join('\n'),
+      status: 'done',
+      commandEntries: exploreEntries,
+    })
+    for (const call of calls) {
+      if (call.commandEntry && (call.commandEntry.kind === 'search' || call.commandEntry.kind === 'read')) handledIds.add(call.id)
+    }
+  }
+
+  for (const call of calls) {
+    if (handledIds.has(call.id)) continue
+    blocks.push({
+      id: call.id,
+      name: call.name,
+      input: call.input,
+      summary: truncateToolPreview(call.output, 240) || undefined,
+      status: call.status,
+      commandEntries: call.commandEntry ? [call.commandEntry] : undefined,
+    })
+  }
+
+  return blocks
+}
+
+function parseCodexToolCall(payload: any): PendingImportedToolCall | null {
+  const callId = typeof payload?.call_id === 'string' ? payload.call_id : null
+  const toolName = typeof payload?.name === 'string' ? payload.name : null
+  if (!callId || !toolName) return null
+
+  const rawInput = typeof payload?.arguments === 'string'
+    ? payload.arguments
+    : typeof payload?.input === 'string'
+      ? payload.input
+      : ''
+  const command = extractCommandFromToolCall(toolName, rawInput)
+  const patchText = toolName === 'apply_patch'
+    ? extractApplyPatchText(rawInput) ?? rawInput
+    : toolName === 'shell'
+      ? extractApplyPatchText(command)
+      : null
+
+  const fileChanges = patchText ? parseApplyPatchFileChanges(patchText) : undefined
+  const normalizedName = fileChanges && fileChanges.length > 0 ? 'apply_patch' : toolName
+  const commandEntry = !fileChanges && command.trim()
+    ? {
+      label: command.trim(),
+      command: command.trim(),
+      kind: classifyCommand(command.trim()),
+    }
+    : undefined
+
+  return {
+    id: callId,
+    name: normalizedName,
+    input: fileChanges && fileChanges.length > 0 ? patchText ?? rawInput : rawInput,
+    status: payload?.status === 'errored' ? 'error' : 'done',
+    fileChanges,
+    commandEntry,
+  }
 }
 
 async function listFilesRecursive(root: string, predicate: (path: string) => boolean, maxDepth = 4): Promise<string[]> {
@@ -683,12 +1000,19 @@ async function parseCodeSurfChatState(filePath: string): Promise<ImportedChatSta
   const parsed = await readJsonSafe(filePath)
   if (parsed && Array.isArray(parsed.messages)) {
     const messages = parsed.messages
-      .map((message: any, index: number) => makeImportedMessage(
-        `codesurf-${index}`,
-        roleFromUnknown(message?.role) ?? 'assistant',
-        typeof message?.content === 'string' ? message.content : extractTextParts(message?.content),
-        Number(message?.timestamp) || Date.now() + index,
-      ))
+      .map((message: any, index: number) => {
+        const role = roleFromUnknown(message?.role) ?? 'assistant'
+        return makeImportedRichMessage({
+          id: `codesurf-${index}`,
+          role,
+          content: typeof message?.content === 'string' ? message.content : extractTextParts(message?.content),
+          timestamp: Number(message?.timestamp) || Date.now() + index,
+          thinking: typeof message?.thinking?.content === 'string'
+            ? { content: message.thinking.content, done: message.thinking.done !== false }
+            : undefined,
+          toolBlocks: Array.isArray(message?.toolBlocks) ? message.toolBlocks : undefined,
+        })
+      })
       .filter(Boolean) as ImportedChatMessage[]
 
     return {
@@ -744,20 +1068,83 @@ async function parseClaudeChatState(filePath: string, entry: AggregatedSessionEn
 async function parseCodexChatState(filePath: string, entry: AggregatedSessionEntry): Promise<ImportedChatState | null> {
   const raw = await readTextSafe(filePath)
   if (!raw) return null
-  const messages = raw.split(/\r?\n/)
-    .filter(Boolean)
-    .map((line, index) => {
-      try {
-        const evt = JSON.parse(line)
-        if (evt?.type !== 'response_item' || evt?.payload?.type !== 'message') return null
-        const role = roleFromUnknown(evt?.payload?.role)
-        if (!role) return null
-        return makeImportedMessage(`codex-${index}`, role, extractTextParts(evt.payload.content), Date.parse(evt?.timestamp ?? '') || Date.now() + index)
-      } catch {
-        return null
-      }
+  const messages: ImportedChatMessage[] = []
+  const pendingToolCalls = new Map<string, PendingImportedToolCall>()
+  let pendingThinking: string[] = []
+  let pendingCalls: PendingImportedToolCall[] = []
+
+  const flushAssistantArtifacts = (index: number, timestamp: number, content = '') => {
+    const next = makeImportedRichMessage({
+      id: `codex-${index}`,
+      role: 'assistant',
+      content,
+      timestamp,
+      thinking: pendingThinking.length > 0 ? { content: pendingThinking.join('\n\n'), done: true } : undefined,
+      toolBlocks: buildImportedToolBlocks(pendingCalls),
     })
-    .filter(Boolean) as ImportedChatMessage[]
+    if (next) messages.push(next)
+    pendingThinking = []
+    pendingCalls = []
+    pendingToolCalls.clear()
+  }
+
+  const lines = raw.split(/\r?\n/).filter(Boolean)
+  lines.forEach((line, index) => {
+    try {
+      const evt = JSON.parse(line)
+      const timestamp = Date.parse(evt?.timestamp ?? '') || Date.now() + index
+
+      if (evt?.type !== 'response_item') return
+      const payload = evt?.payload
+
+      if (payload?.type === 'reasoning') {
+        const summary = extractReasoningSummary(payload)
+        if (summary) pendingThinking.push(summary)
+        return
+      }
+
+      if (payload?.type === 'function_call' || payload?.type === 'custom_tool_call') {
+        const call = parseCodexToolCall(payload)
+        if (!call) return
+        pendingToolCalls.set(call.id, call)
+        pendingCalls.push(call)
+        return
+      }
+
+      if (payload?.type === 'function_call_output') {
+        const callId = typeof payload?.call_id === 'string' ? payload.call_id : null
+        if (!callId) return
+        const existing = pendingToolCalls.get(callId)
+        if (!existing) return
+        existing.output = typeof payload?.output === 'string' ? payload.output : ''
+        if (existing.commandEntry) existing.commandEntry.output = existing.output
+        return
+      }
+
+      if (payload?.type !== 'message') return
+      const role = roleFromUnknown(payload?.role)
+      if (!role) return
+
+      const content = extractTextParts(payload.content)
+      if (role === 'assistant') {
+        flushAssistantArtifacts(index, timestamp, content)
+        return
+      }
+
+      if (pendingThinking.length > 0 || pendingCalls.length > 0) {
+        flushAssistantArtifacts(index, timestamp, '')
+      }
+
+      const message = makeImportedMessage(`codex-${index}`, role, content, timestamp)
+      if (message) messages.push(message)
+    } catch {
+      // ignore malformed session lines
+    }
+  })
+
+  if (pendingThinking.length > 0 || pendingCalls.length > 0) {
+    flushAssistantArtifacts(lines.length, Date.now())
+  }
 
   return {
     provider: 'codex',

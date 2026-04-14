@@ -189,6 +189,17 @@ button:focus-visible,
   background: transparent;
 }
 
+.sidebar-scroll-container {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sidebar-scroll-container::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 /* Terminal activity pulse */
 @keyframes pulse-glow {
   0%, 100% { box-shadow: 0 0 4px #3fb950; }
@@ -227,4 +238,3 @@ button:focus-visible,
 ::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
-

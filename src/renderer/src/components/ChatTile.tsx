@@ -104,6 +104,35 @@ function ThinkingIcon({ level }: { level: string }): JSX.Element {
   )
 }
 
+function LocalProjectIcon({ size = 13 }: { size?: number }): JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
+      <rect x="1.5" y="2" width="11" height="8.5" rx="1.6" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M4.2 11.4h5.6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function CloudProjectIcon({ size = 13 }: { size?: number }): JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
+      <path d="M4.4 11.2h5.2a2.2 2.2 0 000-4.4 3.1 3.1 0 00-6-.6A2.2 2.2 0 004.4 11.2Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function BranchIcon({ size = 13 }: { size?: number }): JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
+      <circle cx="4" cy="2.5" r="1.2" stroke="currentColor" strokeWidth="1.1" />
+      <circle cx="10" cy="6.8" r="1.2" stroke="currentColor" strokeWidth="1.1" />
+      <circle cx="4" cy="11" r="1.2" stroke="currentColor" strokeWidth="1.1" />
+      <path d="M4 3.8v5.9c0 .6.4 1 1 1h1.9" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5 4.1h1.8c.7 0 1.2.5 1.2 1.2v.3" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 // --- Types -----------------------------------------------------------------------
 
 interface ToolBlock {
@@ -113,6 +142,20 @@ interface ToolBlock {
   summary?: string
   elapsed?: number
   status: 'running' | 'done' | 'error'
+  fileChanges?: Array<{
+    path: string
+    previousPath?: string
+    changeType: 'add' | 'update' | 'delete' | 'move'
+    additions: number
+    deletions: number
+    diff: string
+  }>
+  commandEntries?: Array<{
+    label: string
+    command?: string
+    output?: string
+    kind?: 'search' | 'read' | 'command'
+  }>
 }
 
 interface ThinkingBlock {
@@ -155,6 +198,20 @@ interface ChatTilePersistedState {
   autoAgentMode: boolean
   sessionId: string | null
   isStreaming: boolean
+  executionTarget?: 'local' | 'cloud'
+}
+
+interface GitStatusSummary {
+  isRepo: boolean
+  root: string
+  changedCount: number
+}
+
+interface GitBranchSummary {
+  isRepo: boolean
+  root: string
+  current: string | null
+  branches: Array<{ name: string; current: boolean }>
 }
 
 interface DiscoveryPeer {
@@ -210,7 +267,7 @@ const CHAT_MEMORY_THINKING_LIMIT_AGGRESSIVE = 1_200
 const CHAT_MEMORY_CONTENT_BLOCK_LIMIT = 8_000
 const CHAT_MEMORY_CONTENT_BLOCK_LIMIT_AGGRESSIVE = 1_500
 const CHAT_TRIM_NOTICE_PREFIX = '[CodeSurf memory guard]'
-const CHAT_COMPOSER_MAX_WIDTH = 640
+const CHAT_COMPOSER_MAX_WIDTH = CHAT_MESSAGE_MAX_WIDTH
 const CHAT_COMPOSER_MIN_WIDTH = 400
 const CHAT_COMPOSER_MIN_HEIGHT = 105
 const CHAT_COMPOSER_TEXTAREA_MIN_HEIGHT = 56
@@ -218,6 +275,8 @@ const CHAT_AUTO_SCROLL_THRESHOLD = 48
 const TOOLBAR_ICON_SIZE = 16
 const TOOLBAR_PILL_ICON_SIZE = 14
 const TOOLBAR_TEXT_SIZE = 13
+const CHAT_FOOTER_TEXT_SIZE = 12
+const TOOL_BLOCK_MAX_WIDTH = 420
 const TOOLBAR_CHEVRON_SIZE = 12
 const NON_SELECTABLE_UI_STYLE = {
   userSelect: 'none' as const,
@@ -248,9 +307,31 @@ function trimToolBlockForMemory(block: ToolBlock, aggressive: boolean): ToolBloc
       `tool summary for ${block.name}`,
     )
     : block.summary
+  const fileChanges = block.fileChanges?.map(change => {
+    const diff = truncateTextForMemory(
+      change.diff,
+      aggressive ? CHAT_MEMORY_TOOL_SUMMARY_LIMIT_AGGRESSIVE : CHAT_MEMORY_TOOL_SUMMARY_LIMIT,
+      `tool diff for ${change.path}`,
+    )
+    if (diff === change.diff) return change
+    return { ...change, diff }
+  })
+  const commandEntries = block.commandEntries?.map(entry => {
+    if (!entry.output) return entry
+    const output = truncateTextForMemory(
+      entry.output,
+      aggressive ? CHAT_MEMORY_TOOL_SUMMARY_LIMIT_AGGRESSIVE : CHAT_MEMORY_TOOL_SUMMARY_LIMIT,
+      `tool output for ${entry.label}`,
+    )
+    if (output === entry.output) return entry
+    return { ...entry, output }
+  })
 
-  if (input === block.input && summary === block.summary) return block
-  return { ...block, input, summary }
+  const fileChangesChanged = fileChanges?.some((change, index) => change !== block.fileChanges?.[index]) ?? false
+  const commandEntriesChanged = commandEntries?.some((entry, index) => entry !== block.commandEntries?.[index]) ?? false
+
+  if (input === block.input && summary === block.summary && !fileChangesChanged && !commandEntriesChanged) return block
+  return { ...block, input, summary, fileChanges, commandEntries }
 }
 
 function compactMessageForMemory(message: ChatMessage, options: { aggressive: boolean; preserveRichLayout: boolean }): ChatMessage {
@@ -313,7 +394,13 @@ function compactMessageForMemory(message: ChatMessage, options: { aggressive: bo
 
 function estimateMessageChars(message: ChatMessage): number {
   const toolChars = (message.toolBlocks ?? []).reduce((sum, block) => {
-    return sum + (block.name?.length ?? 0) + (block.input?.length ?? 0) + (block.summary?.length ?? 0)
+    const fileChangeChars = (block.fileChanges ?? []).reduce((fileSum, change) => {
+      return fileSum + change.path.length + (change.previousPath?.length ?? 0) + change.diff.length
+    }, 0)
+    const commandEntryChars = (block.commandEntries ?? []).reduce((entrySum, entry) => {
+      return entrySum + entry.label.length + (entry.command?.length ?? 0) + (entry.output?.length ?? 0)
+    }, 0)
+    return sum + (block.name?.length ?? 0) + (block.input?.length ?? 0) + (block.summary?.length ?? 0) + fileChangeChars + commandEntryChars
   }, 0)
   const contentBlockChars = (message.contentBlocks ?? []).reduce((sum, block) => {
     return sum + (block.type === 'text' ? (block.text?.length ?? 0) : 24)
@@ -410,13 +497,62 @@ function usePatchCodeBlocks(ref: React.RefObject<HTMLDivElement | null>) {
   })
 }
 
+function normalizeChatMarkdownText(text: string): string {
+  return text
+    .replace(/<image name=\[([^\]]+)\]>\s*<\/image>/gms, '\n> Attachment: $1\n')
+    .replace(/<image name=\[([^\]]+)\]>/g, '\n> Attachment: $1\n')
+    .replace(/<\/image>/g, '')
+}
+
+function resolveLocalMarkdownPath(href: string): string | null {
+  const trimmed = href.trim()
+  if (!trimmed) return null
+
+  const decoded = trimmed.startsWith('file://')
+    ? decodeURIComponent(new URL(trimmed).pathname)
+    : trimmed
+
+  if (!decoded.startsWith('/')) return null
+
+  const lineHashIndex = decoded.indexOf('#L')
+  const colonLineMatch = decoded.match(/:\d+(?::\d+)?$/)
+
+  if (lineHashIndex >= 0) return decoded.slice(0, lineHashIndex)
+  if (colonLineMatch) return decoded.slice(0, decoded.length - colonLineMatch[0].length)
+  return decoded
+}
+
 const ChatMarkdown = React.memo(({ text, isStreaming, className }: {
   text: string
   isStreaming?: boolean
   className?: string
 }) => {
   const ref = useRef<HTMLDivElement>(null)
+  const normalizedText = useMemo(() => normalizeChatMarkdownText(text), [text])
   usePatchCodeBlocks(ref)
+
+  useEffect(() => {
+    const root = ref.current
+    if (!root) return
+
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null
+      const anchor = target?.closest('a')
+      if (!anchor) return
+
+      const href = anchor.getAttribute('href') ?? ''
+      const localPath = resolveLocalMarkdownPath(href)
+      if (!localPath) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      void window.electron?.fs?.revealInFinder?.(localPath)
+    }
+
+    root.addEventListener('click', handleClick)
+    return () => root.removeEventListener('click', handleClick)
+  }, [])
+
   return (
     <div ref={ref}>
       <Streamdown
@@ -427,7 +563,7 @@ const ChatMarkdown = React.memo(({ text, isStreaming, className }: {
         controls={{ code: { copy: true, download: false }, table: false, mermaid: false }}
         lineNumbers={false}
       >
-        {text}
+        {normalizedText}
       </Streamdown>
     </div>
   )
@@ -558,6 +694,17 @@ const PROVIDER_LABELS: Record<BuiltinProvider, string> = {
   opencode: 'OpenCode',
   openclaw: 'OpenClaw',
   hermes: 'Hermes',
+}
+
+function getApproxContextWindowTokens(providerId: string, modelId: string): number {
+  const normalizedModel = modelId.toLowerCase()
+  const normalizedProvider = providerId.toLowerCase()
+
+  if (normalizedModel.includes('gpt-5.4')) return 258_000
+  if (normalizedModel.includes('o3') || normalizedModel.includes('o4')) return 200_000
+  if (normalizedProvider === 'claude' || normalizedModel.includes('claude')) return 200_000
+  if (normalizedProvider === 'codex') return 258_000
+  return 128_000
 }
 
 function isBuiltinProvider(providerId: string): providerId is BuiltinProvider {
@@ -726,6 +873,9 @@ function ShimmerText({ children, style, baseColor = '#888' }: {
 }): JSX.Element {
   return (
     <span style={{
+      display: 'block',
+      minWidth: 0,
+      flexShrink: 1,
       color: 'transparent',
       backgroundImage: `linear-gradient(90deg, ${baseColor} 0%, ${baseColor} 35%, #fff 50%, ${baseColor} 65%, ${baseColor} 100%)`,
       backgroundSize: '200% 100%',
@@ -785,10 +935,12 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       ? PROVIDER_MODES[initialProvider][0]?.id
       : EXTENSION_PROVIDER_MODE.id)
     ?? EXTENSION_PROVIDER_MODE.id
+  const initialExecutionTarget = initialRuntimeStateRef.current?.executionTarget ?? 'local'
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => initialRuntimeStateRef.current?.messages ?? [])
   const [input, setInput] = useState(() => initialRuntimeStateRef.current?.input ?? '')
   const [isStreaming, setIsStreaming] = useState(() => initialRuntimeStateRef.current?.isStreaming ?? false)
+  const [executionTarget, setExecutionTarget] = useState<'local' | 'cloud'>(() => initialExecutionTarget)
   const [provider, setProvider] = useState<string>(() => initialProvider)
   const [model, setModel] = useState(() => initialModel)
   const [mcpEnabled, setMcpEnabled] = useState(() => initialRuntimeStateRef.current?.mcpEnabled ?? true)
@@ -888,6 +1040,9 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
   const [showInsertMenu, setShowInsertMenu] = useState(false)
   const [showModeMenu, setShowModeMenu] = useState(false)
   const [showThinkingMenu, setShowThinkingMenu] = useState(false)
+  const [showLocationMenu, setShowLocationMenu] = useState(false)
+  const [showBranchMenu, setShowBranchMenu] = useState(false)
+  const [showContextMenu, setShowContextMenu] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(() => initialRuntimeStateRef.current?.sessionId ?? null)
   const [opencodeModels, setOpencodeModels] = useState<ModelOption[]>(DEFAULT_MODELS.opencode)
   const [openclawAgents, setOpenclawAgents] = useState<ModelOption[]>(DEFAULT_MODELS.openclaw)
@@ -895,6 +1050,9 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
   const [attachments, setAttachments] = useState<PendingAttachment[]>(() => initialRuntimeStateRef.current?.attachments ?? [])
   const [isDropTarget, setIsDropTarget] = useState(false)
   const [showScrollToLatest, setShowScrollToLatest] = useState(false)
+  const [branchFilter, setBranchFilter] = useState('')
+  const [gitStatus, setGitStatus] = useState<GitStatusSummary>({ isRepo: false, root: _workspaceDir, changedCount: 0 })
+  const [gitBranches, setGitBranches] = useState<GitBranchSummary>({ isRepo: false, root: _workspaceDir, current: null, branches: [] })
   const setMessagesSafe = useCallback((updater: React.SetStateAction<ChatMessage[]>) => {
     setMessages(prev => normalizeMessagesForMemory(typeof updater === 'function'
       ? (updater as (prev: ChatMessage[]) => ChatMessage[])(prev)
@@ -925,6 +1083,9 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
   const insertMenuRef = useRef<HTMLDivElement>(null)
   const modeMenuRef = useRef<HTMLDivElement>(null)
   const thinkingMenuRef = useRef<HTMLDivElement>(null)
+  const locationMenuRef = useRef<HTMLDivElement>(null)
+  const branchMenuRef = useRef<HTMLDivElement>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
 
   // Slash commands
   const SLASH_COMMANDS = [
@@ -1051,6 +1212,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       messages,
       input,
       attachments,
+      executionTarget,
       provider,
       model,
       mcpEnabled,
@@ -1065,7 +1227,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       if (isChatTileRuntimeStateDisposed(tileId)) return
       setChatTileRuntimeState(tileId, latestStateRef.current)
     }
-  }, [tileId, messages, input, attachments, provider, model, mcpEnabled, mode, thinking, effectiveAgentMode, autoAgentMode, sessionId, isStreaming])
+  }, [tileId, messages, input, attachments, executionTarget, provider, model, mcpEnabled, mode, thinking, effectiveAgentMode, autoAgentMode, sessionId, isStreaming])
 
   const persistLatestState = useCallback((stateOverride?: ChatTilePersistedState | null) => {
     if (persistTimerRef.current) {
@@ -1093,6 +1255,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       }
       if (saved.provider) setProvider(saved.provider)
       if (typeof saved.model === 'string') setModel(saved.model)
+      if (saved.executionTarget === 'local' || saved.executionTarget === 'cloud') setExecutionTarget(saved.executionTarget)
       if (typeof saved.mcpEnabled === 'boolean') setMcpEnabled(saved.mcpEnabled)
       if (typeof saved.mode === 'string') setMode(saved.mode)
       if (typeof saved.thinking === 'string') setThinking(saved.thinking)
@@ -1134,7 +1297,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
         persistTimerRef.current = null
       }
     }
-  }, [workspaceId, tileId, messages, input, attachments, provider, model, mcpEnabled, mode, thinking, effectiveAgentMode, autoAgentMode, sessionId, isStreaming, persistLatestState])
+  }, [workspaceId, tileId, messages, input, attachments, executionTarget, provider, model, mcpEnabled, mode, thinking, effectiveAgentMode, autoAgentMode, sessionId, isStreaming, persistLatestState])
 
   useEffect(() => {
     return () => {
@@ -1248,8 +1411,8 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
   }, [currentProviderEntry])
 
   // Close dropdowns on outside click or Escape
-  const anyMenuOpen = showModelMenu || showProviderMenu || showInsertMenu || showModeMenu || showThinkingMenu
-  const menuRefs = [modelMenuRef, providerMenuRef, insertMenuRef, modeMenuRef, thinkingMenuRef]
+  const anyMenuOpen = showModelMenu || showProviderMenu || showInsertMenu || showModeMenu || showThinkingMenu || showLocationMenu || showBranchMenu || showContextMenu
+  const menuRefs = [modelMenuRef, providerMenuRef, insertMenuRef, modeMenuRef, thinkingMenuRef, locationMenuRef, branchMenuRef, contextMenuRef]
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -1265,6 +1428,9 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
       setShowInsertMenu(false)
       setShowModeMenu(false)
       setShowThinkingMenu(false)
+      setShowLocationMenu(false)
+      setShowBranchMenu(false)
+      setShowContextMenu(false)
       if (acRef.current && !acRef.current.contains(target) && target !== textareaRef.current) {
         setAcType(null)
         setAcQuery('')
@@ -1279,6 +1445,9 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
         setShowInsertMenu(false)
         setShowModeMenu(false)
         setShowThinkingMenu(false)
+        setShowLocationMenu(false)
+        setShowBranchMenu(false)
+        setShowContextMenu(false)
       }
     }
     document.addEventListener('mousedown', handleClick)
@@ -1293,6 +1462,92 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
   const currentModel = currentProviderEntry?.models.find(m => m.id === model)
     ?? currentProviderEntry?.models[0]
     ?? { id: '', label: optionNoun === 'agent' ? 'No agent' : 'No model' }
+  const currentMode = modeOptions.find(item => item.id === mode) ?? modeOptions[0] ?? EXTENSION_PROVIDER_MODE
+  const contextWindowLimit = useMemo(() => getApproxContextWindowTokens(provider, model), [provider, model])
+  const estimatedContextTokens = useMemo(() => {
+    const totalChars = messages.reduce((sum, message) => sum + estimateMessageChars(message), 0) + input.length
+    return Math.max(0, Math.round(totalChars / 4))
+  }, [messages, input])
+  const contextUsageRatio = contextWindowLimit > 0 ? Math.min(1, estimatedContextTokens / contextWindowLimit) : 0
+  const contextUsagePercent = Math.max(1, Math.round(contextUsageRatio * 100))
+
+  const refreshGitState = useCallback(async () => {
+    if (!_workspaceDir || !window.electron?.git) {
+      setGitStatus({ isRepo: false, root: _workspaceDir, changedCount: 0 })
+      setGitBranches({ isRepo: false, root: _workspaceDir, current: null, branches: [] })
+      return
+    }
+
+    try {
+      const [statusResult, branchResult] = await Promise.all([
+        window.electron.git.status(_workspaceDir),
+        window.electron.git.branches(_workspaceDir),
+      ])
+
+      setGitStatus({
+        isRepo: statusResult?.isRepo === true,
+        root: statusResult?.root ?? _workspaceDir,
+        changedCount: Array.isArray(statusResult?.files) ? statusResult.files.length : 0,
+      })
+      setGitBranches({
+        isRepo: branchResult?.isRepo === true,
+        root: branchResult?.root ?? _workspaceDir,
+        current: branchResult?.current ?? null,
+        branches: Array.isArray(branchResult?.branches) ? branchResult.branches : [],
+      })
+    } catch {
+      setGitStatus({ isRepo: false, root: _workspaceDir, changedCount: 0 })
+      setGitBranches({ isRepo: false, root: _workspaceDir, current: null, branches: [] })
+    }
+  }, [_workspaceDir])
+
+  useEffect(() => {
+    void refreshGitState()
+    const onFocus = () => { void refreshGitState() }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refreshGitState])
+
+  const isGitRepo = gitStatus.isRepo || gitBranches.isRepo
+  const branchMenuCreateEnabled = isGitRepo
+    && branchFilter.trim().length > 0
+    && !gitBranches.branches.some(branch => branch.name.toLowerCase() === branchFilter.trim().toLowerCase())
+  const activeRepoRoot = gitBranches.isRepo
+    ? gitBranches.root
+    : gitStatus.isRepo
+      ? gitStatus.root
+      : _workspaceDir
+  const normalizedRepoRoot = activeRepoRoot.replace(/\/+$/, '')
+  const activeRepoName = basename(normalizedRepoRoot) || 'Local'
+  const currentBranchLabel = gitBranches.current ?? 'No branch'
+  const locationLabel = executionTarget === 'cloud' ? 'Cloud' : activeRepoName
+
+  const filteredBranches = useMemo(() => {
+    const query = branchFilter.trim().toLowerCase()
+    if (!query) return gitBranches.branches
+    return gitBranches.branches.filter(branch => branch.name.toLowerCase().includes(query))
+  }, [gitBranches.branches, branchFilter])
+
+  const handleBranchSelect = useCallback(async (branchName: string) => {
+    if (!_workspaceDir || !window.electron?.git?.checkoutBranch) return
+    const result = await window.electron.git.checkoutBranch(_workspaceDir, branchName)
+    if (result?.ok) {
+      setShowBranchMenu(false)
+      setBranchFilter('')
+      void refreshGitState()
+    }
+  }, [_workspaceDir, refreshGitState])
+
+  const handleCreateBranch = useCallback(async () => {
+    const nextName = branchFilter.trim()
+    if (!nextName || !_workspaceDir || !window.electron?.git?.createBranch) return
+    const result = await window.electron.git.createBranch(_workspaceDir, nextName)
+    if (result?.ok) {
+      setShowBranchMenu(false)
+      setBranchFilter('')
+      void refreshGitState()
+    }
+  }, [branchFilter, _workspaceDir, refreshGitState])
 
   useEffect(() => {
     if (!currentProviderEntry) return
@@ -1328,12 +1583,15 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
     setShowProviderMenu(false)
   }, [providerEntryById])
 
-  const toggleMenu = useCallback((which: 'model' | 'provider' | 'insert' | 'mode' | 'thinking') => {
+  const toggleMenu = useCallback((which: 'model' | 'provider' | 'insert' | 'mode' | 'thinking' | 'location' | 'branch' | 'context') => {
     setShowModelMenu(prev => { const next = which === 'model' ? !prev : false; if (!next) setModelFilter(''); return next })
     setShowProviderMenu(prev => which === 'provider' ? !prev : false)
     setShowInsertMenu(prev => which === 'insert' ? !prev : false)
     setShowModeMenu(prev => which === 'mode' ? !prev : false)
     setShowThinkingMenu(prev => which === 'thinking' ? !prev : false)
+    setShowLocationMenu(prev => which === 'location' ? !prev : false)
+    setShowBranchMenu(prev => { const next = which === 'branch' ? !prev : false; if (!next) setBranchFilter(''); return next })
+    setShowContextMenu(prev => which === 'context' ? !prev : false)
   }, [])
 
   // Voice dictation via Web Speech API (Chromium in Electron)
@@ -1466,8 +1724,11 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
         case 'tool_input':
           if (event.text) updateLast(m => {
             const blocks = [...(m.toolBlocks ?? [])]
-            const last = blocks[blocks.length - 1]
-            if (last) blocks[blocks.length - 1] = { ...last, input: last.input + event.text }
+            const targetIndex = event.toolId
+              ? blocks.findIndex(b => b.id === event.toolId)
+              : blocks.length - 1
+            const last = targetIndex >= 0 ? blocks[targetIndex] : null
+            if (last && targetIndex >= 0) blocks[targetIndex] = { ...last, input: last.input + event.text }
             return { ...m, toolBlocks: blocks }
           })
           break
@@ -1475,9 +1736,16 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
         case 'tool_use':
           updateLast(m => {
             const blocks = [...(m.toolBlocks ?? [])]
-            const idx = blocks.findIndex(b => b.name === event.toolName && b.status === 'running')
+            const idx = event.toolId
+              ? blocks.findIndex(b => b.id === event.toolId)
+              : blocks.findIndex(b => b.name === event.toolName && b.status === 'running')
             if (idx >= 0) {
-              blocks[idx] = { ...blocks[idx], input: event.toolInput ?? blocks[idx].input, status: 'done' }
+              blocks[idx] = {
+                ...blocks[idx],
+                name: event.toolName ?? blocks[idx].name,
+                input: event.toolInput ?? blocks[idx].input,
+                status: 'done',
+              }
             }
             return { ...m, toolBlocks: blocks }
           })
@@ -1486,11 +1754,21 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
         case 'tool_summary':
           updateLast(m => {
             const blocks = [...(m.toolBlocks ?? [])]
-            // Find the last done tool without a summary, or last running tool
-            const idx = blocks.findLastIndex(b => b.status === 'done' && !b.summary)
-            const target = idx >= 0 ? idx : blocks.findLastIndex(b => b.status === 'running')
+            const target = event.toolId
+              ? blocks.findIndex(b => b.id === event.toolId)
+              : (() => {
+                  const idx = blocks.findLastIndex(b => b.status === 'done' && !b.summary)
+                  return idx >= 0 ? idx : blocks.findLastIndex(b => b.status === 'running')
+                })()
             if (target >= 0) {
-              blocks[target] = { ...blocks[target], summary: event.text, status: 'done' }
+              blocks[target] = {
+                ...blocks[target],
+                name: event.toolName ?? blocks[target].name,
+                summary: typeof event.text === 'string' ? event.text : blocks[target].summary,
+                status: 'done',
+                fileChanges: Array.isArray(event.fileChanges) ? event.fileChanges : blocks[target].fileChanges,
+                commandEntries: Array.isArray(event.commandEntries) ? event.commandEntries : blocks[target].commandEntries,
+              }
             }
             return { ...m, toolBlocks: blocks }
           })
@@ -1966,7 +2244,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                         }
                         if (toolGroup.length > 0) {
                           elements.push(
-                            <div key={`tools-${i}`} style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                            <div key={`tools-${i}`} style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start', alignContent: 'flex-start' }}>
                               {toolGroup}
                             </div>
                           )
@@ -1984,11 +2262,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                             color: theme.chat.text, position: 'relative',
                             width: '100%', minWidth: 0, overflow: 'hidden',
                           }}>
-                            {msg.role === 'assistant' ? (
-                              <ChatMarkdown text={block.text} isStreaming={msg.isStreaming && isLastBlock} />
-                            ) : (
-                              <span style={{ whiteSpace: 'pre-wrap' }}>{block.text}</span>
-                            )}
+                            <ChatMarkdown text={block.text} isStreaming={msg.isStreaming && isLastBlock} />
                           </div>
                         )
                         i++
@@ -2001,7 +2275,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                 <>
                   {/* Fallback: legacy layout for messages without contentBlocks */}
                   {msg.toolBlocks && msg.toolBlocks.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start', alignContent: 'flex-start' }}>
                       {msg.toolBlocks.map(tb => (
                         <ToolBlockView key={tb.id} block={tb} />
                       ))}
@@ -2018,11 +2292,7 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                       color: theme.chat.text, position: 'relative',
                       width: '100%', minWidth: 0, overflow: 'hidden',
                     }}>
-                      {msg.role === 'assistant' ? (
-                        <ChatMarkdown text={msg.content} isStreaming={msg.isStreaming} />
-                      ) : (
-                        <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
-                      )}
+                      <ChatMarkdown text={msg.content} isStreaming={msg.isStreaming} />
                       {msg.isStreaming && msg.content.length === 0 && !msg.toolBlocks?.length && (
                         <WorkingDots />
                       )}
@@ -2105,6 +2375,11 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
         width: `min(calc(100% - 8px), ${CHAT_COMPOSER_MAX_WIDTH}px)`,
         minWidth: `min(${CHAT_COMPOSER_MIN_WIDTH}px, calc(100% - 8px))`,
         margin: '0 auto 6px auto',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+      }}>
+        <div style={{
         minHeight: CHAT_COMPOSER_MIN_HEIGHT,
         border: isDropTarget ? `1px solid ${theme.accent.base}` : `1px solid ${composerBorder}`, borderRadius: 14,
         background: isDropTarget ? theme.surface.accentSoft : composerBackground,
@@ -2285,17 +2560,17 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
           style={{
             width: '100%', boxSizing: 'border-box', flex: 1,
             background: 'transparent', color: theme.chat.text,
-            border: 'none', padding: '12px 14px 6px 14px',
+            border: 'none', padding: '10px 14px 2px 14px',
             fontSize, fontFamily: fontSans, lineHeight: 1.5,
             resize: 'none', outline: 'none', overflow: 'hidden',
             minHeight: CHAT_COMPOSER_TEXTAREA_MIN_HEIGHT, opacity: 1,
           }}
         />
 
-        {/* Toolbar */}
+        {/* Primary toolbar */}
         <div style={{
           display: 'flex', alignItems: 'center',
-          padding: '4px 8px 8px 8px', gap: 2,
+          padding: '4px 8px 4px 8px', gap: 2,
         }}>
           {/* Insert menu */}
           <div ref={insertMenuRef} style={{ position: 'relative' }}>
@@ -2345,38 +2620,6 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
                 />
               </MenuPortal>
             )}
-          </div>
-
-          {/* Safety / Mode — icon only, label in dropdown */}
-          <div ref={modeMenuRef} style={{ position: 'relative' }}>
-            {(() => {
-              const currentMode = modeOptions.find(m => m.id === mode) ?? modeOptions[0] ?? EXTENSION_PROVIDER_MODE
-              return (
-                <>
-                  <ToolbarBtn
-                    icon={<ShieldCheck size={TOOLBAR_ICON_SIZE} />}
-                    tooltip={`Permissions: ${currentMode.label}`}
-                    onClick={() => toggleMenu('mode')}
-                  />
-                  {showModeMenu && (
-                    <MenuPortal anchorRef={modeMenuRef}>
-                      <Dropdown>
-                        {modeOptions.map(m => (
-                          <DropdownItem
-                            key={m.id}
-                            icon={<ShieldCheck size={11} />}
-                            label={m.label}
-                            sublabel={m.description}
-                            active={mode === m.id}
-                            onClick={() => { setMode(m.id); setShowModeMenu(false) }}
-                          />
-                        ))}
-                      </Dropdown>
-                    </MenuPortal>
-                  )}
-                </>
-              )
-            })()}
           </div>
 
           {/* Thinking — brain + signal bars icon, label in dropdown */}
@@ -2495,6 +2738,260 @@ export function ChatTile({ tileId, workspaceId, workspaceDir: _workspaceDir, wid
             </button>
           )}
         </div>
+        </div>
+
+        {/* Secondary toolbar */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 10,
+          padding: '0 8px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <div ref={locationMenuRef} style={{ position: 'relative' }}>
+              <FooterPill
+                prefix={executionTarget === 'local' ? <LocalProjectIcon /> : <CloudProjectIcon />}
+                label={locationLabel}
+                active={showLocationMenu}
+                onClick={() => toggleMenu('location')}
+              />
+              {showLocationMenu && (
+                <MenuPortal anchorRef={locationMenuRef}>
+                  <Dropdown>
+                    <div style={{ padding: '8px 10px 6px', fontSize: 11, color: theme.chat.muted, fontFamily: fontSans }}>
+                      Continue in
+                    </div>
+                    <DropdownItem
+                      icon={<LocalProjectIcon size={11} />}
+                      label="Local project"
+                      sublabel={normalizedRepoRoot || undefined}
+                      active={executionTarget === 'local'}
+                      onClick={() => { setExecutionTarget('local'); setShowLocationMenu(false) }}
+                    />
+                    <DropdownItem
+                      icon={<CloudProjectIcon size={11} />}
+                      label="Cloud"
+                      active={executionTarget === 'cloud'}
+                      onClick={() => { setExecutionTarget('cloud'); setShowLocationMenu(false) }}
+                    />
+                    <div style={{ height: 1, background: theme.chat.dropdownBorder, margin: '4px 0' }} />
+                    <div style={{ padding: '8px 10px', fontSize: 11, color: theme.chat.muted, fontFamily: fontSans }}>
+                      Rate limits remaining
+                    </div>
+                  </Dropdown>
+                </MenuPortal>
+              )}
+            </div>
+
+            <div ref={branchMenuRef} style={{ position: 'relative' }}>
+              <FooterPill
+                prefix={<BranchIcon />}
+                label={isGitRepo ? currentBranchLabel : activeRepoName}
+                active={showBranchMenu}
+                onClick={() => toggleMenu('branch')}
+              />
+              {showBranchMenu && (
+                <MenuPortal anchorRef={branchMenuRef}>
+                  <div style={{
+                    minWidth: 260,
+                    maxWidth: 320,
+                    background: theme.chat.dropdownBackground,
+                    border: `1px solid ${theme.chat.dropdownBorder}`,
+                    borderRadius: 8,
+                    padding: 4,
+                    boxShadow: theme.shadow.panel,
+                    ...NON_SELECTABLE_UI_STYLE,
+                  }}>
+                    <div style={{ padding: '4px 4px 6px' }}>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '6px 8px',
+                        borderRadius: 6,
+                        background: theme.surface.panelMuted,
+                      }}>
+                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                          <circle cx="6" cy="6" r="4.2" stroke="currentColor" strokeWidth="1.2" />
+                          <path d="M9.8 9.8 12 12" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                        </svg>
+                        <input
+                          type="text"
+                          value={branchFilter}
+                          onChange={e => setBranchFilter(e.target.value)}
+                          placeholder="Search branches"
+                          style={{
+                            width: '100%',
+                            background: 'transparent',
+                            border: 'none',
+                            outline: 'none',
+                            color: theme.chat.text,
+                            fontSize: 12,
+                            fontFamily: fontSans,
+                          }}
+                          onKeyDown={e => {
+                            e.stopPropagation()
+                            if (e.key === 'Enter' && branchMenuCreateEnabled) {
+                              e.preventDefault()
+                              void handleCreateBranch()
+                            }
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ padding: '2px 10px 6px' }}>
+                      <div style={{ fontSize: 11, color: theme.chat.text, fontFamily: fontSans, fontWeight: 600 }}>
+                        {activeRepoName}
+                      </div>
+                      <div style={{ fontSize: 10, color: theme.chat.muted, fontFamily: fontSans, lineHeight: 1.4 }}>
+                        {normalizedRepoRoot}
+                      </div>
+                    </div>
+                    <div style={{ padding: '4px 10px 6px', fontSize: 11, color: theme.chat.muted, fontFamily: fontSans }}>
+                      Branches
+                    </div>
+                    <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                      {isGitRepo ? filteredBranches.map(branch => (
+                        <DropdownItem
+                          key={branch.name}
+                          icon={<BranchIcon size={11} />}
+                          label={branch.name}
+                          sublabel={branch.current && gitStatus.changedCount > 0 ? `Uncommitted: ${gitStatus.changedCount} file${gitStatus.changedCount === 1 ? '' : 's'}` : undefined}
+                          active={branch.current}
+                          onClick={() => { if (!branch.current) void handleBranchSelect(branch.name) }}
+                        />
+                      )) : (
+                        <div style={{ padding: '8px 10px', fontSize: 11, color: theme.chat.muted, fontFamily: fontSans }}>
+                          Git metadata is not available for this workspace yet.
+                        </div>
+                      )}
+                      {isGitRepo && filteredBranches.length === 0 && (
+                        <div style={{ padding: '8px 10px', fontSize: 11, color: theme.chat.muted, fontFamily: fontSans }}>
+                          No matching branches
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ height: 1, background: theme.chat.dropdownBorder, margin: '4px 0' }} />
+                    <button
+                      type="button"
+                      onClick={() => { void handleCreateBranch() }}
+                      disabled={!branchMenuCreateEnabled}
+                      style={{
+                        width: '100%',
+                        border: 'none',
+                        background: 'transparent',
+                        color: branchMenuCreateEnabled ? theme.chat.text : theme.chat.muted,
+                        borderRadius: 8,
+                        padding: '9px 12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        cursor: branchMenuCreateEnabled ? 'pointer' : 'default',
+                        textAlign: 'left',
+                        opacity: branchMenuCreateEnabled ? 1 : 0.5,
+                        ...NON_SELECTABLE_UI_STYLE,
+                      }}
+                      onMouseEnter={e => { if (branchMenuCreateEnabled) e.currentTarget.style.background = theme.chat.dropdownHoverBackground }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                    >
+                      <Plus size={14} />
+                      <span style={{ fontSize: 12, fontFamily: fontSans }}>
+                        Create and checkout new branch...
+                      </span>
+                    </button>
+                  </div>
+                </MenuPortal>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            <div ref={modeMenuRef} style={{ position: 'relative' }}>
+              <FooterPill
+                prefix={<ShieldCheck size={13} />}
+                label={currentMode.label}
+                color={currentMode.color}
+                active={showModeMenu}
+                onClick={() => toggleMenu('mode')}
+              />
+              {showModeMenu && (
+                <MenuPortal anchorRef={modeMenuRef}>
+                  <Dropdown>
+                    {modeOptions.map(m => (
+                      <DropdownItem
+                        key={m.id}
+                        icon={<ShieldCheck size={11} />}
+                        label={m.label}
+                        sublabel={m.description}
+                        active={mode === m.id}
+                        onClick={() => { setMode(m.id); setShowModeMenu(false) }}
+                      />
+                    ))}
+                  </Dropdown>
+                </MenuPortal>
+              )}
+            </div>
+
+            <div ref={contextMenuRef} style={{ position: 'relative' }}>
+              <button
+                type="button"
+                title="Context window"
+                onClick={() => toggleMenu('context')}
+                style={{
+                  width: 22,
+                  height: 22,
+                  minWidth: 22,
+                  borderRadius: '50%',
+                  border: 'none',
+                  background: `conic-gradient(${theme.chat.text} ${contextUsageRatio * 360}deg, ${theme.border.strong} 0deg)`,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 0,
+                  ...NON_SELECTABLE_UI_STYLE,
+                }}
+              >
+                <span style={{
+                  width: 14,
+                  height: 14,
+                  borderRadius: '50%',
+                  background: composerBackground,
+                  border: `1px solid ${theme.border.default}`,
+                  display: 'block',
+                }} />
+              </button>
+              {showContextMenu && (
+                <MenuPortal anchorRef={contextMenuRef}>
+                  <div style={{
+                    minWidth: 220,
+                    background: theme.chat.dropdownBackground,
+                    border: `1px solid ${theme.chat.dropdownBorder}`,
+                    borderRadius: 16,
+                    padding: '14px 16px',
+                    boxShadow: theme.shadow.panel,
+                    textAlign: 'center',
+                    ...NON_SELECTABLE_UI_STYLE,
+                  }}>
+                    <div style={{ fontSize: 12, color: theme.chat.muted, fontFamily: fontSans, marginBottom: 6 }}>
+                      Context window:
+                    </div>
+                    <div style={{ fontSize: 13, color: theme.chat.text, fontFamily: fontSans, fontWeight: 600, marginBottom: 4 }}>
+                      {contextUsagePercent}% full
+                    </div>
+                    <div style={{ fontSize: 12, color: theme.chat.textSecondary, fontFamily: fontSans, marginBottom: 10 }}>
+                      {estimatedContextTokens.toLocaleString()} / {contextWindowLimit.toLocaleString()} tokens used
+                    </div>
+                    <div style={{ fontSize: 11, lineHeight: 1.5, color: theme.chat.muted, fontFamily: fontSans }}>
+                      CodeSurf automatically compacts its context.
+                    </div>
+                  </div>
+                </MenuPortal>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     </FontCtx.Provider>
@@ -2592,79 +3089,235 @@ function ThinkingBlockView({ thinking }: { thinking: ThinkingBlock }): JSX.Eleme
 function ToolBlockView({ block }: { block: ToolBlock }): JSX.Element {
   const fonts = useFonts()
   const theme = useTheme()
+  const codePanelFontSize = Math.max(11, fonts.size - 1)
   const [expanded, setExpanded] = useState(false)
+  const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({})
   const isRunning = block.status === 'running'
+  const hasNestedData = (block.fileChanges?.length ?? 0) > 0 || (block.commandEntries?.length ?? 0) > 0
+
+  const toggleFile = useCallback((key: string) => {
+    setExpandedFiles(prev => {
+      const current = prev[key] ?? false
+      return { ...prev, [key]: !current }
+    })
+  }, [])
 
   return (
     <div style={{
       background: theme.chat.assistantBubble, border: `1px solid ${theme.chat.assistantBubbleBorder}`,
-      borderRadius: 10, overflow: 'hidden', maxWidth: '100%', width: 'fit-content',
+      borderRadius: 10, overflow: 'hidden', maxWidth: `min(100%, ${TOOL_BLOCK_MAX_WIDTH}px)`, width: 'fit-content', alignSelf: 'flex-start',
     }}>
       <button
         onClick={() => setExpanded(e => !e)}
         style={{
-          display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+          display: 'flex', alignItems: 'center', gap: 6, width: '100%', maxWidth: `min(100%, ${TOOL_BLOCK_MAX_WIDTH}px)`,
           padding: '5px 10px', background: 'none', border: 'none',
           cursor: 'pointer', color: isRunning ? theme.chat.textSecondary : theme.chat.muted,
-          fontSize: 12, fontFamily: fonts.sans, lineHeight: 1,
+          fontSize: 12, fontFamily: fonts.sans, lineHeight: 1, minWidth: 0,
         }}
       >
         <Wrench size={11} style={{ opacity: isRunning ? 0.7 : 0.5, flexShrink: 0 }} />
 
-        {/* Tool name + secondary label with shimmer when running */}
+        {/* Collapsed chip header shows only the tool name. Detailed summaries stay in the expanded body. */}
         {isRunning ? (
-          <>
-            <ShimmerText baseColor={theme.chat.textSecondary} style={{ fontSize: 13, fontFamily: fonts.sans, fontWeight: 500 }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            minWidth: 0,
+            flex: 1,
+            overflow: 'hidden',
+          }}>
+            <ShimmerText baseColor={theme.chat.textSecondary} style={{
+              fontSize: 13,
+              fontFamily: fonts.sans,
+              fontWeight: 500,
+              flex: '1 1 auto',
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
               {block.name}
             </ShimmerText>
-            {block.summary && (
-              <ShimmerText baseColor={theme.chat.muted} style={{
-                fontSize: 13, fontFamily: fonts.sans, fontWeight: 400,
-                marginLeft: 4, flex: 1,
-                overflow: 'hidden', textOverflow: 'ellipsis',
-              }}>
-                {block.summary}
-              </ShimmerText>
-            )}
-          </>
+          </div>
         ) : (
-          <>
-            <span style={{ fontWeight: 500, fontSize: 13 }}>{block.name}</span>
-            {block.summary && (
-              <span style={{
-                fontSize: 13, color: theme.chat.muted, fontWeight: 400,
-                marginLeft: 4, flex: 1,
-                overflow: 'hidden', textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}>
-                {block.summary}
-              </span>
-            )}
-          </>
-        )}
-
-        <span style={{ flex: isRunning || block.summary ? undefined : 1 }} />
-
-        {block.elapsed != null && (
-          <span style={{
-            fontSize: 10, color: theme.chat.muted, display: 'flex', alignItems: 'center', gap: 3,
-            fontFamily: fonts.mono, flexShrink: 0,
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            minWidth: 0,
+            flex: 1,
+            overflow: 'hidden',
           }}>
-            <Clock size={9} /> {block.elapsed.toFixed(1)}s
-          </span>
+            <span style={{
+              display: 'block',
+              fontWeight: 500,
+              fontSize: 13,
+              flex: '1 1 auto',
+              flexShrink: 1,
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {block.name}
+            </span>
+          </div>
         )}
-        {!isRunning && !block.elapsed && (
-          <Check size={11} color={theme.status.success} style={{ flexShrink: 0 }} />
-        )}
-        <ChevronRight size={12} style={{
-          transform: expanded ? 'rotate(90deg)' : 'none',
-          transition: 'transform 0.15s',
-          opacity: 0.4, flexShrink: 0,
-        }} />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexShrink: 0 }}>
+          {block.elapsed != null && (
+            <span style={{
+              fontSize: 10, color: theme.chat.muted, display: 'flex', alignItems: 'center', gap: 3,
+              fontFamily: fonts.mono, flexShrink: 0,
+            }}>
+              <Clock size={9} /> {block.elapsed.toFixed(1)}s
+            </span>
+          )}
+          {!isRunning && !block.elapsed && (
+            <Check size={11} color={theme.status.success} style={{ flexShrink: 0 }} />
+          )}
+          <ChevronRight size={12} style={{
+            transform: expanded ? 'rotate(90deg)' : 'none',
+            transition: 'transform 0.15s',
+            opacity: 0.4, flexShrink: 0,
+          }} />
+        </div>
       </button>
 
-      {/* Expanded: show JSON input */}
-      {expanded && block.input && (
+      {/* Expanded: show imported file-change structure first when available */}
+      {expanded && hasNestedData && (
+        <div style={{
+          padding: '4px 10px 8px 10px',
+          borderTop: `1px solid ${theme.chat.assistantBubbleBorder}`,
+        }}>
+          {(block.fileChanges?.length ?? 0) > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {block.fileChanges?.map((change, index) => {
+                const fileKey = `${change.path}:${index}`
+                const isExpanded = expandedFiles[fileKey] ?? false
+                return (
+                  <div key={fileKey} style={{
+                    borderRadius: 8,
+                    border: `1px solid ${theme.chat.assistantBubbleBorder}`,
+                    overflow: 'hidden',
+                    background: theme.surface.panelMuted,
+                  }}>
+                    <button
+                      type="button"
+                      onClick={() => toggleFile(fileKey)}
+                      style={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        background: 'transparent',
+                        border: 'none',
+                        padding: '8px 10px',
+                        cursor: 'pointer',
+                        color: theme.chat.text,
+                        fontFamily: fonts.mono,
+                        fontSize: 11,
+                        textAlign: 'left',
+                      }}
+                    >
+                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {change.path}
+                      </span>
+                      <span style={{ color: theme.status.success, flexShrink: 0 }}>+{change.additions}</span>
+                      <span style={{ color: theme.status.danger, flexShrink: 0 }}>-{change.deletions}</span>
+                      <ChevronRight size={12} style={{
+                        transform: isExpanded ? 'rotate(90deg)' : 'none',
+                        transition: 'transform 0.15s',
+                        opacity: 0.5,
+                        flexShrink: 0,
+                      }} />
+                    </button>
+                    {isExpanded && (
+                      <div style={{
+                        borderTop: `1px solid ${theme.chat.assistantBubbleBorder}`,
+                        maxHeight: 280,
+                        overflowY: 'auto',
+                        background: theme.chat.background,
+                      }}>
+                        <pre style={{
+                          margin: 0,
+                          padding: '10px 12px',
+                          fontSize: codePanelFontSize,
+                          lineHeight: 1.6,
+                          fontFamily: fonts.mono,
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                        }}>
+                          {change.diff.split('\n').map((line, lineIndex) => {
+                            let color = theme.chat.textSecondary
+                            let background = 'transparent'
+                            if (line.startsWith('+')) {
+                              color = theme.status.success
+                              background = 'rgba(63, 185, 80, 0.12)'
+                            } else if (line.startsWith('-')) {
+                              color = theme.status.danger
+                              background = 'rgba(248, 81, 73, 0.12)'
+                            } else if (line.startsWith('@@')) {
+                              color = theme.accent.base
+                            }
+
+                            return (
+                              <div key={lineIndex} style={{ color, background, padding: background === 'transparent' ? 0 : '0 4px', borderRadius: 4 }}>
+                                {line || ' '}
+                              </div>
+                            )
+                          })}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {(block.commandEntries?.length ?? 0) > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: (block.fileChanges?.length ?? 0) > 0 ? 8 : 0 }}>
+              {block.commandEntries?.map((entry, index) => (
+                <div key={`${entry.command ?? entry.label}:${index}`} style={{
+                  padding: '8px 10px',
+                  borderRadius: 8,
+                  background: theme.chat.background,
+                  border: `1px solid ${theme.chat.assistantBubbleBorder}`,
+                }}>
+                  <div style={{
+                    fontSize: codePanelFontSize,
+                    color: theme.chat.text,
+                    fontFamily: fonts.mono,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}>
+                    {entry.command ?? entry.label}
+                  </div>
+                  {entry.output && (
+                    <pre style={{
+                      margin: '6px 0 0',
+                      fontSize: codePanelFontSize,
+                      lineHeight: 1.5,
+                      color: theme.chat.muted,
+                      fontFamily: fonts.mono,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      maxHeight: 120,
+                      overflowY: 'auto',
+                    }}>
+                      {entry.output}
+                    </pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+        </div>
+      )}
+
+      {expanded && !hasNestedData && block.input && (
         <div style={{
           padding: '4px 10px 8px 10px',
           borderTop: `1px solid ${theme.chat.assistantBubbleBorder}`,
@@ -2672,7 +3325,7 @@ function ToolBlockView({ block }: { block: ToolBlock }): JSX.Element {
           <pre style={{
             margin: 0, padding: 8, borderRadius: 6,
             background: theme.surface.panelMuted, color: theme.chat.textSecondary,
-            fontSize: 10, lineHeight: 1.4, fontFamily: fonts.mono,
+            fontSize: codePanelFontSize, lineHeight: 1.5, fontFamily: fonts.mono,
             whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             maxHeight: 200, overflowY: 'auto',
           }}>
@@ -2766,6 +3419,47 @@ function ToolbarPill({ prefix, label, color, active, onClick }: {
       {prefix && <span style={{ display: 'flex', opacity: 0.8 }}>{prefix}</span>}
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
       <ChevronDown size={TOOLBAR_CHEVRON_SIZE} style={{ marginLeft: 1, opacity: 0.4, flexShrink: 0 }} />
+    </button>
+  )
+}
+
+function FooterPill({ prefix, label, color, active, onClick }: {
+  prefix?: React.ReactNode
+  label: string
+  color?: string
+  active: boolean
+  onClick: () => void
+}): JSX.Element {
+  const fonts = useFonts()
+  const theme = useTheme()
+  const [h, setH] = useState(false)
+
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        background: 'transparent',
+        border: 'none',
+        borderRadius: 999,
+        padding: '3px 10px',
+        cursor: 'pointer',
+        fontSize: CHAT_FOOTER_TEXT_SIZE,
+        fontFamily: fonts.sans,
+        color: color ?? (active || h ? theme.chat.text : theme.chat.textSecondary),
+        transition: 'color 0.1s',
+        whiteSpace: 'nowrap',
+        minHeight: 24,
+        ...NON_SELECTABLE_UI_STYLE,
+      }}
+      onMouseEnter={() => setH(true)}
+      onMouseLeave={() => setH(false)}
+    >
+      {prefix && <span style={{ display: 'flex', opacity: 0.9 }}>{prefix}</span>}
+      <span>{label}</span>
+      <ChevronDown size={TOOLBAR_CHEVRON_SIZE} style={{ opacity: 0.5, flexShrink: 0 }} />
     </button>
   )
 }

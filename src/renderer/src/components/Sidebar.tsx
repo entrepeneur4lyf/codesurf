@@ -41,6 +41,7 @@ interface Props {
   maxWidth?: number
   onResizeStateChange?: (resizing: boolean) => void
   onToggleCollapse: () => void
+  onScrollMetricsChange?: (metrics: { hasOverflow: boolean; topRatio: number; thumbRatio: number }) => void
   showFooter?: boolean
 }
 
@@ -413,11 +414,13 @@ export function Sidebar({
   onNewTerminal, onNewKanban, onNewBrowser, onNewChat, onNewFiles, onOpenSettings,
   onOpenSessionInChat, onOpenSessionInApp,
   extensionTiles, extensionEntries, onAddExtensionTile, pinnedExtensionIds, onTogglePinnedExtension,
-  collapsed, width, onWidthChange, minWidth = 270, maxWidth = 520, onResizeStateChange, onToggleCollapse: _onToggleCollapse, showFooter = true
+  collapsed, width, onWidthChange, minWidth = 270, maxWidth = 520, onResizeStateChange, onToggleCollapse: _onToggleCollapse, onScrollMetricsChange, showFooter = true
 }: Props): JSX.Element {
   const fonts = useAppFonts()
   const theme = useTheme()
   const widthRef = useRef(width)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollContentRef = useRef<HTMLDivElement>(null)
   useEffect(() => { widthRef.current = width }, [width])
   const [sectionsCollapsed, setSectionsCollapsed] = useState<Record<string, boolean>>({})
   const [tileCtx, setTileCtx] = useState<{ x: number; y: number; tile: TileState } | null>(null)
@@ -651,6 +654,45 @@ export function Sidebar({
     }
   }, [workspace, deletingSessionId])
 
+  const emitScrollMetrics = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) {
+      onScrollMetricsChange?.({ hasOverflow: false, topRatio: 0, thumbRatio: 1 })
+      return
+    }
+
+    const { scrollTop, scrollHeight, clientHeight } = el
+    const maxScroll = Math.max(0, scrollHeight - clientHeight)
+    const hasOverflow = maxScroll > 1
+    const topRatio = hasOverflow ? Math.min(1, Math.max(0, scrollTop / maxScroll)) : 0
+    const thumbRatio = hasOverflow ? Math.min(1, Math.max(0.14, clientHeight / scrollHeight)) : 1
+
+    onScrollMetricsChange?.({ hasOverflow, topRatio, thumbRatio })
+  }, [onScrollMetricsChange])
+
+  useEffect(() => {
+    emitScrollMetrics()
+  }, [emitScrollMetrics, sessions.length, visibleSessions.length, displayedSessions.length, tiles.length, extensionTiles?.length, groupedExtensions.length])
+
+  useEffect(() => {
+    const scrollEl = scrollRef.current
+    const contentEl = scrollContentRef.current
+    if (!scrollEl) return
+
+    emitScrollMetrics()
+    const handleScroll = () => emitScrollMetrics()
+    scrollEl.addEventListener('scroll', handleScroll, { passive: true })
+
+    const observer = new ResizeObserver(() => emitScrollMetrics())
+    observer.observe(scrollEl)
+    if (contentEl) observer.observe(contentEl)
+
+    return () => {
+      scrollEl.removeEventListener('scroll', handleScroll)
+      observer.disconnect()
+    }
+  }, [emitScrollMetrics])
+
   return (
     <div style={{
       width: collapsed ? 0 : Math.max(width, minWidth),
@@ -661,7 +703,12 @@ export function Sidebar({
       transition: 'width 0.15s ease',
     }}>
       {/* Scrollable sections */}
-      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingTop: 6 }}>
+      <div
+        ref={scrollRef}
+        className="sidebar-scroll-container"
+        style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingTop: 6, scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+      >
+        <div ref={scrollContentRef}>
 
         {/* ── PINNED EXTENSIONS ── */}
         {pinnedExtensionIds && pinnedExtensionIds.length > 0 && (() => {
@@ -772,7 +819,13 @@ export function Sidebar({
 
         <div style={{ padding: '8px 12px 10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: Math.max(15, fonts.size + 1), fontWeight: 500, color: theme.text.secondary }}>
+            <span style={{
+              fontSize: fonts.secondarySize - 2,
+              fontWeight: 700,
+              color: theme.text.disabled,
+              letterSpacing: 1.2,
+              textTransform: 'uppercase',
+            }}>
               Threads
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1122,6 +1175,7 @@ export function Sidebar({
             )}
           </>
         )}
+        </div>
       </div>
 
       {showFooter && (

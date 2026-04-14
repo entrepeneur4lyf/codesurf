@@ -697,6 +697,7 @@ function App(): JSX.Element {
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const [sidebarResizing, setSidebarResizing] = useState(false)
   const [sidebarPillVisible, setSidebarPillVisible] = useState(true)
+  const [sidebarScrollMetrics, setSidebarScrollMetrics] = useState({ hasOverflow: false, topRatio: 0, thumbRatio: 1 })
   const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | null>(null)
   const [canvasArrangeMode, setCanvasArrangeMode] = useState<'grid' | 'column' | 'row' | null>(null)
   const [guides, setGuides] = useState<{ x?: number; y?: number }[]>([])
@@ -3323,6 +3324,8 @@ function App(): JSX.Element {
   const mainStatusBarLeft = sidebarCollapsed ? 0 : sidebarWidth
   const openSidebarToolbarPadding = sidebarWidth + 16
   const openSidebarPillLeft = sidebarWidth - 4
+  const sidebarScrollTrackTop = 48
+  const sidebarScrollTrackBottom = sidebarFooterHeight + 10
   const expandedLayoutLeft = sidebarWidth + 2
   const discoveryHighlightZIndex = 0
   const discoveryGlowZIndex = 0
@@ -3437,6 +3440,7 @@ function App(): JSX.Element {
                 onWidthChange={setSidebarWidth}
                 onResizeStateChange={setSidebarResizing}
                 onToggleCollapse={() => setSidebarCollapsed(p => !p)}
+                onScrollMetricsChange={setSidebarScrollMetrics}
                 showFooter={false}
               />
             </Suspense>
@@ -3506,40 +3510,94 @@ function App(): JSX.Element {
         >
         </div>
 
-        {/* Sidebar collapse pill — floats over the canvas left edge */}
-        <div
-          onClick={() => setSidebarCollapsed(p => !p)}
-          style={{
-            display: !sidebarPillVisible ? 'none' : 'flex',
-            position: 'absolute',
-            left: sidebarCollapsed ? 4 : openSidebarPillLeft,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            transition: 'opacity 0.12s ease',
-            width: 8,
-            height: 40,
-            background: theme.surface.panelElevated,
-            border: `1px solid ${theme.border.strong}`,
-            borderRadius: 9999,
-            cursor: 'pointer',
-            alignItems: 'center', justifyContent: 'center',
-            color: theme.text.disabled,
-            fontSize: 9,
-            userSelect: 'none',
-            zIndex: 200,
-          }}
-          onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted }}
-          onMouseLeave={e => { e.currentTarget.style.background = theme.surface.panelElevated }}
-        >
-          <span style={{
-            width: 2,
-            height: 14,
-            borderRadius: 999,
-            background: theme.text.disabled,
-            opacity: 0.9,
-            transition: 'opacity 0.12s ease',
-          }} />
-        </div>
+        {/* Sidebar collapse pill / scroll indicator */}
+        {sidebarCollapsed ? (
+          <div
+            onClick={() => setSidebarCollapsed(p => !p)}
+            style={{
+              display: !sidebarPillVisible ? 'none' : 'flex',
+              position: 'absolute',
+              left: 4,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              transition: 'opacity 0.12s ease',
+              width: 8,
+              height: 40,
+              background: theme.surface.panelElevated,
+              border: `1px solid ${theme.border.strong}`,
+              borderRadius: 9999,
+              cursor: 'pointer',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: theme.text.disabled,
+              fontSize: 9,
+              userSelect: 'none',
+              zIndex: 200,
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted }}
+            onMouseLeave={e => { e.currentTarget.style.background = theme.surface.panelElevated }}
+          >
+            <span style={{
+              width: 2,
+              height: 14,
+              borderRadius: 999,
+              background: theme.text.disabled,
+              opacity: 0.9,
+              transition: 'opacity 0.12s ease',
+            }} />
+          </div>
+        ) : (
+          <div
+            style={{
+              display: !sidebarPillVisible ? 'none' : 'block',
+              position: 'absolute',
+              left: openSidebarPillLeft,
+              top: sidebarScrollTrackTop,
+              bottom: sidebarScrollTrackBottom,
+              width: 8,
+              zIndex: 200,
+              pointerEvents: 'none',
+              transition: 'left 0.15s ease, opacity 0.12s ease',
+            }}
+          >
+            <div
+              onClick={() => setSidebarCollapsed(p => !p)}
+              style={{
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                top: sidebarScrollMetrics.hasOverflow
+                  ? `${sidebarScrollMetrics.topRatio * (1 - sidebarScrollMetrics.thumbRatio) * 100}%`
+                  : 'calc(50% - 20px)',
+                height: sidebarScrollMetrics.hasOverflow
+                  ? `${sidebarScrollMetrics.thumbRatio * 100}%`
+                  : 40,
+                minHeight: sidebarScrollMetrics.hasOverflow ? 32 : 40,
+                background: theme.surface.panelElevated,
+                border: `1px solid ${theme.border.strong}`,
+                borderRadius: 9999,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: theme.text.disabled,
+                userSelect: 'none',
+                pointerEvents: 'auto',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = theme.surface.panelMuted }}
+              onMouseLeave={e => { e.currentTarget.style.background = theme.surface.panelElevated }}
+            >
+              <span style={{
+                width: 2,
+                height: sidebarScrollMetrics.hasOverflow ? 12 : 14,
+                borderRadius: 999,
+                background: theme.text.disabled,
+                opacity: 0.9,
+                transition: 'opacity 0.12s ease',
+              }} />
+            </div>
+          </div>
+        )}
 
         {/* Canvas — fills entire window, sits behind sidebar & toolbar */}
         <div
